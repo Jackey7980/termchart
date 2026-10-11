@@ -1,0 +1,23 @@
+%% sample_mermaid.txt —— 由 tools/gen_dsl_samples.py 生成，禁手改。
+%% 用途：dsl/flowchart 解析器的稳定输入（单测 + examples/33）。
+%% 覆盖点见生成器脚本注释：形状齐全 / 两种边标签 / 边链 / 子图 / 需忽略的指令。
+graph LR
+    classDef todo fill:#f66
+    A[读取输入] --> B{校验}
+    B -->|通过| C([写出结果])
+    B -- 失败 --> D[报错]
+    D --> E{可重试?}
+    E -->|是| A
+    E -->|否| F[人工介入]
+    C --> G[日志]
+    G --> H((结束))
+    G --> I{{批量模式}}
+    I --> J>异步队列]
+    J --> H
+    subgraph 重试阶段
+        D
+        E
+        F
+    end
+    click A "https://example.com/read"
+    style C fill:#0f0

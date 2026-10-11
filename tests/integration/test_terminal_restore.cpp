@@ -77,7 +77,11 @@ TEST_CASE("integration: CI 下保留结构但去掉颜色") {
     CHECK(safe.allow_alt_screen);  // tty 时交替屏幕无害
 
     TerminalCaps caps = detect(
-        CapEnvironment{.term = "xterm-256color", .colorterm = "", .term_program = "", .ci = false},
+        CapEnvironment{.term = "xterm-256color",
+                       .colorterm = "",
+                       .term_program = "",
+                       .ci = false,
+                       .wt_session = ""},
         true);
     CHECK(caps.color_depth == ColorDepth::Ansi256);
     const TerminalCaps degraded = apply(caps, safe);

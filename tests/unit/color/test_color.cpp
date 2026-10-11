@@ -108,6 +108,27 @@ TEST_CASE("color: 色表采样在 [0,1] 上有界且端点不同") {
     }
 }
 
+TEST_CASE("color: Turbo 用的是官方 256 级表，级点逐字节一致") {
+    // 期望值直接取自 assets/colormaps/turbo.dat（官方 Turbo 表的唯一数据源）。
+    // 这条测试的作用是钉死"查表没偏级、没做近似"。
+    const auto level = [](int index) {
+        return sample(ColormapKind::Turbo, static_cast<double>(index) / 255.0);
+    };
+    CHECK(level(0) == Rgb{48, 18, 59});      // 深紫端（官方首色）
+    CHECK(level(32) == Rgb{70, 107, 227});   // 蓝
+    CHECK(level(64) == Rgb{40, 188, 235});   // 青
+    CHECK(level(128) == Rgb{164, 252, 60});  // 黄绿（亮的峰值区）
+    CHECK(level(192) == Rgb{251, 126, 33});  // 橙
+    CHECK(level(255) == Rgb{122, 4, 3});     // 暗红端（官方末色）
+
+    // stops(256) 应当就是官方表本身（stops 返回的是视图，不是拷贝）。
+    const auto table = stops(ColormapKind::Turbo, 256);
+    REQUIRE(table.size() == 256);
+    CHECK(table[0] == Rgb{48, 18, 59});
+    CHECK(table[128] == Rgb{164, 252, 60});
+    CHECK(table[255] == Rgb{122, 4, 3});
+}
+
 TEST_CASE("color: 命名色查表") {
     const auto white = lookup_named_color("white");
     REQUIRE(white.has_value());

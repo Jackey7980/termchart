@@ -19,6 +19,7 @@
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
 | TBD | 初稿建立 | 全部 |
+| 2026-10-12 | **L17 `dsl` 开始落地（第一批 6/14 文件）**：`parser_base`（递归下降框架：peek/advance/match + 首个诊断定位）/ `lexer`（箭头感知切分、UTF-8 标签、注释前缀可配、非法字节不阻塞游标）/ `ast`（中立模型 + `to_graph` 唯一适配点）/ `dsl_registry`（function-local static + 快照语义 + 幂等内置登记）/ `mermaid`（首行指令识别与分发，未实现图种返回 `NotImplemented`）/ `mermaid_flow`（头部/方向、8 种节点形状、9 种箭头、两种边标签写法、边链、subgraph 归属）。配套：`tests/unit/dsl/test_dsl_mermaid.cpp`（15 用例 / 153 断言）、`tests/fixtures/sample_mermaid.txt`（生成器 `tools/gen_dsl_samples.py`，已接入 `generate_all` / `check_generated`）、`examples/33_mermaid_flowchart.cpp`（解析→Graph→复用 `render_flowchart`）。本轮在独立构建目录 `build/dsl-ninja` 验证：构建 96 目标零失败、`ctest` **32/32 全绿**（doctest 513 用例 / 189524 断言）、四护栏全绿。**未做（明确留给后续切片）**：`mermaid_sequence`/`mermaid_class`/`mermaid_state`、`graphviz_dot`、`plantuml`、`d2`、`table_markdown`、`csv_sniff`，以及 `fuzz_mermaid`/`fuzz_dsl_lexer`/`bench_mermaid_parse`、`sample_dot.txt`/`sample_plantuml.txt`/`sample.csv` | 5 |
 | 2026-10-10 | 阶段 0 / 阶段 1 落地并跑通：护栏三件套全绿、ctest 7/7、doctest 84 用例 / 4154 断言 | 0、1 |
 | 2026-10-11 | 风险登记册新增 R9（GLOB 重扫描瞬时失败），记录新增源文件后首次构建的假失败陷阱与对策 | 0–8 |
 | 2026-10-11 | Windows 控制台 VT 修复：新增 `platform::enable_vt/disable_vt`（`enter()` 开 `ENABLE_VIRTUAL_TERMINAL_PROCESSING`，`leave()` 按原 mode 恢复）；`caps` 用 `WT_SESSION` 识别真彩色宿主、删除「TERM 为空即无色」误判；风险登记册新增 R10（ANSI/编码陷阱）与 R11（图像尺寸须自适应终端）；新增示例 `03_function_plot`、`04_heatmap`（自适应终端尺寸），改写 `02_sine_wave` 为盲文高精细版，修正 examples 中指向缺失源文件的坏引用 | 0–8 |
@@ -31,12 +32,12 @@
 **一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。**阶段 4 图可视化已接通**：`graph` 根（节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数）+ 布局（网格/分层/根树/力导向）+ 路由（直线/正交）+ 形状（矩形/圆角/菱形）+ 图种（流程图/状态机图/思维导图/节点-连线），示例 14·15·16·20 跑通。代码量真实（include+src 合计约 16.5k 行，生成代码 0 行混入源树）；**跨层缝 R12 已收口**——`canvas/scene_renderer.cpp` 的描边改走 braille 2×4 子像素、填充改走 halfblock 1×2 实心，`Scene → Canvas` 现在出真图，外观由 golden `scene_raster/basic.txt` 锁住。
 
 - 已完成：`结构.md` 已定义 22 个模块（L0–L21）、三条渲染路径、三物种后端、注册表语义、完整测试/文档/工具链。
-- 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 614 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：四个生成器产物落在 `detail/`（2116 行）不参与此统计，未灌入主源树。
+- 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 614 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：**五个**生成器产物（unicode / grapheme / braille / **turbo** / module_graph）落在 `detail/` 不参与此统计，未灌入主源树（`detail/` 合计 2209 行，含 `ansi_tables`/`sixel_table`/`sort_network` 三份手写表）；`assets/colormaps/turbo.dat` 是数据而非代码。
 - 桩标记扫描（5 处，均为文档化占位，非隐藏空函数）：`scene_renderer.cpp`（**仅剩 ImageOp**——Scene 里没有像素数据）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**R12 收口后 `kStrokeChar = U'*'` 已从代码中删除**，描边改走真 braille 子像素。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
-- 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` 通过；`check_header_only.py` 通过（139 头 / 105 实现）；`check_headers` 通过（139 头全通过）；四个生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille 无 diff）；**`ctest` 24/24 全绿（5 个套件名 + 17 个 example + 2 个 bench 冒烟）；doctest 335 用例 / 185558 断言全绿；golden 9 份**。当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20、21/21、22/22）均为历史快照，不再引用。
+- 验证状态（2026-10-11 干净重跑 `ctest --preset ninja` + `ctest --preset fuzz` + `check_all`）：`check_layers.py` 通过；`check_header_only.py` 通过（**186 头 / 146 实现**）；`check_headers` 通过（186 头全通过）；**五个**生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille / **turbo** 无 diff）；**`ctest` 31/31 全绿**；**doctest 497 用例 / 189357 断言全绿**；golden 9 份；**`ctest --preset fuzz` 13/13**（6 个 fuzz 目标的 `--self-test`，语料 24 条共享 + PNG 专项 6 条），并实测 6×20000 组随机输入（seed=7/11）无崩溃。全量重编 **0 warning**（vendored `doctest` 按 SYSTEM include；另修掉 3 处历史告警）。当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20、21/21、22/22、24/24）均为历史快照，不再引用。
 - **R12 已收口（跨层缝，本轮）**：`src/canvas/scene_renderer.cpp` 原先把 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `kStrokeChar = U'*'`、`ImageOp` 填 `kMediumShade`。现在描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 的颜色光栅化后叠加（只覆盖非空格，因此多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke` 的"作用于其后图元"语义与 `backend/vector` 的 SVG 后端正向同构。收口时抓到一个真 bug：**盲文的空白是 `U+2800` 而不是空格**，按空格判空会让每次收口用空白铺满整张画布、把先前画好的内容擦掉（实测折线被后续圆弧的收口抹去），已修并有 `canvas: 多次收口互不擦除` 回归测试。
   **同时澄清一处误判**：`chart`/`graph` 的示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，**从未出占位符**（实测 `*` 计数为 0）；R12 的真实影响面是"同一份 `scene::Scene` 在终端侧能否出真图"，现在能了。
-- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、diagrams 的 `orgchart`/`dag`/`dependency`）；`layout` 的 `annotation`/`facet`/`auto_margin`/`label_avoid`；`image/{decoder,png}`（PNG **解码**方向与通用解码器）；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`、独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`）。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 157 头而规格尚缺约 181 个；`tests/fuzz/` 与 `tests/fixtures/` 目录仍未建立；单头发布（`termchart_full.hpp`）尚未建立。
+- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `kamada_kawai`、route 的 `obstacle`、diagrams 的 `dag`/`dependency`）；`interaction` 的 `highlight`/`select`/`brush`/`legend_toggle`/`immediate`；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`）；`chart` 其余图种（`cartesian/` 15 个）与 `polar/`；示例 `18_uml_sequence`。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 184 头而规格尚缺约 152–154 个；`tests/fixtures/` 目录已建（政策说明 + 7 份待补清单）。**已落地但曾在此清单里**：`layout` 四项、`graph/diagrams/orgchart`、`graph/layout/radial`+`circular`、`graph/route/spline`+`arc`、`interaction/zoom`+`pan`+`tooltip`+`crosshair`、`chart/cartesian/hist`+`heatmap`、`tests/fuzz/` 6 个目标、`example 17_uml_class`+`22_zoom_pan`。
 - 权威来源分工不变：`结构.md` 回答"做成什么样"，本文件回答"什么时候做、做到哪"，`CODEBUDDY.md` 是给 AI 的架构摘要。
 
 ---
@@ -112,7 +113,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 - [x] `core/`：`rgb` `color_depth` `attr` `style` `cell` `grapheme` `buffer` `point` `rect` `span_utils` `error` `expected` `arena`
 - [x] `util/`：`utf8` `grapheme` `wcwidth` `text` `bits` `math` `assert` `logging` `format` `geom`（点线距离/线段关系/多边形/凸包）`timer`（单调时钟/秒表/帧计时/超时）`scheduler`（单线程定时任务，注入时间源）`task`（可取消句柄）`base64`（**规格清单外**的补充：OSC 52 剪贴板与 kitty/iterm2 协议共用，term 不能反向依赖 protocol，故唯一实现下沉到 L1）
-- [x] `color/`：`palette` `quantize` `named_colors` `gradient` `colormap` `resolve`（Color/Style → 真正 RGB：None 走默认色、按 ColorDepth 先量化再取色，**GUI 与位图输出的分界点**）
+- [x] `color/`：`palette` `quantize` `named_colors` `gradient` `colormap`（viridis/inferno/magma/plasma 用公开多项式拟合；**turbo 改用官方 256 级色表**，见 `assets/colormaps/turbo.dat` → `tools/gen_turbo_table.py` → `detail/turbo_table.hpp`）`resolve`（Color/Style → 真正 RGB：None 走默认色、按 ColorDepth 先量化再取色，**GUI 与位图输出的分界点**）
+  > Turbo 的历史实现踩过两次坑：先是多项式系数坏掉（输出恒为蓝/青/紫），改成锚点插值后又只是"形状像"。Turbo 本身没有解析式定义，Google 发布的就是一张 256 级查找表——所以现在的口径是"**只查表，不近似**"，级点处与官方表逐字节一致（采样时的浮点吸附见 `turbo_sample` 注释）。
 - [x] `term/`：`terminal` `caps` `raw_mode` `size` `ansi` `daemon_safe` `signal` `waker` `mouse_mode`（模式与坐标编码两组独立开关 + 切换前清场）`clipboard`（OSC 52 读写与回包解析）`hyperlink`（OSC 8，参数位与 URI 位分别转义）`capability_query`（DA1/DA2 序列与回复解析）`color_fallback`（TerminalCaps → ColorDepth 桥接，算法唯一实现在 color/quantize）
 - [x] `render/`：`renderer` `sgr` `diff` `damage`
 - [x] `api/` 起步：`quick`（含 `std::call_once` 的 `init_core()`）`opts` `print`
@@ -182,11 +184,12 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `layout/`：`layout` `box` `axis` `grid` `legend` `title` `label` + `facet`（纯几何矩形划分，不认识 chart）`auto_margin`（由标签宽度/标题/图例反推留白）`label_avoid`（通用避让；graph 侧转引同一实现，规则只有一份）`annotation`（参考线/区域高亮/标注）。**规格 11 个文件全部落地**
   > `annotation` 有两条硬规则：**域外的值不画**（比例尺默认 clamp，硬画会得到一条"看着像真值"的边界线）；**域内的值要夹进 `[inner.y, inner.bottom()-1]`**（比例尺把域端点映射到半开边界上，不夹会整条消失）。区域高亮默认只改背景色、保留数据字符。
 - [x] `chart/` 根：`chart` `registry` `series` `hit_region` + `context`（绘制开关与样式覆盖，默认全开）`dataset`（系列集合 + 范围查询）
-- [x] `chart/cartesian/`：`line_chart` `bar_chart` `scatter_chart`（含气泡四档标记）+ `sparkline`（迷你线，非 Chart 子类）。规格其余图种（`area` `hist` `heatmap` 等 19 个）待补
+- [x] `chart/cartesian/`：`line_chart` `bar_chart` `scatter_chart`（含气泡四档标记）+ **`area`（面积图：逐列填充到基线、baseline 纳入定义域、先填后描线）** + **`step`（阶梯图：`Pre`/`Post`/`Mid` 三档）** + **`hist`（直方图：Sturges 自动分箱、`set_bins` 可覆盖并 clamp 到 1..64、`bin_edges`/`bin_counts` 对外可查）** + **`heatmap`（热力图：二维点集→网格计数→`colormap` 真上色，色表可选）** + `sparkline`（迷你线，非 Chart 子类）。规格其余图种（15 个）待补；`area` 的堆叠/百分比/流图未做
 - [x] `document/`：`document` `block` `span` `table_model`（structured 物种的输入 IR）
 - [x] `backend/` 起步：根 `backend` + `snapshot/`（`backend` `ansi_backend` `text_backend` `html_pre_backend` `json_backend`，`ansi_backend` 复用唯一收窄边 `> render/sgr`）+ `vector/`（`backend` `svg_entities` `svg_backend`）+ `structured/`（`backend` `html_backend` `markdown_backend`）。三物种各至少一个后端；`png_screenshot` 待补
 - [x] `tests/unit/document/*` `backend/*`
-- [x] `interaction/` 起步：`event` `key` `mouse` `input` `input_parser`（ASCII/UTF-8/CSI/SS3/SGR 鼠标/OSC/Alt/Ctrl，含跨包不完整序列）`focus` `hit_test`（只碰 `HitRegion` 几何，**无图表名**）`dispatcher`
+- [x] `interaction/`：`event` `key` `mouse` `input` `input_parser`（ASCII/UTF-8/CSI/SS3/SGR 鼠标/OSC/Alt/Ctrl，含跨包不完整序列与 **256 KiB 缓冲上限**）`focus` `hit_test`（只碰 `HitRegion` 几何，**无图表名**）`dispatcher` + **`zoom`（`Viewport`：锚点缩放 + 跨度/原点双向夹取，夹取时贴边优先）**、**`pan`（`PanGesture`：纯几何拖拽状态机，按"内容跟随指针"折算）**、**`crosshair`（准线 + 轴侧读数；默认只改样式保留数据字符）**、**`tooltip`（边框浮层 + 自动翻边 + 宽字符 2 列 + 超长截断）**
+  > `crosshair`/`tooltip` 的唯一核心不变量是 **`clear()` 逐格逐属性精确还原**：覆盖层记下被改写的 `(格, 样式)`，撤销时放回去 —— 否则"悬停一次"就永久污染画布。两者都只在绘图区内绘制、退化输入（空文本/锚点在画布外/区域仅 1 格）**明确不画**而不是硬塞。
 - [x] `scale/registry.hpp`（`ScaleRegistry`：function-local static 单例、工厂登记、内置 `linear`/`log`、`names()` 去重有序；与 chart/raster 同一套契约）
 - [x] `examples/03_line_chart.cpp` `04_bar_chart.cpp` `34_export_svg.cpp` `35_export_html.cpp` `36_export_json.cpp`（`37_export_latex.cpp` 待补）
 - [x] **`tests/integration/replace_backend_html_pre.cpp`（实验 A）**——实现 `SnapshotBackend` 接口即接入，核心零改动
@@ -224,17 +227,20 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [x] `graph/` 根：`graph`（节点/有向边容器 + 邻接/度数/并集包围盒）`node` `edge` `attributes`（字符串键值袋）`wiregrid`（原子占用，避免压线）`arrow`（头部字符与占格）`port`（锚点/对侧/朝向）`label_place`（右/左/上/下避让）`crossing`（真交叉计数）
-- [x] `graph/layout/` 起步：`layout`（选项 + 节点尺寸）`grid`（网格）`layered`（分层，含"整图成环时按入度最小者破环、回边不抬层号"）`tree_layout`（根树，支持左右分列）`force`（力导向，确定性圆环初始 + 降温收敛）。`sugiyama`（本仓用 `layered` 覆盖其分层部分）`radial` `kamada_kawai` `circular` 待补
-- [x] `graph/route/` 起步：`route`（同侧端口均匀扇出 + 锚点吸附整数格 + 节点框登记为障碍）`straight` `orthogonal`（Z 形 → L 形 → 直线兜底，方向按节点框相对位置判定）。`spline` `arc` `obstacle` 待补
+- [x] `graph/layout/`：`layout`（选项 + 节点尺寸）`grid`（网格）`layered`（分层，含"整图成环时按入度最小者破环、回边不抬层号"）`tree_layout`（根树，支持左右分列）`force`（力导向，确定性圆环初始 + 降温收敛）+ **`radial`（径向树：父按子树扇区均分、半径按层递增、极坐标转格带字符宽高比压缩）**、**`circular`（圆周：按外接圆判据推半径，保证相邻框不重叠）**。`sugiyama`（本仓用 `layered` 覆盖其分层部分）`kamada_kawai` 待补
+- [x] `graph/route/`：`route`（同侧端口均匀扇出 + 锚点吸附整数格 + 节点框登记为障碍）`straight` `orthogonal`（Z 形 → L 形 → 直线兜底，方向按节点框相对位置判定）+ **`spline`（Catmull-Rom + 弦长自适应采样 + 逐格去重 + 8 连通补齐；压框即回退正交——宁可折线也不穿框）**、**`arc`（三次贝塞尔隆起，控制点沿弦外推保证先离框；自环走框外 C 形环，折角二次贝塞尔抹圆）**
+  > **交汇口字符已抽成公共件** `graph/route/junction.hpp`（header-only `constexpr`，登记在 `cmake/header_only.txt`）：规则原先在 `orgchart.cpp` 与 `17_uml_class` 示例里各有一份，地铁线路图会是第三个消费者，故在第三个出现前收口。它是"按上/下/左/右四个方向选 `──│┌┐└┘├┤┬┴┼`"的纯数据表判据，并有表驱动测试穷举 16 种组合 + 拓扑一致性检查（防 `┌/┐`、`├/┤` 写反）。
+  > 两条新路由的真实签名是 `std::size_t route_spline(Graph&, const RouteOptions& = {}, WireGrid* = nullptr)`（`arc` 同）—— 与既有 `route_edges` 一致，返回写入折线的边数。`grid == nullptr` 时**自建**障碍栅格：不穿框是硬约定，不能因为调用方没给栅格就放弃避让（与 `route_edges` 行为不同，已在头注释写明）。`spline` **不处理自环**（自环两侧锚点重合会退化），自环请用 `arc`。`obstacle` 路由待补
 - [x] `graph/shape/`：`shape`（轮廓 + 绘制，单一 `build_shape` 分派，绘制与轮廓不再各写一份 switch）`box` `rounded` `diamond` `ellipse`（逐行半宽取椭圆方程）`stadium` `hexagon`（六顶点 + 格粒度连线）`cylinder`（顶盖/侧边/底弧）`icon`（无边框，内容由调用方提供）；放不下时优雅退化为矩形/圆角
-- [x] `graph/diagrams/` 起步：`flowchart` `state_machine`（转移事件标签 + 起止标记，标签放不下时**放弃绘制**而不是涂掉节点）`mindmap`（树布局 + 扇形连线）`node_link`（通用节点-连线，供力导向图复用）。`orgchart` `dag` `dependency` 待补
-- [x] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `20_force_graph.cpp`
-- [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp` `test_diagrams_flow.cpp` `test_graph_layout*.cpp` `test_graph_route.cpp` `test_graph_render.cpp`
+- [x] `graph/diagrams/`：`flowchart` `state_machine`（转移事件标签 + 起止标记，标签放不下时**放弃绘制**而不是涂掉节点）`mindmap`（树布局 + 扇形连线）**`orgchart`（层级树 + 共享树干 + `├┤┬┴` 接点收口）**`node_link`（通用节点-连线，供力导向图复用）。`dag` `dependency` 待补
+  > `orgchart` 的观感靠"渲染出来看一眼"才定住：树干列若取 `child.x - 1` 会与子框边框糊成 `├│`；树干跨度用 `std::pair` 默认值当"空"会把 `0.0` 混进跨度、接点字符全算错。两处都已修，并有不变量测试钉住（树干不在父框边框列、不贴子框、两接点同列）。
+- [x] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `17_uml_class.cpp` `19_metro_map.cpp` `20_force_graph.cpp` `21_hover_tooltip.cpp` `22_zoom_pan.cpp`
+- [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp` `test_diagrams_flow.cpp` `test_diagrams_orgchart.cpp` `test_graph_layout*.cpp` `test_graph_route.cpp` `test_graph_render.cpp`
 - [x] `bench/bench_sugiyama.cpp` `bench_force.cpp`（已实测：`layout_layered` 64→1024 节点 120→2210 µs（≈线性）；`layout_force` 20→160 节点 / 200 迭代 2.6→146 ms（≈平方，**已知性能边界**，大图需 Barnes-Hut 或减迭代））
 
 #### 出口条件
 
-- [x] example 14·15·16·20 跑通（`17_uml_class` 待补）
+- [x] example 14·15·16·17·20 跑通（`17_uml_class` 已补：三栏类框 + `◁` 泛化箭头 + 总线接点）
 - [x] sugiyama / force 有性能基线（`bench/bench_sugiyama` + `bench/bench_force`，数值与结论见 `docs/reference/capability_matrix.md` 第四节）
 - [ ] `interaction > graph` 放行验证（分层规则已放行；待用一张图的实际命中判定补上端到端验证）
 
@@ -245,12 +251,15 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [ ] `dsl/` 全套：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff` `dsl_registry`
+  > 已落地（2026-10-12，6/14）：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `dsl_registry` + 单测 + `sample_mermaid.txt` + example 33。
+  > 剩余（8/14）：`mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff`；其中 sequence/class/state 的识别与分发已在 `mermaid.hpp` 就绪（返回 `NotImplemented`），加解析器即可，无需改动上层。
 - [ ] `interaction/` 深化：`tooltip` `crosshair` `highlight` `zoom` `pan` `select` `brush` `legend_toggle` `immediate`
 - [ ] `examples/21_hover_tooltip.cpp` `22_zoom_pan.cpp` `30_legend_toggle.cpp` `33_mermaid_flowchart.cpp`
 - [ ] `tests/unit/dsl/*` `interaction/*`
 - [ ] `tests/fuzz/fuzz_mermaid.cpp` `fuzz_dsl_lexer.cpp` `fuzz_input_parser.cpp`
 - [ ] `bench/bench_mermaid_parse.cpp`
 - [ ] `tests/fixtures/sample_mermaid.txt` `sample_dot.txt` `sample_plantuml.txt` `sample.csv`
+  > `sample_mermaid.txt` 已补齐（生成器 `tools/gen_dsl_samples.py`，`check_generated` 守一致性）；其余三份等对应方言落地后再补，避免无消费者的夹具。
 
 #### 出口条件
 
@@ -264,7 +273,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [x] `image/`：`bitmap`（RGBA + `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）+ `field`（标量场）+ `convert`（位图 ↔ 标量场：Rec.601 亮度、阈值双色）+ **`png_encode`**（自包含 PNG 编码器：CRC-32 / Adler-32 / zlib stored deflate 块，8 位 RGB·RGBA，非隔行）；`decoder` `png`（**解码**方向）待补
+- [x] `image/`：`bitmap`（RGBA + `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）+ `field`（标量场）+ `convert`（位图 ↔ 标量场）+ **`png_encode`**（自包含编码：CRC-32 / Adler-32 / stored deflate 块）+ **`png`（解码）**（自带完整 inflate：stored/固定/动态 Huffman、五种滤波、颜色类型 0/2/3/4/6、1/2/4/8/16 位深、tRNS；不支持 Adam7，16 位取高字节）+ **`decoder`**（按魔数识别 PNG/JPEG/GIF/BMP/WebP 并分发）。**规格 4 个文件全部落地**
+  > 交叉验证：编码器输出用 Python 的 zlib/binascii 校过；解码器用 `tools/gen_png_samples.py` 生成的 12 个夹具样本（滤波 1–4、动态 Huffman、调色板 4/8 位、灰度 16 位、灰度+alpha、真彩+alpha、坏 CRC、Adam7）覆盖——只靠自家编码器往返测不到这些分支。
   > `bitmap` 的合成原语与 `convert` 是规格清单外的补充：GUI 侧要缩放/叠加/上传纹理，终端侧的 sixel 缩略与 PNG 拼版同样需要；`convert` 是"图片 → 盲文/密度预览"的唯一实现（Rec.601 亮度，alpha 乘进结果，透明像素在场里是 0 而不是黑斑）。
   > 取舍：`png_encode` 不引入 zlib，用 stored（未压缩）deflate 块换取"零依赖 + 完全合规"，体积约 +0.03%；将来接真 deflate 只换内部实现。已用 Python 参考 zlib 独立校验：IDAT 解压字节数、滤波字节、逐 chunk CRC、`size=` 声明全部吻合。
 - [x] `protocol/`：`protocol`（基类）`sixel`（量化+调色板+RLE）`kitty_graphics`（原始 RGBA+base64 分块）**`iterm2_inline`**（PNG + base64 + OSC 1337）`halfblock_image`（真彩半块）`fallback`（Kitty > Iterm2 > Sixel > HalfBlock > None）`detect`（环境探测，含 WezTerm/Konsole/iTerm 与手动覆盖开关）
@@ -276,7 +286,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `examples/38_image_sixel.cpp`（Bitmap → 探测 → 选协议 → 写 stdout）
 - [x] `tests/unit/protocol/*` `image/*`；`widget/*` `test_plugin.cpp` `test_capability.cpp` 待补
 - [ ] `tests/integration/test_app_loop.cpp` `test_thread_post.cpp` `test_resize.cpp`
-- [ ] `tests/fuzz/fuzz_sixel.cpp` `fuzz_colormap.cpp`
+- [x] `tests/fuzz/` 建立：`fuzz_common.hpp`（三档运行：`--self-test` 内置语料 / `--iterations N` 确定性随机 / `<file>` 复现；内置 xorshift64* 与 15 条边界语料）+ **6 个目标** `fuzz_utf8` `fuzz_grapheme` `fuzz_input_parser` `fuzz_colormap` `fuzz_sixel` `fuzz_png`（末者为规格外补充：`decode_png` 是全仓最理想的 fuzz 入口）
+  > 规格 7 个目标里的 `fuzz_mermaid` / `fuzz_dsl_lexer` **刻意不建空壳**：L17 `dsl` 是空层，没有可调用的解析器，建了只能空转。`--self-test` 已接进 `ctest --preset fuzz`（13 项），并以专用 preset `fuzz` 隔离（默认构建零影响）。
 
 #### 关键约束
 
@@ -306,8 +317,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [ ] `Doxyfile` + `mkdocs.yml`
 - [ ] `.github/workflows/`：release / docs / sanitizers / fuzzing / license
 - [ ] `examples/` 补齐剩余（05–13、18–19、23、28、29、31、42–54 + `single/`）
-- [ ] `LICENSES/` + `assets/`（colormaps、maps、logo、banner）
-- [ ] 根目录文档：`README` `README_zh` `CHANGELOG` `CONTRIBUTING` `CODE_OF_CONDUCT` `AUTHORS` `ABI_POLICY` `ERROR_POLICY` `SECURITY` `AGENTS`
+- [ ] `LICENSES/` + `assets/`（**`assets/colormaps/turbo.dat` 已落地**；maps、logo、banner 待补）
+- [ ] 根目录文档：**`README.md` 已落地**（定位、当前状态真值、快速开始、构建与护栏、架构一眼看、目录、许可）；`README_zh` `CHANGELOG` `CONTRIBUTING` `CODE_OF_CONDUCT` `AUTHORS` `ABI_POLICY` `ERROR_POLICY` `SECURITY` `AGENTS` 待补
 
 #### 出口条件
 

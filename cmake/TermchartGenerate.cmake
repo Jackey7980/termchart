@@ -26,12 +26,14 @@ endfunction()
 _termchart_add_py_target(generate_unicode_tables gen_unicode_tables.py)
 _termchart_add_py_target(generate_grapheme_tables gen_grapheme_tables.py)
 _termchart_add_py_target(generate_braille_table gen_braille_table.py)
+_termchart_add_py_target(generate_turbo_table gen_turbo_table.py)
+_termchart_add_py_target(generate_dsl_samples gen_dsl_samples.py)
 _termchart_add_py_target(generate_module_graph gen_module_graph.py)
 
 add_custom_target(generate_all
     COMMENT "生成全部产物（数据表 / 附一 / 附四 / module_matrix）")
 foreach(_t generate_unicode_tables generate_grapheme_tables generate_braille_table
-        generate_module_graph)
+        generate_turbo_table generate_dsl_samples generate_module_graph)
     if(TARGET ${_t})
         add_dependencies(generate_all ${_t})
     endif()
@@ -55,6 +57,8 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_unicode_tables.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_grapheme_tables.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_braille_table.py" --check
+        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_turbo_table.py" --check
+        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_dsl_samples.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_module_graph.py" --check
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "生成物与生成器一致（无 diff）"

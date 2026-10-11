@@ -17,8 +17,13 @@ foreach(example
         14_flowchart
         15_state_machine
         16_mindmap
+        17_uml_class
         20_force_graph
+        19_metro_map
+        21_hover_tooltip
+        22_zoom_pan
         32_quick_one_liner
+        33_mermaid_flowchart
         34_export_svg
         35_export_html
         36_export_json
@@ -36,7 +41,8 @@ endforeach()
 if(TERMCHART_BUILD_TESTS)
     foreach(example 01_hello_color 02_sine_wave 03_function_plot 03_line_chart
                     04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 08_fractal_levels 14_flowchart 15_state_machine
-                    16_mindmap 20_force_graph 32_quick_one_liner
+                    16_mindmap 17_uml_class 19_metro_map 20_force_graph 21_hover_tooltip 22_zoom_pan
+                    32_quick_one_liner 33_mermaid_flowchart
                     34_export_svg 35_export_html 36_export_json 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})

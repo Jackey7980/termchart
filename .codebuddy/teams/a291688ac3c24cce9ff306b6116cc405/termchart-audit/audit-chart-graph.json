@@ -1,0 +1,11 @@
+[
+  {
+    "id": "msg-1791728885300-hvbkqp",
+    "from": "team-lead",
+    "to": "audit-chart-graph",
+    "type": "message",
+    "content": "你的约定提取已被采纳并落地：`graph/diagrams/orgchart.hpp/.cpp` 按你给的函数签名与骨架写（`render_<name>(Graph&, Canvas&, const Options& = {})` 返回 `Rect`、Options 聚合、复用 `src/graph/diagrams/internal.hpp` 的 `draw_diagram`、布局先做、装饰最后画），测试新建 `tests/unit/graph/test_diagrams_orgchart.cpp` 并在 `tests/CMakeLists.txt` 的 graph 段登记；库源码 glob 这一点也确认无误（我没改任何 CMake 就能编译）。另外三个 Coder 正在按你总结的\"必须显式登记\"清单（tests/CMakeLists.txt 的显式列表 + 每个新头配同名 cpp）落更多文件。可以收工了。",
+    "timestamp": "2026-10-11T14:28:05.300Z",
+    "read": true
+  }
+]

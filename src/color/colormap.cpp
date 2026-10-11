@@ -6,6 +6,8 @@
 #include <mutex>
 #include <vector>
 
+#include "termchart/detail/turbo_table.hpp"
+
 namespace termchart::color {
 namespace {
 
@@ -63,7 +65,9 @@ struct StopCache {
     std::array<std::size_t, kColormapCount> sizes{};
 
     std::vector<Rgb>& ensure(ColormapKind kind, std::size_t count) {
-        const int slot = static_cast<int>(kind);
+        // 用 size_t 而非 int 做下标：std::array 的下标是 size_t，int 会被
+        // -Wsign-conversion 报出来（本文件历史上就带着这几条警告）。
+        const std::size_t slot = static_cast<std::size_t>(kind);
         std::lock_guard<std::mutex> lock(mutex);
         if (sizes[slot] != count) {
             std::vector<Rgb> built;
@@ -91,45 +95,42 @@ std::uint8_t clamp_byte(double v) noexcept {
 
 }  // namespace
 
-// Turbo 原始配色由 Anton Mikhailov / Google LLC 发布，采用 Apache License 2.0
-//（见 LICENSES/Apache-2.0.txt）。本实现用其控制点做锚点线性插值近似。
-// 规范 Turbo 控制点（Google Turbo 取样关键色）。原多项式系数已损坏——
-// 输出恒为蓝/青/紫，与 Turbo 不符（已定位：Horner 展开精确复现错误结果）。
-// 此处改走锚点线性插值，形状与 Turbo 一致：深紫→蓝→青→绿→黄→橙→暗红。
-// 锚点经核实：x=0→(48,18,59)、x=0.5→(91,243,120)、x=1→(122,4,3)。
+// Turbo：**官方 256 级色表**（原始配色由 Anton Mikhailov / Google LLC 发布，
+// Apache License 2.0，见 LICENSES/Apache-2.0.txt）。
+//
+// 这里不做任何"近似"：Turbo 本身没有解析式定义，Google 发布的就是一张 256 级查找表。
+// 本项目的历史实现先是用了坏掉的多项式系数（输出恒为蓝/青/紫），后来改成锚点插值
+// （形状像、但颜色与官方表不符）。现在的唯一真值是 assets/colormaps/turbo.dat，
+// 由 tools/gen_turbo_table.py 生成 detail/turbo_table.hpp，本文件只做
+// "查表 + 相邻级线性插值"——级点处与官方表逐字节一致，级间也不过是两级的线性过渡。
 namespace {
-struct TurboStop {
-    double t;
-    double r, g, b;
-};
-constexpr TurboStop kTurboStops[] = {
-    {0.000, 48, 18, 59},   {0.125, 60, 60, 220},  {0.250, 30, 119, 245},
-    {0.375, 30, 200, 220}, {0.500, 91, 243, 120}, {0.625, 200, 245, 70},
-    {0.750, 253, 201, 38}, {0.875, 230, 110, 20}, {1.000, 122, 4, 3},
-};
 
 Rgb turbo_sample(double x) noexcept {
-    constexpr std::size_t n = sizeof(kTurboStops) / sizeof(kTurboStops[0]);
-    if (x <= kTurboStops[0].t)
-        return Rgb{static_cast<std::uint8_t>(kTurboStops[0].r),
-                  static_cast<std::uint8_t>(kTurboStops[0].g),
-                  static_cast<std::uint8_t>(kTurboStops[0].b)};
-    if (x >= kTurboStops[n - 1].t)
-        return Rgb{static_cast<std::uint8_t>(kTurboStops[n - 1].r),
-                  static_cast<std::uint8_t>(kTurboStops[n - 1].g),
-                  static_cast<std::uint8_t>(kTurboStops[n - 1].b)};
-    for (std::size_t i = 0; i + 1 < n; ++i) {
-        const TurboStop& a = kTurboStops[i];
-        const TurboStop& b = kTurboStops[i + 1];
-        if (x >= a.t && x <= b.t) {
-            const double f = (x - a.t) / (b.t - a.t);
-            return Rgb{clamp_byte(a.r + (b.r - a.r) * f),
-                       clamp_byte(a.g + (b.g - a.g) * f),
-                       clamp_byte(a.b + (b.b - a.b) * f)};
-        }
+    constexpr std::size_t n = detail::kTurboTable.size();
+    const double scaled = x * static_cast<double>(n - 1);
+
+    // 级点必须**精确命中**该级：i/255 在二进制浮点下不精确，直接向下取整会让
+    // 恰好位于级点上的采样落到前一级（例如 128/255*255 = 127.999…→127），
+    // 于是"取官方表第 i 项"这类不变量会悄悄偏一级。这里对浮点误差做一次吸附。
+    const double nearest = std::round(scaled);
+    if (std::fabs(scaled - nearest) < 1e-9 && nearest >= 0.0 &&
+        nearest < static_cast<double>(n)) {
+        const detail::TurboEntry& row = detail::kTurboTable[static_cast<std::size_t>(nearest)];
+        return Rgb{row.r, row.g, row.b};
     }
-    return Rgb{122, 4, 3};
+
+    const auto index = static_cast<std::size_t>(scaled);
+    if (index + 1 >= n) {
+        const detail::TurboEntry& last = detail::kTurboTable[n - 1];
+        return Rgb{last.r, last.g, last.b};
+    }
+    const detail::TurboEntry& a = detail::kTurboTable[index];
+    const detail::TurboEntry& b = detail::kTurboTable[index + 1];
+    const double f = scaled - static_cast<double>(index);
+    return Rgb{clamp_byte(a.r + (b.r - a.r) * f), clamp_byte(a.g + (b.g - a.g) * f),
+               clamp_byte(a.b + (b.b - a.b) * f)};
 }
+
 }  // namespace
 
 Rgb sample(ColormapKind kind, double t) noexcept {

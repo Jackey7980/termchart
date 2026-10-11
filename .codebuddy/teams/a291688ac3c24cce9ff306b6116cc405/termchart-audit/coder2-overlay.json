@@ -1,0 +1,29 @@
+[
+  {
+    "id": "msg-1791732944110-f6ebe2",
+    "from": "team-lead",
+    "to": "coder2-overlay",
+    "type": "message",
+    "content": "收到，你的交付我已核对并集成完毕（登记进 `tests/CMakeLists.txt`、构建通过、**13 用例全绿**，我这边全套护栏是 494 用例 / 189291 断言、184 头 / 146 实现、ctest 29/29）。你报的签名、语义、取舍我都接受；`clear()` 逐格逐属性还原这条不变量做得对。\n\n**放行你的去重请求**，但请按下面的边界做（一次小改，别扩大范围）：\n\n1. **新增** `include/termchart/interaction/detail/overlay_cells.hpp`（header-only，`#pragma once`），放 `Patch{ x, y, before_cell }` 与\"w×h 去重标记表 + restore 到画布\"这套簿记；`crosshair.cpp` 与 `tooltip.cpp` 改为包含它，删掉各自那份复制。\n2. **只允许改动这几个文件**：新建上面那个头 + 修改你自己的 `src/interaction/crosshair.cpp`、`src/interaction/tooltip.cpp`。**不要**碰 `tests/CMakeLists.txt`、`cmake/*`、`docs/*`、`examples/*`、以及任何别的模块（我在并行改 `examples/21_hover_tooltip.cpp`，别动）。\n3. **先确认 `detail/` 豁免**：本仓 `tools/check_header_only.py` 要求 `include/` 下每个头都有同名 `.cpp`，**除非**它在 `cmake/header_only.txt` 清单里或位于 `detail/`（顶层 `termchart/detail/` 已知豁免）。你要新加的是**子目录** `interaction/detail/`，请先读 `tools/check_header_only.py` 确认它对\"任意层级的 detail/ 目录\"都豁免：\n   - 若**豁免**：直接建头即可；\n   - 若**只豁免顶层**：请改成把该头加进 `cmake/header_only.txt`——但那样你就是要改 `cmake/header_only.txt`，这属于例外，**只允许加这一行**（并说明理由）。\n   做完后自己跑 `python tools/check_header_only.py` 与 `python tools/check_layers.py` 确认通过（新头在 `interaction/` 层号内，不能 include 高于 L15 的东西）。\n4. **行为必须逐字不变**：重构后你那 13 条用例要**原样全绿**（含 `clear() 精确还原（含宽字符数据）`、`重复 draw 幂等，不累积污染`、`永不覆盖锚点`）。请在你的隔离工程 `build/coder2-overlay/` 里重跑并给我用例数/断言数与 0 warning 证据。\n5. 报告里请写明：新头的公开面（结构体/函数签名）、两处调用点各删了多少行、以及你是否需要我登记 `tests/CMakeLists.txt`（测试文件没变就不需要）。",
+    "timestamp": "2026-10-11T15:35:44.110Z",
+    "read": true
+  },
+  {
+    "id": "msg-1791733018783-akoc8h",
+    "from": "coder-interaction",
+    "to": "coder2-overlay",
+    "type": "message",
+    "content": "FYI：coder2-chart 之前报 `interaction/crosshair.hpp/.cpp`、`interaction/tooltip.hpp/.cpp` 让整库编不过（错误点提示 `Canvas` 未 include/未用 `canvas::Canvas` 限定；tooltip.cpp 有 3 条 -Wunused-function）。这几个是你的 overlay 文件，他误当成我的了。\n\n我刚用隔离探针 `build/coder-interaction/` 做了全量库重建：ninja 重新编译了 crosshair.cpp + tooltip.cpp，**0 error / 0 warning**，整库链接通过 —— 看起来你已经修好了，或他当时命中的是你在改的中间态。无需回复，仅同步。",
+    "timestamp": "2026-10-11T15:36:58.783Z",
+    "read": true
+  },
+  {
+    "id": "msg-1791733435517-c90xio",
+    "from": "team-lead",
+    "to": "coder2-overlay",
+    "type": "message",
+    "content": "去重我复核完了，**做得对，无需再动**：\n\n1. **你重跑 `gen_module_graph.py` 更新 `结构.md` 是正确且必须的**——`header_only.txt` 就是它的输入之一，只加清单不改 `结构.md` 会让 `check_generated` 失败。你没手改生成物、只跑了生成器、且 `git diff` 只有一行，这正是本仓要的做法。**不需要**改成\"配同名 .cpp\"的方案（那反而多一个只有一行委托的空 cpp）。\n2. 你用**模板参数化 `Patch`** 来复用算法、从而一个字节都不动 `crosshair.hpp`/`tooltip.hpp`，这个办法比\"抽一个公共 Patch 类型\"更好：两个覆盖层各自的私有嵌套类型保持私有，公共件只吃结构（`{x, y, before}`）——边界恰好落在你被授权的范围内。\n3. **一处数字对不上，是我的原因，不是你的**：你报 `check_header_only` 是 **186 头 / 147 实现**，我现在实测是 **186 头 / 146 实现**。差的那个是 `src/graph/route/junction.cpp`——我在你跑校验之后把它**改成了 header-only**（`graph/route/junction`，同一套\"清单 + 重生成\"流程）并删掉了同名 cpp。所以 147 是你当时的真值，146 是现在的真值，两者都对。\n4. 你探明的豁免规则我已记进 `CODEBUDDY.md` 坑表并写成精确判据：`is_exempt_header()` = `startswith(\"detail/\") or \"/\" not in header`，即**只豁免顶层 `detail/` 与顶层头**，`interaction/detail/*` 必须在 `header_only.txt` 里列出 + 重跑生成器。\n\n你这条流**收工**（crosshair/tooltip 已在护栏内：我这里 497 用例 / 189357 断言、ctest 30/30、`check_all` 186 头 / 146 实现通过）。感谢顺手把\"边位候选无法表达角位\"的取舍讲清楚——那条我写进 ROADMAP 了。",
+    "timestamp": "2026-10-11T15:43:55.517Z",
+    "read": true
+  }
+]

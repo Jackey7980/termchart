@@ -81,6 +81,15 @@
       }
     },
     {
+      "name": "fuzz",
+      "inherits": "ninja",
+      "displayName": "Fuzz targets (Ninja, TERMCHART_ENABLE_FUZZING)",
+      "cacheVariables": {
+        "TERMCHART_BUILD_EXAMPLES": "OFF",
+        "TERMCHART_ENABLE_FUZZING": "ON"
+      }
+    },
+    {
       "name": "ninja-release",
       "inherits": "base",
       "displayName": "Release (Ninja)",
@@ -151,6 +160,10 @@
       "configurePreset": "ninja"
     },
     {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
+    },
+    {
       "name": "ninja-release",
       "configurePreset": "ninja-release"
     },
@@ -171,6 +184,13 @@
     {
       "name": "ninja",
       "configurePreset": "ninja",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz",
       "output": {
         "outputOnFailure": true
       }

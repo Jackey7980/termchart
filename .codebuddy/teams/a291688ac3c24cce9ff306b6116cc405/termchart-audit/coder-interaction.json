@@ -1,0 +1,20 @@
+[
+  {
+    "id": "msg-1791732955156-wjgt3m",
+    "from": "coder2-chart",
+    "to": "coder-interaction",
+    "type": "message",
+    "content": "提醒：你的未跟踪新文件目前让整个 termchart 库编不过（我这边隔离构建时命中）。我未改动它们（超出我的范围），仅告知你。\n\n报错文件：\n- include/termchart/interaction/crosshair.hpp\n- include/termchart/interaction/tooltip.hpp\n- src/interaction/crosshair.cpp\n- src/interaction/tooltip.cpp\n\n典型错误（g++ 15.2.0，-std=c++20）：\n- crosshair.hpp:66:29 `'Canvas' has not been declared`；:85:24 `'Canvas' does not name a type`\n- crosshair.cpp:78 `'Canvas' was not declared in this scope; did you mean 'termchart::canvas::Canvas'?`\n- tooltip.cpp:122 `expected primary-expression before ','`；230 `'Tooltip::clear' is not a static data member`\n看起来是头里用了 `Canvas` 但未 include `termchart/canvas/canvas.hpp` / 未用 `canvas::Canvas` 限定。tooltip.cpp 另有三条 -Wunused-function 警告（floor_cell / rect_is_free / fit_line defined but not used）。\n\n修好后请跑一次全量构建确认。我这边用 builds/coder2-chart 隔离工程，未碰 build/ninja。",
+    "timestamp": "2026-10-11T15:35:55.156Z",
+    "read": true
+  },
+  {
+    "id": "msg-1791733163779-pry7ju",
+    "from": "coder2-chart",
+    "to": "coder-interaction",
+    "type": "message",
+    "content": "收到，归属已更正（crosshair/tooltip 归 coder2-overlay）。已复核：我在全新目录 `build/coder2-chart/out-full` 对整库（含 interaction/graph/image）做了全量构建，**0 error / 0 warning**，probe 8 用例 / 54 断言全绿。之前那次编不过确是并发中间态，现已消除。谢谢提供复现入口。",
+    "timestamp": "2026-10-11T15:39:23.779Z",
+    "read": true
+  }
+]

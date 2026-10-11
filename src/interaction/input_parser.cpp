@@ -22,15 +22,16 @@ bool is_csi_final(char c) noexcept { return c >= 0x40 && c <= 0x7E; }
 bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
 
 // 从 body 的 i 处读一个十进制数（无数字返回 0，i 不前进）。
+// **必须饱和而不是溢出**：`value * 10` 在超长数字（CSI 参数可以任意长）上会触发
+// 有符号溢出（UB）。这里按上限夹住，语义上与"参数大得离谱"等价。
 int read_int(std::string_view body, std::size_t& i) noexcept {
+    constexpr int kMaxParam = 0x7FFFFFF;
     int value = 0;
-    bool any = false;
     while (i < body.size() && is_digit(body[i])) {
-        value = value * 10 + (body[i] - '0');
+        const int digit = body[i] - '0';
+        value = value > (kMaxParam - digit) / 10 ? kMaxParam : value * 10 + digit;
         ++i;
-        any = true;
     }
-    (void)any;
     return value;
 }
 
@@ -228,6 +229,24 @@ bool ss3_event(char c, Event& out) noexcept {
 }  // namespace
 
 std::vector<Event> InputParser::feed(std::string_view bytes) {
+    // 缓冲上限保护：见 kMaxPendingBytes 的说明。
+    //
+    // 超限时**丢弃已积压的序列**，并跳到本批字节里**下一个 ESC** 重新同步——
+    // 而不是"保留尾部若干字节"：被丢弃序列的中间部分（例如超长 OSC 的 base64 中段）
+    // 如果留在缓冲里，会被当成普通按键/文本产出**伪事件**，那比丢数据更糟。
+    // 本批字节里没有 ESC，说明它整体还处在被丢弃序列的中途，整批丢弃即可。
+    if (buffer_.size() + bytes.size() > InputParser::kMaxPendingBytes) {
+        buffer_.clear();
+        const std::size_t esc = bytes.find(kEsc);
+        bytes = esc == std::string_view::npos ? std::string_view{}
+                                              : bytes.substr(esc);
+        // 重新同步点之后仍可能超限（这批字节本身就长且以 ESC 开头）：只保留前
+        // kMaxPendingBytes 字节。多出来的部分必然属于同一条收不完的序列，留下只会
+        // 再次触发上限；而"保留前缀"而不是"保留尾部"，是为了不把序列中段当按键。
+        if (bytes.size() > InputParser::kMaxPendingBytes) {
+            bytes = bytes.substr(0, InputParser::kMaxPendingBytes);
+        }
+    }
     buffer_.append(bytes);
     std::vector<Event> events;
     std::size_t pos = 0;

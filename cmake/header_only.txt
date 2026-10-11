@@ -35,4 +35,6 @@ backend/vector/svg_entities
 interaction/key
 interaction/mouse
 interaction/event
+interaction/detail/overlay_cells
 graph/attributes
+graph/route/junction

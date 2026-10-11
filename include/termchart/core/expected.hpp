@@ -66,8 +66,12 @@ public:
     }
 
     // std::expected 兼容的解引用：无值时抛（与 value() 同）。
+    // 非 const 重载必须存在：否则 `*result` 永远是 const 引用，调用方拿到
+    // "改不了的结果"——写 `parse(x).value().add_...()` 这类代码时会卡住。
     [[nodiscard]] constexpr const T& operator*() const noexcept(false) { return value(); }
+    [[nodiscard]] constexpr T& operator*() noexcept(false) { return value(); }
     [[nodiscard]] constexpr const T* operator->() const noexcept(false) { return &value(); }
+    [[nodiscard]] constexpr T* operator->() noexcept(false) { return &value(); }
 
     [[nodiscard]] constexpr T value_or(T fallback) const noexcept {
         return has_value() ? *std::get_if<0>(&store_) : std::move(fallback);

@@ -59,6 +59,7 @@ add_executable(termchart_tests
     unit/image/test_field.cpp
     unit/image/test_bitmap.cpp
     unit/image/test_png_encode.cpp
+    unit/image/test_png_decode.cpp
     unit/image/test_image_convert.cpp
 
     # ── raster ──
@@ -77,6 +78,8 @@ add_executable(termchart_tests
     unit/chart/test_chart_registry.cpp
     unit/chart/test_chart_cartesian.cpp
     unit/chart/test_chart_extras.cpp
+    unit/chart/test_chart_area_step.cpp
+    unit/chart/test_chart_hist_heatmap.cpp
 
     # ── document ──
     unit/document/test_doc_ir.cpp
@@ -94,22 +97,31 @@ add_executable(termchart_tests
     # ── interaction ──
     unit/interaction/test_interaction_input.cpp
     unit/interaction/test_interaction_hit.cpp
+    unit/interaction/test_interaction_viewport.cpp
+    unit/interaction/test_interaction_overlay.cpp
 
     # ── graph ──
     unit/graph/test_graph.cpp
     unit/graph/test_graph_shapes.cpp
+    unit/graph/test_graph_layout_polar.cpp
     unit/graph/test_wiregrid.cpp
     unit/graph/test_graph_layout.cpp
     unit/graph/test_graph_layout_tree.cpp
     unit/graph/test_graph_layout_force.cpp
     unit/graph/test_graph_route.cpp
+    unit/graph/test_graph_route_curves.cpp
+    unit/graph/test_graph_junction.cpp
     unit/graph/test_graph_render.cpp
     unit/graph/test_diagrams_flow.cpp
+    unit/graph/test_diagrams_orgchart.cpp
 
     # ── backend ──
     unit/backend/test_backend_snapshot.cpp
     unit/backend/test_backend_vector.cpp
     unit/backend/test_backend_structured.cpp
+
+    # ── dsl ──
+    unit/dsl/test_dsl_mermaid.cpp
 
     # ── 跨模块不变量 ──
     unit/test_contracts.cpp
@@ -139,13 +151,20 @@ target_link_libraries(termchart_tests PRIVATE termchart)
 # TERMCHART_GOLDEN_DEFAULT_DIR：快照目录的编译期默认值，让用例与 cwd 无关。
 target_compile_definitions(termchart_tests PRIVATE
     TERMCHART_MAX_LOG_LEVEL=5
-    TERMCHART_GOLDEN_DEFAULT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tests/golden")
+    TERMCHART_GOLDEN_DEFAULT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tests/golden"
+    # 同理：夹具目录用编译期常量，解析样例不依赖 cwd。
+    TERMCHART_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 target_include_directories(termchart_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/..
-        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest
+)
+
+# vendored 第三方头按 SYSTEM 引入：它的告警不该混进我们的构建输出（否则"零警告"
+# 每升一次编译器就要多背几条噪声，而且我们既不该也不方便去改它）。
+target_include_directories(termchart_tests SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest
 )
 
 termchart_set_warnings(termchart_tests)
@@ -158,3 +177,9 @@ add_test(NAME tests_golden COMMAND termchart_tests --test-case=*golden*)
 add_test(NAME tests_render COMMAND termchart_tests --test-case=*render*)
 add_test(NAME tests_core COMMAND termchart_tests --test-case=*core*)
 add_test(NAME tests_util COMMAND termchart_tests --test-case=*util*)
+
+# fuzz 目标：默认不构建（TERMCHART_ENABLE_FUZZING=OFF）。放在 tests/ 之下是因为
+# 规格把 fuzz/ 归在 tests/ 里；开关判断与目标清单在 tests/fuzz/CMakeLists.txt 里。
+if(TERMCHART_ENABLE_FUZZING)
+    add_subdirectory(fuzz)
+endif()

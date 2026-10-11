@@ -23,7 +23,8 @@ CellBuffer filled(std::uint32_t width, std::uint32_t height) {
     CellBuffer buffer(width, height);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
-            buffer.at(x, y) = Cell{'a' + static_cast<char>(x % 26)};
+            buffer.at(x, y) =
+                Cell{static_cast<char32_t>('a' + static_cast<char32_t>(x % 26u))};
         }
     }
     return buffer;

@@ -33,7 +33,10 @@ Status flush_stdout() noexcept { return flush(stdout); }
 std::string escape_for_debug(std::string_view bytes) {
     std::string out;
     out.reserve(bytes.size() * 2);
-    for (const unsigned char ch : bytes) {
+    // 显式转 unsigned char：direct-list-init 到 unsigned char 会触发
+    // -Wsign-conversion（char 在 MSVC 下有符号），而这里按字节比较才是本意。
+    for (const char raw : bytes) {
+        const auto ch = static_cast<unsigned char>(raw);
         if (ch == '\033') {
             out += "<ESC>";
         } else if (ch == '\n') {

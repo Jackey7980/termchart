@@ -47,6 +47,62 @@ TEST_CASE("interaction/parser: 方向键 / Home / End / Delete") {
     CHECK(std::get<KeyEvent>(ev[3]).key == Key::Delete);
 }
 
+TEST_CASE("interaction/parser: 未完成序列的缓冲有上限（不会被喂爆内存）") {
+    InputParser p;
+    // 一条永远等不到终止符的 OSC。真实终端也可能被喂进这种流：库不能因为对端
+    // 不发 BEL/ST 就把内存吃光（fuzz 里用 `ESC ]` + 无穷多个字节就能触发）。
+    const std::string flood =
+        std::string("\x1b]") + std::string(InputParser::kMaxPendingBytes * 2, 'x');
+    (void)p.feed(flood);
+    CHECK(p.pending() <= InputParser::kMaxPendingBytes);
+
+    // 超限之后必须能**重新同步**继续工作，而不是永久卡住。
+    p.reset();
+    const auto after = p.feed("\x1b[A");
+    REQUIRE(after.size() == 1);
+    CHECK(std::get<KeyEvent>(after[0]).key == Key::Up);
+    CHECK(p.pending() == 0);
+
+    // 溢出后若这批字节里没有 ESC，说明还处在被丢弃序列的中途：整批丢弃，
+    // 且**不产出任何伪事件**（"保留尾部若干字节"会把 base64 中段当按键吐出来，
+    // 那比丢数据更糟——这是审计指出后改掉的行为）。
+    p.reset();
+    (void)p.feed(flood);
+    const auto junk = p.feed(std::string(1024, 'q'));
+    CHECK(junk.empty());
+    CHECK(p.pending() == 0);
+
+    // 下一个 ESC 到达即恢复解析。
+    const auto resumed = p.feed(std::string("zz") + "\x1b[A");
+    REQUIRE(resumed.size() == 3);
+    CHECK(std::get<KeyEvent>(resumed[2]).key == Key::Up);
+    CHECK(p.pending() == 0);
+}
+
+TEST_CASE("interaction/parser: 超长 CSI 参数饱和而不溢出") {
+    InputParser p;
+    // 20 位数字远超 int：早期实现按 `value * 10 + digit` 累加会**有符号溢出（UB）**。
+    const auto sgr = p.feed("\x1b[99999999999999999999m");
+    CHECK(sgr.empty());       // SGR 不产出事件
+    CHECK(p.pending() == 0);  // 但序列被完整消费，不留在缓冲里
+
+    const auto unknown = p.feed("\x1b[99999999999999999999~");
+    CHECK(unknown.empty());
+    CHECK(p.pending() == 0);
+
+    // 坐标被喂天文数字、按钮码正常：应正常产出"左键按下"（坐标饱和但不崩）。
+    const auto mouse = p.feed("\x1b[<0;999999999999;999999999999M");
+    REQUIRE(mouse.size() == 1);
+    const MouseEvent& click = std::get<MouseEvent>(mouse[0]);
+    CHECK(click.action == MouseAction::Press);
+    CHECK(click.button == MouseButton::Left);
+
+    // 连按钮码本身都是天文数字：饱和后 bit 64 被置上，按 SGR 语义归为"滚轮"——
+    // 这是"参数大得离谱"的合理结果；本用例只要求**恰好一个事件且不崩**。
+    const auto weird = p.feed("\x1b[<999999999999;1;1M");
+    CHECK(weird.size() == 1);
+}
+
 TEST_CASE("interaction/parser: SS3 与功能键") {
     InputParser p;
     const auto ev = p.feed("\x1bOP\x1bOQ\x1b[15~\x1b[24~");

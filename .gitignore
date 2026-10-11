@@ -31,6 +31,12 @@ compile_commands.json
 __pycache__/
 *.pyc
 
+# 根目录的一次性输出重定向（终端截图/演示输出）。注意：a.txt 与 shot_*.txt
+# 曾经被误提交进版本库，加规则对**已跟踪**文件无效——要清理得先
+# `git rm --cached a.txt shot_*.txt` 再提交。
+/a.txt
+/shot_*.txt
+
 # 测试与覆盖率产物
 *.gcda
 *.gcno
