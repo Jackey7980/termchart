@@ -30,6 +30,7 @@ document/span
 document/table_model
 layout/box
 chart/series
+chart/context
 backend/vector/svg_entities
 interaction/key
 interaction/mouse

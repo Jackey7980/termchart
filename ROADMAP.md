@@ -179,9 +179,10 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [x] `layout/` 起步：`layout` `box` `axis` `grid` `legend` `title` `label`（`annotation` `facet` `auto_margin` `label_avoid` 待补）
-- [x] `chart/` 根：`chart` `registry` `series` `hit_region`（`context` / `dataset` 待补）
-- [x] `chart/cartesian/` 起步：`line_chart` `bar_chart`（`area` `scatter` `hist` `heatmap` `sparkline` 与其余 16 个待补）
+- [x] `layout/`：`layout` `box` `axis` `grid` `legend` `title` `label` + `facet`（纯几何矩形划分，不认识 chart）`auto_margin`（由标签宽度/标题/图例反推留白）`label_avoid`（通用避让；graph 侧转引同一实现，规则只有一份）`annotation`（参考线/区域高亮/标注）。**规格 11 个文件全部落地**
+  > `annotation` 有两条硬规则：**域外的值不画**（比例尺默认 clamp，硬画会得到一条"看着像真值"的边界线）；**域内的值要夹进 `[inner.y, inner.bottom()-1]`**（比例尺把域端点映射到半开边界上，不夹会整条消失）。区域高亮默认只改背景色、保留数据字符。
+- [x] `chart/` 根：`chart` `registry` `series` `hit_region` + `context`（绘制开关与样式覆盖，默认全开）`dataset`（系列集合 + 范围查询）
+- [x] `chart/cartesian/`：`line_chart` `bar_chart` `scatter_chart`（含气泡四档标记）+ `sparkline`（迷你线，非 Chart 子类）。规格其余图种（`area` `hist` `heatmap` 等 19 个）待补
 - [x] `document/`：`document` `block` `span` `table_model`（structured 物种的输入 IR）
 - [x] `backend/` 起步：根 `backend` + `snapshot/`（`backend` `ansi_backend` `text_backend` `html_pre_backend` `json_backend`，`ansi_backend` 复用唯一收窄边 `> render/sgr`）+ `vector/`（`backend` `svg_entities` `svg_backend`）+ `structured/`（`backend` `html_backend` `markdown_backend`）。三物种各至少一个后端；`png_screenshot` 待补
 - [x] `tests/unit/document/*` `backend/*`

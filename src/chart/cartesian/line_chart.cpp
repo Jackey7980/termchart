@@ -26,11 +26,18 @@ void LineChart::draw(DrawContext ctx) {
     const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
 
-    const Style axis_style;
-    layout::draw_grid(ctx.canvas, area_, xticks, yticks,
-                      Style{}.set_fg(Color::ansi16(8)));
-    layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
-    layout::draw_axis_y(ctx.canvas, area_, yticks, "y", axis_style);
+    // 上下文开关在这里落地：默认全开，导出/GUI 侧可以只要数据不要轴。
+    const Style axis_style = ctx.axis_style;
+    if (ctx.draw_grid) {
+        const Style grid_style = ctx.grid_style.fg().is_none()
+                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     : ctx.grid_style;
+        layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
+    }
+    if (ctx.draw_axes) {
+        layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
+        layout::draw_axis_y(ctx.canvas, area_, yticks, "y", axis_style);
+    }
 
     for (const Series& s : series_) {
         const Style st = Style{}.set_fg(s.color);
@@ -50,8 +57,8 @@ void LineChart::draw(DrawContext ctx) {
         }
     }
 
-    draw_legend_for(ctx.canvas, series_, area_, show_legend_);
-    if (!title_.empty()) {
+    draw_legend_for(ctx.canvas, series_, area_, show_legend_ && ctx.draw_legend);
+    if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
 }

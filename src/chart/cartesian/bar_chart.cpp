@@ -38,11 +38,18 @@ void BarChart::draw(DrawContext ctx) {
     const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
 
-    const Style axis_style;
-    layout::draw_grid(ctx.canvas, area_, xticks, yticks,
-                      Style{}.set_fg(Color::ansi16(8)));
-    layout::draw_axis_x(ctx.canvas, area_, xticks, "category", axis_style);
-    layout::draw_axis_y(ctx.canvas, area_, yticks, "value", axis_style);
+    // 上下文开关（默认全开）：柱状图同样允许"只要数据不要轴"。
+    const Style axis_style = ctx.axis_style;
+    if (ctx.draw_grid) {
+        const Style grid_style = ctx.grid_style.fg().is_none()
+                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     : ctx.grid_style;
+        layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
+    }
+    if (ctx.draw_axes) {
+        layout::draw_axis_x(ctx.canvas, area_, xticks, "category", axis_style);
+        layout::draw_axis_y(ctx.canvas, area_, yticks, "value", axis_style);
+    }
 
     const Style st = Style{}.set_fg(color_);
     const Rect inner = area_.inner_rect();
@@ -57,12 +64,12 @@ void BarChart::draw(DrawContext ctx) {
                              kBarChar, st);
     }
 
-    if (show_legend_) {
+    if (show_legend_ && ctx.draw_legend) {
         std::vector<layout::LegendEntry> entries{layout::LegendEntry{name_, color_}};
         layout::draw_legend(ctx.canvas, entries, Rect{inner.x, 0.0, inner.w, 1.0},
                             layout::HAlign::Left);
     }
-    if (!title_.empty()) {
+    if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
 }

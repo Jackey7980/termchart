@@ -71,10 +71,12 @@ add_executable(termchart_tests
 
     # ── layout ──
     unit/layout/test_layout_axis.cpp
+    unit/layout/test_layout_extras.cpp
 
     # ── chart ──
     unit/chart/test_chart_registry.cpp
     unit/chart/test_chart_cartesian.cpp
+    unit/chart/test_chart_extras.cpp
 
     # ── document ──
     unit/document/test_doc_ir.cpp

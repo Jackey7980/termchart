@@ -22,7 +22,8 @@ foreach(example
         34_export_svg
         35_export_html
         36_export_json
-        38_image_sixel)
+        38_image_sixel
+        40_advanced_master)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE termchart)
     termchart_set_warnings(${example})
@@ -36,7 +37,8 @@ if(TERMCHART_BUILD_TESTS)
     foreach(example 01_hello_color 02_sine_wave 03_function_plot 03_line_chart
                     04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 08_fractal_levels 14_flowchart 15_state_machine
                     16_mindmap 20_force_graph 32_quick_one_liner
-                    34_export_svg 35_export_html 36_export_json 38_image_sixel)
+                    34_export_svg 35_export_html 36_export_json 38_image_sixel
+                    40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})
     endforeach()
 endif()

@@ -8,9 +8,9 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径：`include/termchart/**/*.hpp`（160 个）、`src/**/*.cpp`（124 个），
-`ctest --preset ninja`（25 项 = 套件 + 17 example + 2 bench 冒烟），
-doctest 402 用例 / 186806 断言，golden 9 份。改动后请重跑下列命令再更新本文件。
+数字口径：`include/termchart/**/*.hpp`（168 个）、`src/**/*.cpp`（131 个），
+`ctest --preset ninja`（26 项 = 套件 + example + 2 bench 冒烟），
+doctest 420 用例 / 186912 断言，golden 9 份。改动后请重跑下列命令再更新本文件。
 
 ```bash
 cmake --build --preset ninja
@@ -37,8 +37,8 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `scale` | 2 | 可用 | 线性/对数/nice/刻度/自动域 + **注册表** | 规格的 `time` `category` `band` 未实现 |
 | `image` | 5 | 部分 | `Bitmap`（RGBA，含 `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）、`FloatField`（标量场）、**`convert`**（位图 ↔ 标量场：Rec.601 亮度、阈值双色）、**`encode_png`**（自包含 PNG 编码：CRC-32 / Adler-32 / stored deflate） | `decoder` `png`（**解码**方向）未实现 |
 | `raster` | 6 | 可用 | 盲文/半块/象限/竖条/密度字符 + 注册表 + 自动选择 | `sextant`（U+1FBxx 新区块，终端支持度低）显式推迟 |
-| `layout` | 11 | 部分 | 轴/网格/图例/标题/标签、`PlotArea` | `annotation` `facet` `auto_margin` `label_avoid` 未实现 |
-| `chart` | 12 | 部分 | 基类 + 系列 + 注册表 + 折线/柱状 | `context` `dataset` 未实现；规格 `cartesian/` 的 23 个图种只做了 2 个（且文件名是 `line_chart`/`bar_chart`，与规格 `line`/`bar` 不同名） |
+| `layout` | 11 | 可用 | `PlotArea`、轴/网格/图例/标题/标签、**`facet`（纯几何矩形划分，不认识 chart）**、**`auto_margin`（由标签宽度/标题/图例反推四边留白）**、**`label_avoid`（通用避让，graph 侧转引同一实现）**、**`annotation`（参考线/区域高亮/标注，一律裁剪在绘图区内）** | — （规格 11 个文件全部落地） |
+| `chart` | 12 | 部分 | 基类 + 系列 + 注册表 + **`context`（绘制开关：轴/网格/标题/图例与样式覆盖）** + **`dataset`（系列集合 + 范围查询，含忽略非有限值）** + 折线/柱状/**散点（含气泡四档标记）**/**迷你折线 sparkline** | 规格 `cartesian/` 的 23 个图种只做了 4 个（且文件名是 `line_chart`/`bar_chart`/`scatter_chart`，与规格 `line`/`bar`/`scatter` 不同名） |
 | `document` | 8 | 可用 | Document/Block/Span/TableModel IR | — |
 | `graph` | 13 | 部分 | 节点/边/元数据/占用栅格/箭头/端口/标签避让/交叉计数（判定复用 `util/geom`）；布局（网格/分层/根树/力导向）；路由（直线/正交）；**形状八种**（矩形/圆角/菱形/椭圆/胶囊/六边形/圆柱/图标）；图种（流程图/状态机/思维导图/节点-连线） | `sugiyama`（分层已覆盖其分层部分）`radial` `kamada_kawai` `circular`；`spline` `arc` `obstacle` 路由；`orgchart` `dag` `dependency` 图种 |
 | `interaction` | 15 | 部分 | 输入解析（ANSI/UTF-8/SGR 鼠标流式）、事件、命中测试、分发、焦点 | `tooltip` `crosshair` `highlight` `zoom` `pan` `select` `brush` `legend_toggle` `immediate` 未实现 |
@@ -103,7 +103,7 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 160 头，**规格具名头文件尚缺约 178 个**；
+- 按 `结构.md` 的具名文件表核对：`include/` 现有 168 头，**规格具名头文件尚缺约 170 个**；
   `dsl/ widget/ plugin/ app/ termchart_gui/` 五个目录整体不存在。
 - `examples/`：规格 60 个，实存 13 个（另有 4 个规格外示例：`03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`）。
 - `bench/`、`tests/fuzz/`、`tests/fixtures/` 三个目录在这一轮之前**完全不存在**；`bench/` 已建（2 条基线），

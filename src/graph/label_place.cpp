@@ -1,48 +1,27 @@
-// label_place.cpp —— 标签避让实现
+// label_place.cpp —— 标签避让（图模块侧：转引 layout 的通用实现）
+//
+// 规则只有一份，在 layout/label_avoid.hpp（L11）：候选顺序右→左→上→下、
+// 不与占用矩形相交、不越出左/上边界、全部不可用时不画。graph 是 L13，向下依赖
+// 合法；把实现留在这一层会导致图表模块各写一份，规则迟早分叉。
 #include "termchart/graph/label_place.hpp"
 
 #include <cstdint>
 #include <vector>
 
+#include "termchart/layout/label_avoid.hpp"
+
 namespace termchart::graph {
-
-namespace {
-
-// 半开区间相交判定：共享边界不算相交。
-bool overlaps(const Rect& a, const Rect& b) noexcept {
-    return a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom();
-}
-
-bool is_free(const Rect& candidate, const std::vector<Rect>& occupied) noexcept {
-    if (candidate.x < 0.0 || candidate.y < 0.0) {
-        return false;  // 越出左/上边界：不采用（避免被画布裁剪或折回）
-    }
-    for (const Rect& rect : occupied) {
-        if (overlaps(candidate, rect)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-}  // namespace
 
 LabelPlacement place_label(Point anchor, std::uint32_t width, std::uint32_t height,
                            const std::vector<Rect>& occupied) noexcept {
-    const double w = static_cast<double>(width);
-    const double h = static_cast<double>(height);
+    layout::LabelBox box;
+    box.anchor = anchor;
+    box.width = width;
+    box.height = height;
 
-    const Rect right{anchor.x + 1.0, anchor.y, w, h};
-    const Rect left{anchor.x - 1.0 - w, anchor.y, w, h};
-    const Rect up{anchor.x, anchor.y - 1.0 - h, w, h};
-    const Rect down{anchor.x, anchor.y + 1.0, w, h};
-
-    for (const Rect& candidate : {right, left, up, down}) {
-        if (is_free(candidate, occupied)) {
-            return LabelPlacement{candidate, true};
-        }
-    }
-    return LabelPlacement{right, false};
+    const layout::LabelAvoidOptions options;  // 默认 gap = 1，与既有行为一致
+    const layout::LabelSlot slot = layout::place_label_avoiding(box, occupied, options);
+    return LabelPlacement{slot.rect, slot.placed};
 }
 
 }  // namespace termchart::graph

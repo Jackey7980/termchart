@@ -1,8 +1,8 @@
-// chart.hpp —— Chart 抽象基类与绘制上下文
+// chart.hpp —— Chart 抽象基类
 //
 // chart/ 是 stage 3 的顶点：把数据系列 + 比例尺 + layout 拼成可见图表，画进
 // canvas::Canvas。**不碰 render 层**（架构禁止边），于是未来 to_document()
-// 通道独立存在。DrawContext 只暴露 canvas 引用，图表内部自行安排 layout。
+// 通道独立存在。绘制上下文见 context.hpp。
 #ifndef TERMCHART_CHART_CHART_HPP
 #define TERMCHART_CHART_CHART_HPP
 
@@ -10,15 +10,12 @@
 #include <vector>
 
 #include "termchart/canvas/canvas.hpp"
+#include "termchart/chart/context.hpp"
 #include "termchart/chart/series.hpp"
 #include "termchart/export.hpp"
 #include "termchart/layout/box.hpp"
 
 namespace termchart::chart {
-
-struct DrawContext {
-    canvas::Canvas& canvas;
-};
 
 // 折线/柱共享的字符与几何辅助（定义见 chart.cpp）。
 inline constexpr char32_t kLineChar = U'\u2022';     // • 连线
