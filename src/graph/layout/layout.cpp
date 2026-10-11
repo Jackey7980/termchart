@@ -88,6 +88,7 @@ Rect layout_layered(Graph& graph, const LayoutOptions& opts) {
     const std::unordered_map<NodeId, std::size_t> index = index_by_id(graph);
 
     std::vector<std::vector<std::size_t>> out_edges(count);
+    std::vector<std::vector<std::size_t>> in_edges(count);
     std::vector<int> in_degree(count, 0);
     for (const Edge& e : graph.edges()) {
         const auto from_it = index.find(e.from());
@@ -96,27 +97,64 @@ Rect layout_layered(Graph& graph, const LayoutOptions& opts) {
             continue;
         }
         out_edges[from_it->second].push_back(to_it->second);
+        in_edges[to_it->second].push_back(from_it->second);
         ++in_degree[to_it->second];
     }
 
-    // 最长路径分层（Kahn 拓扑序）。环上的节点拿不到层号，留在 0 层。
+    // 最长路径分层（Kahn 拓扑序）。
     std::vector<int> rank(count, 0);
     std::vector<int> remaining = in_degree;
+    std::vector<bool> processed(count, false);
     std::queue<std::size_t> ready;
+    bool has_source = false;
     for (std::size_t i = 0; i < count; ++i) {
         if (remaining[i] == 0) {
             ready.push(i);
+            has_source = true;
         }
+    }
+    if (!has_source) {
+        // 整图都是环（每个节点都有入边）：取入度最小者当起点破环。
+        // 否则全部节点都会留在第 0 层，退化成一根竖列。
+        std::size_t seed = 0;
+        for (std::size_t i = 1; i < count; ++i) {
+            if (remaining[i] < remaining[seed]) {
+                seed = i;
+            }
+        }
+        ready.push(seed);
+        remaining[seed] = 0;
     }
     while (!ready.empty()) {
         const std::size_t u = ready.front();
         ready.pop();
+        if (processed[u]) {
+            continue;  // 破环起点可能被再次入队
+        }
+        processed[u] = true;
         for (const std::size_t v : out_edges[u]) {
-            rank[v] = std::max(rank[v], rank[u] + 1);
-            if (--remaining[v] == 0) {
+            // 已处理过的 v 说明这条边是回边（破环后指向更早的层）：不能再抬高它，
+            // 否则破环点会被推到最后一层，整张图的层序就乱了。
+            if (!processed[v]) {
+                rank[v] = std::max(rank[v], rank[u] + 1);
+            }
+            if (--remaining[v] == 0 && !processed[v]) {
                 ready.push(v);
             }
         }
+    }
+    // 仍留在环上的节点：挂到"已定层前驱"的下一层；没有这样的前驱则留 0 层。
+    for (std::size_t i = 0; i < count; ++i) {
+        if (processed[i]) {
+            continue;
+        }
+        int best = -1;
+        for (const std::size_t p : in_edges[i]) {
+            if (processed[p]) {
+                best = std::max(best, rank[p]);
+            }
+        }
+        rank[i] = best >= 0 ? best + 1 : 0;
     }
 
     int max_rank = 0;

@@ -80,8 +80,11 @@ add_executable(termchart_tests
     unit/graph/test_graph.cpp
     unit/graph/test_wiregrid.cpp
     unit/graph/test_graph_layout.cpp
+    unit/graph/test_graph_layout_tree.cpp
+    unit/graph/test_graph_layout_force.cpp
     unit/graph/test_graph_route.cpp
     unit/graph/test_graph_render.cpp
+    unit/graph/test_diagrams_flow.cpp
 
     # ── backend ──
     unit/backend/test_backend_snapshot.cpp

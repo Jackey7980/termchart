@@ -78,6 +78,20 @@ TEST_CASE("graph/layout: 分层布局按最长路径推进列号") {
     CHECK(fork.find(left)->box().y != doctest::Approx(fork.find(right)->box().y));
 }
 
+TEST_CASE("graph/layout: 整图成环时按入度最小者破环，不再堆成一列") {
+    Graph graph;
+    const NodeId a = graph.add_node("a").id();
+    const NodeId b = graph.add_node("b").id();
+    const NodeId c = graph.add_node("c").id();
+    (void)graph.add_edge(a, b);
+    (void)graph.add_edge(b, c);
+    (void)graph.add_edge(c, a);  // 每个节点都有入边：没有天然源点
+
+    (void)layout_layered(graph, LayoutOptions{});
+    CHECK(graph.find(a)->box().x < graph.find(b)->box().x);
+    CHECK(graph.find(b)->box().x < graph.find(c)->box().x);
+}
+
 TEST_CASE("graph/layout: 有环时环上节点退到第 0 层且不重叠") {
     Graph graph;
     const NodeId a = graph.add_node("a").id();

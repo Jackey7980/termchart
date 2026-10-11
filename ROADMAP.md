@@ -28,15 +28,14 @@
 
 ## 一、项目现状
 
-**一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。代码量真实（合计约 16.7k 行，生成代码 0 行混入源树），**但跨层集成 `canvas/scene_renderer.cpp` 的 Scene→raster 取字符留作阶段 7 占位**——高级 chart / graph 路径当前出占位符（`*` / 阴影块）而非真盲文/半块子像素图；02/03/04 因直连 raster 才正常显示。
+**一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。**阶段 4 图可视化已接通**：`graph` 根（节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数）+ 布局（网格/分层/根树/力导向）+ 路由（直线/正交）+ 形状（矩形/圆角/菱形）+ 图种（流程图/状态机图/思维导图/节点-连线），示例 14·15·16·20 跑通。代码量真实（include+src 合计约 16.3k 行，生成代码 0 行混入源树），**但跨层集成 `canvas/scene_renderer.cpp` 的 Scene→raster 取字符留作阶段 7 占位**——高级 chart / graph 路径当前出占位符（`*` / 阴影块）而非真盲文/半块子像素图；02/03/04 因直连 raster 才正常显示。
 
 - 已完成：`结构.md` 已定义 22 个模块（L0–L21）、三条渲染路径、三物种后端、注册表语义、完整测试/文档/工具链。
-- 已落地模块真实代码量（cpp+hpp，本次审计实测，单位行）：
-  `graph` 1636 · `term` 1432 · `backend` 1134 · `interaction` 814 · `util` 1192 · `core` 1175 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 492 · `api` 366 · `scale` 449 · `canvas` 435 · `layout` 429 · `scene` 399 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：四个生成器产物落在 `detail/` 不参与此统计，未灌入主源树。
-- 桩标记扫描（7 处，均为文档化阶段 7 占位，非隐藏空函数）：`scene_renderer.cpp`（kStrokeChar 占位 / ImageOp 占位）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`graph/wiregrid.cpp`（连线占位栅格）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
-- 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` ✅；`check_header_only.py` ✅（135 头 / 101 实现）；`check_headers` ✅（135 头全通过）；四个生成器 `--check` ✅（结构.md / module_matrix / unicode / grapheme / braille 全部一致）；**`ctest` 17/17 全绿；doctest 303 用例 / 185209 断言全绿**。**两文档已对齐到该真值**：ROADMAP 此前写的「ctest 16/16 / doctest 279 用例」为早期构建子集的陈旧数字，现已更正；CODEBUDDY 的「17/17 / 303 / 185209」与权威重跑一致，以本数为准。**注**：曾误读为 10/10（实为被过滤的旧构建子集），已纠正，不再引用。
+- 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 435 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：四个生成器产物落在 `detail/`（2116 行）不参与此统计，未灌入主源树。
+- 桩标记扫描（6 处，均为文档化阶段 7 占位，非隐藏空函数）：`scene_renderer.cpp`（kStrokeChar 占位 / ImageOp 占位）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
+- 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` 通过；`check_header_only.py` 通过（139 头 / 105 实现）；`check_headers` 通过（139 头全通过）；四个生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille 无 diff）；**`ctest` 21/21 全绿（5 个套件名 + 16 个 example）；doctest 319 用例 / 185314 断言全绿**。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20）均为早期构建子集，不再引用。
 - **关键缺口（决定"看起来做完但没全通"）**：`src/canvas/scene_renderer.cpp` 把 Scene 的所有 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `constexpr char32_t kStrokeChar = U'*'`，`ImageOp` 填充 `kMediumShade`，注释明示「光栅器（raster/，阶段 7 起）接入后会被盲文/半块字符替换。接口不变，观感变」。因此走 `chart`/`graph` 高级 API（Scene→ScenePainter→Canvas）的图目前是占位符；真正能出子像素图的是 `raster::braille`/`halfblock` 直连 `canvas.put` 的旁路（02/03/04 即此路）。
-- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 sugiyama/force、route 的 spline/arc、shape 其余、diagrams 其余图种）；`image/{decoder,png,png_encode}`、`protocol/iterm2_inline`；阶段 3 收尾项（`scale/registry.hpp`、`latex_backend`、`png_screenshot`、`37_export_latex`、各 bench 与独立 fuzz 目标）；**Scene→raster 取字符集成（R12）**。
+- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、shape 的 `ellipse`/`hexagon`/`stadium`/`cylinder`/`icon`、diagrams 的 `orgchart`/`dag`/`dependency`）；`image/{decoder,png,png_encode}`、`protocol/iterm2_inline`；阶段 3 收尾项（`scale/registry.hpp`、`latex_backend`、`png_screenshot`、`37_export_latex`、各 bench 与独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`、`bench/` 骨架与 sugiyama·force 基线）；**Scene→raster 取字符集成（R12）**。
 - 权威来源分工不变：`结构.md` 回答"做成什么样"，本文件回答"什么时候做、做到哪"，`CODEBUDDY.md` 是给 AI 的架构摘要。
 
 ---
@@ -223,19 +222,19 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [x] `graph/` 根：`graph`（节点/有向边容器 + 邻接/度数/并集包围盒）`node` `edge` `attributes`（字符串键值袋）`wiregrid`（原子占用，避免压线）`arrow`（头部字符与占格）`port`（锚点/对侧/朝向）`label_place`（右/左/上/下避让）`crossing`（真交叉计数）
-- [ ] `graph/layout/`：`layout` `sugiyama` `tree_layout` `radial` `force` `kamada_kawai` `circular` `grid`
-- [ ] `graph/route/`：`route` `orthogonal` `straight` `spline` `arc` `obstacle`
-- [ ] `graph/shape/`：`shape` `box` `ellipse` `diamond` `hexagon` `stadium` `cylinder` `icon`
-- [ ] `graph/diagrams/` 起步：`flowchart` `state_machine` `mindmap` `orgchart` `dag` `dependency`
-- [ ] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `20_force_graph.cpp`
-- [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp`（`test_diagrams_flow.cpp` 待补）
-- [ ] `bench/bench_sugiyama.cpp` `bench_force.cpp`
+- [x] `graph/layout/` 起步：`layout`（选项 + 节点尺寸）`grid`（网格）`layered`（分层，含"整图成环时按入度最小者破环、回边不抬层号"）`tree_layout`（根树，支持左右分列）`force`（力导向，确定性圆环初始 + 降温收敛）。`sugiyama`（本仓用 `layered` 覆盖其分层部分）`radial` `kamada_kawai` `circular` 待补
+- [x] `graph/route/` 起步：`route`（同侧端口均匀扇出 + 锚点吸附整数格 + 节点框登记为障碍）`straight` `orthogonal`（Z 形 → L 形 → 直线兜底，方向按节点框相对位置判定）。`spline` `arc` `obstacle` 待补
+- [x] `graph/shape/` 起步：`shape`（轮廓 + 绘制）`box` `rounded` `diamond`。`ellipse` `hexagon` `stadium` `cylinder` `icon` 待补（字符格粒度下椭圆的近似不做假精度，理由见 shape.hpp）
+- [x] `graph/diagrams/` 起步：`flowchart` `state_machine`（转移事件标签 + 起止标记，标签放不下时**放弃绘制**而不是涂掉节点）`mindmap`（树布局 + 扇形连线）`node_link`（通用节点-连线，供力导向图复用）。`orgchart` `dag` `dependency` 待补
+- [x] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `20_force_graph.cpp`
+- [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp` `test_diagrams_flow.cpp` `test_graph_layout*.cpp` `test_graph_route.cpp` `test_graph_render.cpp`
+- [ ] `bench/bench_sugiyama.cpp` `bench_force.cpp`（`bench/` 目录与计时骨架尚未建立）
 
 #### 出口条件
 
-- [ ] example 14–17 跑通
-- [ ] sugiyama / force 有性能基线
-- [ ] `interaction > graph` 放行验证（命中判定需要 `HitRegion` 语义）
+- [x] example 14·15·16·20 跑通（`17_uml_class` 待补）
+- [ ] sugiyama / force 有性能基线（需先建 `bench/` 骨架）
+- [ ] `interaction > graph` 放行验证（分层规则已放行；待用一张图的实际命中判定补上端到端验证）
 
 ---
 
