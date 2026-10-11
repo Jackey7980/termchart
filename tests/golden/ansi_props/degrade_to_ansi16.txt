@@ -1,0 +1,9 @@
+size: 7x1
+cells: 7
+cell 0 0 U+64 fg=ansi16:4 bg=none attrs=underline
+cell 0 1 U+65 fg=ansi16:4 bg=none attrs=underline
+cell 0 2 U+67 fg=ansi16:4 bg=none attrs=underline
+cell 0 3 U+72 fg=ansi16:4 bg=none attrs=underline
+cell 0 4 U+61 fg=ansi16:4 bg=none attrs=underline
+cell 0 5 U+64 fg=ansi16:4 bg=none attrs=underline
+cell 0 6 U+65 fg=ansi16:4 bg=none attrs=underline

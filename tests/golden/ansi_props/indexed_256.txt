@@ -1,0 +1,5 @@
+size: 3x1
+cells: 3
+cell 0 0 U+32 fg=indexed:200 bg=none attrs=-
+cell 0 1 U+35 fg=indexed:200 bg=none attrs=-
+cell 0 2 U+36 fg=indexed:200 bg=none attrs=-

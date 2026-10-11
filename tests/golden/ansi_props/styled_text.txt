@@ -1,0 +1,11 @@
+size: 9x1
+cells: 9
+cell 0 0 U+74 fg=#5b8ff9 bg=none attrs=bold
+cell 0 1 U+65 fg=#5b8ff9 bg=none attrs=bold
+cell 0 2 U+72 fg=#5b8ff9 bg=none attrs=bold
+cell 0 3 U+6D fg=#5b8ff9 bg=none attrs=bold
+cell 0 4 U+63 fg=#5b8ff9 bg=none attrs=bold
+cell 0 5 U+68 fg=#5b8ff9 bg=none attrs=bold
+cell 0 6 U+61 fg=#5b8ff9 bg=none attrs=bold
+cell 0 7 U+72 fg=#5b8ff9 bg=none attrs=bold
+cell 0 8 U+74 fg=#5b8ff9 bg=none attrs=bold

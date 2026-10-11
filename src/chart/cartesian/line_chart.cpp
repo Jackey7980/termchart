@@ -1,0 +1,59 @@
+// line_chart.cpp —— 笛卡尔折线图实现
+#include "termchart/chart/cartesian/line_chart.hpp"
+
+#include <algorithm>
+
+#include "termchart/layout/axis.hpp"
+#include "termchart/layout/grid.hpp"
+#include "termchart/layout/title.hpp"
+#include "termchart/scale/ticks.hpp"
+
+namespace termchart::chart {
+
+void LineChart::draw(DrawContext ctx) {
+    double xmin, xmax, ymin, ymax;
+    data_bounds(series_, xmin, xmax, ymin, ymax);
+    if (!std::isfinite(xmin)) {  // 无数据：空域
+        xmin = 0.0;
+        xmax = 1.0;
+        ymin = 0.0;
+        ymax = 1.0;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(ctx.canvas, m, xmin, xmax, ymin, ymax, auto_domain_,
+                      include_zero_);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    const Style axis_style;
+    layout::draw_grid(ctx.canvas, area_, xticks, yticks,
+                      Style{}.set_fg(Color::ansi16(8)));
+    layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
+    layout::draw_axis_y(ctx.canvas, area_, yticks, "y", axis_style);
+
+    for (const Series& s : series_) {
+        const Style st = Style{}.set_fg(s.color);
+        if (s.points.size() >= 2) {
+            std::vector<Point> pts = s.points;
+            std::sort(pts.begin(), pts.end(),
+                      [](const Point& a, const Point& b) { return a.x < b.x; });
+            for (std::size_t i = 1; i < pts.size(); ++i) {
+                const Point a = area_.cell_of(pts[i - 1].x, pts[i - 1].y);
+                const Point b = area_.cell_of(pts[i].x, pts[i].y);
+                ctx.canvas.draw_line(a, b, kLineChar, st);
+            }
+        }
+        for (const Point& p : s.points) {
+            const Point c = area_.cell_of(p.x, p.y);
+            ctx.canvas.put(c, kMarkerChar, st);
+        }
+    }
+
+    draw_legend_for(ctx.canvas, series_, area_, show_legend_);
+    if (!title_.empty()) {
+        layout::draw_title(ctx.canvas, title_, area_.inner_rect());
+    }
+}
+
+}  // namespace termchart::chart

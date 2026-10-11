@@ -1,0 +1,6 @@
+size: 8x1
+cells: 4
+cell 0 0 U+4E2D fg=none bg=none attrs=-
+cell 0 2 U+6587 fg=none bg=none attrs=-
+cell 0 4 U+5BBD fg=none bg=none attrs=-
+cell 0 6 U+5EA6 fg=none bg=none attrs=-

@@ -1,0 +1,31 @@
+# header_only.txt —— header-only 清单唯一源
+#
+# 规则：
+#   - 每行一个路径，相对 include/termchart/，不带 .hpp 后缀。
+#   - 本清单中的头文件不得有同名 src/*.cpp；反之每个非清单头文件必须有同名 cpp。
+#   - 结构.md 附四与本清单由 check_generated.sh / gen_header_only.py 校验，
+#     改这里必须同步重跑生成。
+#
+# 纯头必须满足：无虚函数表、无非模板非内联函数定义、无非 constexpr 全局变量。
+
+core/point.hpp
+core/rect.hpp
+core/attr.hpp
+core/color_depth.hpp
+core/rgb.hpp
+core/span_utils.hpp
+util/bits.hpp
+util/math.hpp
+util/random.hpp
+util/assert.hpp
+color/named_colors.hpp
+scene/command.hpp
+scale/linear
+scale/log
+image/field
+image/bitmap
+document/span
+document/table_model
+layout/box
+chart/series
+backend/vector/svg_entities

@@ -1,0 +1,4 @@
+size: 2x1
+cells: 2
+cell 0 0 U+41 fg=ansi16:3 bg=ansi16:12 attrs=-
+cell 0 1 U+42 fg=ansi16:3 bg=ansi16:12 attrs=-

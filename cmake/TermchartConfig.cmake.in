@@ -1,0 +1,14 @@
+@PACKAGE_INIT@
+
+# termchartConfig.cmake —— find_package(termchart) 入口
+#
+# 分层规则源文件（TermchartModules.cmake）随包安装：
+# 下游若要做自己的分层校验，可以用同一份真源。
+
+include("${CMAKE_CURRENT_LIST_DIR}/termchartTargets.cmake")
+
+set_and_check(termchart_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set(termchart_VERSION "@PROJECT_VERSION@")
+set(termchart_ABI_VERSION "@TERMCHART_ABI_VERSION@")
+
+check_required_components(termchart)
