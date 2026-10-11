@@ -14,6 +14,11 @@ namespace termchart::protocol {
 
 namespace {
 
+// 0..255 → sixel 规定的百分比 0..100（四舍五入）。
+int percent(std::uint8_t value) noexcept {
+    return (static_cast<int>(value) * 100 + 127) / 255;
+}
+
 // 六象素游程压缩：连续 >= 4 个相同字符写成 !<count><char>。
 std::string rle_compress(const std::string& data) {
     std::string out;
@@ -76,11 +81,12 @@ std::string SixelProtocol::encode(const image::Bitmap& bitmap,
         out += '#';
         out += std::to_string(i);
         out += ";2;";
-        out += std::to_string(c.r);
+        // DEC sixel 的 RGB 分量是**百分比 0..100**，不是 0..255。
+        out += std::to_string(percent(c.r));
         out += ';';
-        out += std::to_string(c.g);
+        out += std::to_string(percent(c.g));
         out += ';';
-        out += std::to_string(c.b);
+        out += std::to_string(percent(c.b));
     }
 
     // 4) 每 6 行一带；带内按颜色逐个输出，颜色间用 '$'，带间用 '-'。

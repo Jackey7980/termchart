@@ -58,3 +58,33 @@ TEST_CASE("protocol/sixel: 多带图像用 - 分隔") {
     const std::string s = p.encode(bmp, plain);
     CHECK(s.find('-') != std::string::npos);
 }
+
+TEST_CASE("protocol/sixel: 调色板 RGB 是百分比 0..100") {
+    image::Bitmap bmp(1, 1, 4);
+    bmp.fill(255, 255, 255, 255);  // 白 → 三个分量都应是 100
+    SixelProtocol p;
+    const std::string s = p.encode(bmp);
+
+    const std::size_t pos = s.find(";2;");
+    REQUIRE(pos != std::string::npos);
+    const std::string tail = s.substr(pos + 3);
+    int comp[3] = {-1, -1, -1};
+    std::size_t i = 0;
+    for (int k = 0; k < 3; ++k) {
+        int v = 0;
+        bool any = false;
+        while (i < tail.size() && tail[i] >= '0' && tail[i] <= '9') {
+            v = v * 10 + (tail[i] - '0');
+            ++i;
+            any = true;
+        }
+        comp[k] = any ? v : -1;
+        if (i < tail.size() && tail[i] == ';') {
+            ++i;
+        }
+    }
+    CHECK(comp[0] == 100);
+    CHECK(comp[1] == 100);
+    CHECK(comp[2] == 100);
+    CHECK(s.find(";255") == std::string::npos);  // 不得出现 0..255 的越界分量
+}

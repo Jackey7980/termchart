@@ -81,3 +81,10 @@ TEST_CASE("chart/bar: 绘制后产生实心柱 █") {
     }
     CHECK(has_bar);
 }
+
+TEST_CASE("chart/bar: 空数据不绘制也不崩") {
+    canvas::Canvas canvas(20, 10);
+    BarChart chart;  // 未 set_values
+    chart.draw({canvas});
+    CHECK(count_nonblank(canvas) == 0);
+}

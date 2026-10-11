@@ -1,7 +1,10 @@
 // backend/vector/svg_backend.cpp —— Scene → SVG 实现
 //
-// 路径状态机：MoveTo/LineTo 累积成 d；Fill/Stroke 只改状态；遇到非路径指令、
-// 风格改变后的新几何、或结束时，把累积路径一次性落成 <path>（fill+stroke 同发）。
+// 语义必须与权威消费者 canvas/scene_renderer.cpp 一致：FillOp/StrokeOp 是
+// **状态指令，作用于其后出现的图元**。因此这里在遇到 Fill/Stroke 时**先**把
+// 累积的折线用"旧状态"刷出，**再**更新状态；非路径图元（Rect/Arc/Text/Image）
+// 用当前状态即时发出。任何"延迟到刷新时采用新状态"的做法都会让
+// `几何 → Stroke` 这类顺序着色错位（那是真 bug）。
 #include "termchart/backend/vector/svg_backend.hpp"
 
 #include <cmath>
@@ -56,37 +59,30 @@ void SvgBackend::render(const scene::Scene& scene) {
         out_ += ")\">";
     }
 
-    std::string d;
+    std::string d;        // 待刷出的折线子路径（由 MoveTo/LineTo 累积）
+    Point current{};      // 当前点（MoveTo 设置，LineTo 推进）
+    bool subpath_open = false;
     Color fill = Color::none();
     Color stroke = Color::none();
     double stroke_w = 1.0;
-    bool dirty = false;
-    bool style_dirty = false;
+
+    // 未显式设色的描边在终端里用"默认前景色"渲染 → SVG 用 currentColor 对应。
+    const auto stroke_paint = [&stroke]() {
+        return stroke.is_none() ? std::string("currentColor") : svg_color(stroke);
+    };
 
     const auto flush = [&]() {
-        if (!dirty || d.empty()) {
-            dirty = false;
-            style_dirty = false;
-            return;
-        }
-        if (fill.is_none() && stroke.is_none()) {  // 无 paint 的几何不输出
-            d.clear();
-            dirty = false;
-            style_dirty = false;
+        if (d.empty()) {
             return;
         }
         out_ += "<path d=\"";
         out_ += d;
-        out_ += "\" fill=\"";
-        out_ += svg_color(fill);
-        out_ += "\" stroke=\"";
-        out_ += svg_color(stroke);
+        out_ += "\" fill=\"none\" stroke=\"";
+        out_ += stroke_paint();
         out_ += "\" stroke-width=\"";
         out_ += num(stroke_w);
         out_ += "\"/>";
         d.clear();
-        dirty = false;
-        style_dirty = false;
     };
 
     for (const scene::Command& cmd : scene.commands()) {
@@ -94,32 +90,30 @@ void SvgBackend::render(const scene::Scene& scene) {
             [&](const auto& op) {
                 using T = std::decay_t<decltype(op)>;
                 if constexpr (std::is_same_v<T, scene::MoveTo>) {
-                    if (style_dirty) {
-                        flush();
-                    }
-                    d += "M ";
-                    d += num(op.to.x);
-                    d += ' ';
-                    d += num(op.to.y);
-                    d += ' ';
-                    dirty = true;
+                    current = op.to;
+                    subpath_open = false;  // 新子路径；真正开画要等 LineTo
                 } else if constexpr (std::is_same_v<T, scene::LineTo>) {
-                    if (style_dirty) {
-                        flush();
+                    if (!subpath_open) {
+                        d += "M ";
+                        d += num(current.x);
+                        d += ' ';
+                        d += num(current.y);
+                        d += ' ';
+                        subpath_open = true;
                     }
                     d += "L ";
                     d += num(op.to.x);
                     d += ' ';
                     d += num(op.to.y);
                     d += ' ';
-                    dirty = true;
+                    current = op.to;
                 } else if constexpr (std::is_same_v<T, scene::FillOp>) {
+                    flush();  // 先按旧状态收口
                     fill = op.color;
-                    style_dirty = true;
                 } else if constexpr (std::is_same_v<T, scene::StrokeOp>) {
+                    flush();  // 先按旧状态收口
                     stroke = op.color;
                     stroke_w = op.width;
-                    style_dirty = true;
                 } else if constexpr (std::is_same_v<T, scene::RectOp>) {
                     flush();
                     out_ += "<rect x=\"";
@@ -130,11 +124,17 @@ void SvgBackend::render(const scene::Scene& scene) {
                     out_ += num(op.rect.w);
                     out_ += "\" height=\"";
                     out_ += num(op.rect.h);
-                    out_ += "\" fill=\"";
-                    out_ += svg_color(fill);
-                    out_ += "\" stroke=\"";
-                    out_ += svg_color(stroke);
-                    out_ += "\"/>";
+                    if (!fill.is_none()) {  // 与 canvas 一致：有填充色就填充
+                        out_ += "\" fill=\"";
+                        out_ += svg_color(fill);
+                        out_ += "\" stroke=\"none\"/>";
+                    } else {
+                        out_ += "\" fill=\"none\" stroke=\"";
+                        out_ += stroke_paint();
+                        out_ += "\" stroke-width=\"";
+                        out_ += num(stroke_w);
+                        out_ += "\"/>";
+                    }
                 } else if constexpr (std::is_same_v<T, scene::ArcOp>) {
                     flush();
                     const double span = op.end - op.start;
@@ -145,10 +145,10 @@ void SvgBackend::render(const scene::Scene& scene) {
                         out_ += num(op.center.y);
                         out_ += "\" r=\"";
                         out_ += num(op.radius);
-                        out_ += "\" fill=\"";
-                        out_ += svg_color(fill);
-                        out_ += "\" stroke=\"";
-                        out_ += svg_color(stroke);
+                        out_ += "\" fill=\"none\" stroke=\"";
+                        out_ += stroke_paint();
+                        out_ += "\" stroke-width=\"";
+                        out_ += num(stroke_w);
                         out_ += "\"/>";
                     } else {
                         const double x0 = op.center.x + op.radius * std::cos(op.start);
@@ -169,16 +169,16 @@ void SvgBackend::render(const scene::Scene& scene) {
                         out_ += num(x1);
                         out_ += ' ';
                         out_ += num(y1);
-                        out_ += "\" fill=\"";
-                        out_ += svg_color(fill);
-                        out_ += "\" stroke=\"";
-                        out_ += svg_color(stroke);
+                        out_ += "\" fill=\"none\" stroke=\"";
+                        out_ += stroke_paint();
+                        out_ += "\" stroke-width=\"";
+                        out_ += num(stroke_w);
                         out_ += "\"/>";
                     }
                 } else if constexpr (std::is_same_v<T, scene::TextOp>) {
                     flush();
                     const std::string paint =
-                        op.style.fg().is_none() ? std::string("black")
+                        op.style.fg().is_none() ? std::string("currentColor")
                                                 : svg_color(op.style.fg());
                     out_ += "<text x=\"";
                     out_ += num(op.at.x);

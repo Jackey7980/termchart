@@ -32,9 +32,12 @@ CellBuffer fixed_buffer() {
 
 scene::Scene fixed_scene() {
     scene::Scene scene;
+    // Fill/Stroke 是"作用于其后图元"的状态指令，故状态指令写在几何之前。
+    scene.push(scene::StrokeOp{Color::rgb(0x5B, 0x8F, 0xF9), 1.5});
     scene.push(scene::MoveTo{Point{0.0, 0.0}});
     scene.push(scene::LineTo{Point{10.0, 4.0}});
-    scene.push(scene::StrokeOp{Color::rgb(0x5B, 0x8F, 0xF9), 1.5});
+    scene.push(scene::FillOp{Color::rgb(0x10, 0x20, 0x30)});
+    scene.push(scene::RectOp{Rect{1.0, 1.0, 4.0, 3.0}});
     scene.push(scene::TextOp{Point{1.0, 1.0}, "hi<&>", Style{}.set_fg(Color::rgb(0, 0, 0))});
     return scene;
 }

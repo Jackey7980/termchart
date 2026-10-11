@@ -1,6 +1,8 @@
 #include "termchart/canvas/canvas.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <limits>
 
 #include "termchart/canvas/primitives.hpp"
 #include "termchart/core/grapheme.hpp"
@@ -11,11 +13,37 @@
 namespace termchart::canvas {
 namespace {
 
+// 浮点 → 非负格坐标：负数/NaN 归 0（供 fill_rect 的裁剪用），极大值**饱和**
+// 到 uint32 上限，避免越界转换（那是 UB）。调用方一律再经 contains 兜底。
 std::uint32_t floor_to_cell(double value) noexcept {
     if (!(value > 0.0)) {
         return 0;
     }
-    return static_cast<std::uint32_t>(std::floor(value));
+    const double floored = std::floor(value);
+    constexpr double kMax = 4294967295.0;  // uint32 上限
+    if (floored >= kMax) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    return static_cast<std::uint32_t>(floored);
+}
+
+// 有符号下取整：NaN 返回 false（调用方丢弃）。用于文本的**真裁剪**，
+// 让"负列"被跳过而不是折回第 0 列。
+bool signed_floor(double value, std::int64_t& out) noexcept {
+    if (!(value == value)) {  // NaN
+        return false;
+    }
+    const double floored = std::floor(value);
+    if (floored >= 9.0e18) {
+        out = std::numeric_limits<std::int64_t>::max();
+        return true;
+    }
+    if (floored <= -9.0e18) {
+        out = std::numeric_limits<std::int64_t>::min();
+        return true;
+    }
+    out = static_cast<std::int64_t>(floored);
+    return true;
 }
 
 }  // namespace
@@ -27,6 +55,11 @@ void Canvas::resize(std::uint32_t width, std::uint32_t height) { buffer_.resize(
 void Canvas::clear() { buffer_.clear(); }
 
 void Canvas::put(Point p, char32_t cp, const Style& style) noexcept {
+    // 左/上边界之外（含 NaN）直接丢弃：**不**折回第 0 列/行，
+    // 否则负坐标会悄悄覆盖画布边缘。
+    if (!(p.x >= 0.0) || !(p.y >= 0.0)) {
+        return;
+    }
     put(floor_to_cell(p.x), floor_to_cell(p.y), cp, style);
 }
 
@@ -56,11 +89,15 @@ void Canvas::draw_line(Point from, Point to, char32_t cp, const Style& style) no
 }
 
 void Canvas::draw_text(Point at, std::string_view text, const Style& style) noexcept {
+    std::int64_t column = 0;
+    if (!signed_floor(at.x, column)) {
+        return;  // 起点为 NaN：整段丢弃
+    }
     const std::uint32_t row = floor_to_cell(at.y);
     if (row >= buffer_.height()) {
         return;
     }
-    std::uint32_t column = floor_to_cell(at.x);
+    const auto width_limit = static_cast<std::int64_t>(buffer_.width());
     std::size_t pos = 0;
 
     while (pos < text.size()) {
@@ -89,21 +126,26 @@ void Canvas::draw_text(Point at, std::string_view text, const Style& style) noex
 
         if (width == 0) {
             // 孤立零宽簇（文本以组合记号开头）：挂到前一格，绝不单独占格。
-            if (column > 0 && column - 1 < buffer_.width()) {
-                buffer_.set_sides(buffer_.index_of(column - 1, row), sides, side_count);
+            const std::int64_t prev = column - 1;
+            if (prev >= 0 && prev < width_limit) {
+                buffer_.set_sides(
+                    buffer_.index_of(static_cast<std::uint32_t>(prev), row), sides,
+                    side_count);
             }
         } else {
-            if (column < buffer_.width()) {
-                put(column, row, head.cp, style);
+            // 起点落在左边界外时**跳过**该簇（真裁剪），不折回第 0 列。
+            if (column >= 0 && column < width_limit) {
+                const auto col = static_cast<std::uint32_t>(column);
+                put(col, row, head.cp, style);
                 if (side_count > 0) {
-                    buffer_.set_sides(buffer_.index_of(column, row), sides, side_count);
+                    buffer_.set_sides(buffer_.index_of(col, row), sides, side_count);
                 }
                 // 宽字符：右侧一格是续接占位（渲染器不写它）。
-                if (width == 2 && column + 1 < buffer_.width()) {
-                    put(column + 1, row, kContinuationCp, style);
+                if (width == 2 && column + 1 < width_limit) {
+                    put(col + 1, row, kContinuationCp, style);
                 }
             }
-            column += static_cast<std::uint32_t>(width);
+            column += static_cast<std::int64_t>(width);
         }
         pos += step;
     }

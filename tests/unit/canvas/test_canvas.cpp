@@ -2,9 +2,13 @@
 //
 // 关键契约：
 //   * 浮点坐标向下取整落格，越界静默丢弃（绘图路径不报错）；
+//   * 负坐标是**裁剪**而非折回第 0 列/行；极大/Inf/NaN 坐标饱和或丢弃，绝不越界写；
 //   * 宽字符写主码点 + 续接格，宽 0 的组合记号进侧面表（与 core/cell 一致）；
 //   * render_scene 是终端路径上唯一解释 Scene 指令的地方。
 #include <doctest.h>
+
+#include <cstddef>
+#include <limits>
 
 #include <cmath>
 #include <cstdint>
@@ -79,6 +83,35 @@ TEST_CASE("canvas: put 越界静默丢弃，不报错也不越界写") {
     canvas.put(Point{1.4, 1.9}, U'a');  // 向下取整 → (1,1)
     CHECK(canvas.at(1, 1).cp == U'a');
     CHECK(canvas.at(0, 0).cp == U' ');
+}
+
+TEST_CASE("canvas: 负坐标被裁剪而非折回第 0 列") {
+    Canvas canvas(6, 2);
+    canvas.put(Point{-5.0, 0.0}, U'x');
+    CHECK(canvas.at(0, 0).cp == U' ');  // 不折回边界
+
+    canvas.draw_text(Point{-2.0, 0.0}, "abcdef", Style{});
+    CHECK(canvas.at(0, 0).cp == U'c');  // 起点前的两字被裁掉
+    CHECK(canvas.at(3, 0).cp == U'f');
+}
+
+TEST_CASE("canvas: 极大 / Inf / NaN 坐标不越界写") {
+    Canvas canvas(4, 2);
+    canvas.put(Point{1e18, 1e18}, U'x');
+    canvas.put(Point{std::numeric_limits<double>::infinity(), 0.0}, U'y');
+    canvas.put(Point{std::numeric_limits<double>::quiet_NaN(), 0.0}, U'z');
+    canvas.fill_rect(Rect{1e18, 1e18, 1e18, 1e18}, U'#');
+    canvas.draw_text(Point{std::numeric_limits<double>::quiet_NaN(), 0.0}, "q", Style{});
+
+    std::size_t nonblank = 0;
+    for (std::uint32_t y = 0; y < canvas.height(); ++y) {
+        for (std::uint32_t x = 0; x < canvas.width(); ++x) {
+            if (canvas.at(x, y).cp != U' ') {
+                ++nonblank;
+            }
+        }
+    }
+    CHECK(nonblank == 0);
 }
 
 TEST_CASE("canvas: fill_rect 只覆盖半开区间内的格") {

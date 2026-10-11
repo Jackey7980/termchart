@@ -29,3 +29,7 @@ document/table_model
 layout/box
 chart/series
 backend/vector/svg_entities
+interaction/key
+interaction/mouse
+interaction/event
+graph/attributes

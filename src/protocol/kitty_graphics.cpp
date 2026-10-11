@@ -48,9 +48,11 @@ std::string KittyProtocol::encode(const image::Bitmap& bitmap,
             out += std::to_string(w);
             out += ",v=";
             out += std::to_string(h);
+            out += ",m=";  // 首块：参数间用 ',' 分隔
             first = false;
+        } else {
+            out += "m=";  // 续块：无前导逗号（ESC_Gm=1;…）
         }
-        out += ",m=";
         out += (more ? "1" : "0");
         out += ';';
         out += payload.substr(pos, take);

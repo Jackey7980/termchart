@@ -21,6 +21,9 @@ void BarChart::set_values(std::vector<double> values,
 }
 
 void BarChart::draw(DrawContext ctx) {
+    if (values_.empty()) {
+        return;  // 无数据：不绘制，避免内框按列数划分时除零
+    }
     double ymin = 0.0;
     double ymax = 0.0;
     for (double v : values_) {

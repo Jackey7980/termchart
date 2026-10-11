@@ -55,12 +55,23 @@ TEST_CASE("protocol/kitty: 大负载分块 m=1…m=0") {
     bmp.fill(1, 2, 3, 4);
     KittyProtocol p;
     const std::string s = p.encode(bmp);
-    CHECK(s.find(",m=1;") != std::string::npos);
-    CHECK(s.find(",m=0;") != std::string::npos);
+    CHECK(s.find(",m=1;") != std::string::npos);          // 首块：参数分隔用逗号
+    CHECK(s.find("\x1b_Gm=1;") != std::string::npos);     // 中间续块：无前导逗号
+    CHECK(s.find("\x1b_Gm=0;") != std::string::npos);     // 末块：无前导逗号
+    CHECK(s.find("\x1b_G,m=") == std::string::npos);      // 任何块都不得有前导逗号
     CHECK(count_esc_g(s) == 6);
 }
 
 TEST_CASE("protocol/kitty: 空位图返回空串") {
     KittyProtocol p;
     CHECK(p.encode(image::Bitmap{}).empty());
+}
+
+TEST_CASE("protocol/kitty: 续块无前导逗号（ESC_Gm=1 形式）") {
+    image::Bitmap bmp(64, 64, 4);  // 足以触发分块
+    bmp.fill(1, 2, 3, 4);
+    KittyProtocol p;
+    const std::string s = p.encode(bmp);
+    CHECK(s.find("\x1b_Gm=") != std::string::npos);   // 续块正确形式
+    CHECK(s.find("\x1b_G,m=") == std::string::npos);  // 不得出现前导逗号
 }

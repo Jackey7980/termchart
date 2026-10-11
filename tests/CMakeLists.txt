@@ -72,6 +72,17 @@ add_executable(termchart_tests
     unit/protocol/test_protocol_kitty.cpp
     unit/protocol/test_protocol_fallback.cpp
 
+    # ── interaction ──
+    unit/interaction/test_interaction_input.cpp
+    unit/interaction/test_interaction_hit.cpp
+
+    # ── graph ──
+    unit/graph/test_graph.cpp
+    unit/graph/test_wiregrid.cpp
+    unit/graph/test_graph_layout.cpp
+    unit/graph/test_graph_route.cpp
+    unit/graph/test_graph_render.cpp
+
     # ── backend ──
     unit/backend/test_backend_snapshot.cpp
     unit/backend/test_backend_vector.cpp
