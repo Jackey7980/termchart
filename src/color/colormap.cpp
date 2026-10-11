@@ -91,6 +91,8 @@ std::uint8_t clamp_byte(double v) noexcept {
 
 }  // namespace
 
+// Turbo 原始配色由 Anton Mikhailov / Google LLC 发布，采用 Apache License 2.0
+//（见 LICENSES/Apache-2.0.txt）。本实现用其控制点做锚点线性插值近似。
 // 规范 Turbo 控制点（Google Turbo 取样关键色）。原多项式系数已损坏——
 // 输出恒为蓝/青/紫，与 Turbo 不符（已定位：Horner 展开精确复现错误结果）。
 // 此处改走锚点线性插值，形状与 Turbo 一致：深紫→蓝→青→绿→黄→橙→暗红。
