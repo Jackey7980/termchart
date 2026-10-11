@@ -7,6 +7,7 @@
 #ifndef TERMCHART_IMAGE_BITMAP_HPP
 #define TERMCHART_IMAGE_BITMAP_HPP
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -69,6 +70,127 @@ public:
                 }
             }
         }
+    }
+
+    [[nodiscard]] bool contains(std::uint32_t x, std::uint32_t y) const noexcept {
+        return x < w_ && y < h_;
+    }
+
+    // ---- GUI / 合成侧常用的原语（终端侧也用得上：sixel 缩略、PNG 截图拼版）----
+
+    // 局部填充，越界部分裁剪。
+    void fill_rect(std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h,
+                   std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                   std::uint8_t a = 255) noexcept {
+        for (std::uint32_t row = y; row < y + h && row < h_; ++row) {
+            for (std::uint32_t col = x; col < x + w && col < w_; ++col) {
+                set(col, row, 0, r);
+                set(col, row, 1, g);
+                set(col, row, 2, b);
+                if (channels_ == 4) {
+                    set(col, row, 3, a);
+                }
+            }
+        }
+    }
+
+    // 把 src 以左上角 (dx, dy) 叠加到本图，源 alpha 做 source-over 混合。
+    // 偏移用**带符号**类型：GUI 里"有一部分在窗口外"是常态，越界裁剪即可。
+    void blit_over(const Bitmap& src, int dx, int dy) noexcept {
+        if (src.empty() || empty() || src.channels() < 4) {
+            return;  // 无 alpha 的源无法混合，请先 with_alpha()
+        }
+        for (std::uint32_t sy = 0; sy < src.height(); ++sy) {
+            const int ty = dy + static_cast<int>(sy);
+            if (ty < 0 || ty >= static_cast<int>(h_)) {
+                continue;
+            }
+            for (std::uint32_t sx = 0; sx < src.width(); ++sx) {
+                const int tx = dx + static_cast<int>(sx);
+                if (tx < 0 || tx >= static_cast<int>(w_)) {
+                    continue;
+                }
+                const double sa = src.at(sx, sy, 3) / 255.0;
+                if (sa <= 0.0) {
+                    continue;
+                }
+                const double da = channels_ == 4 ? at(static_cast<std::uint32_t>(tx),
+                                                     static_cast<std::uint32_t>(ty), 3) /
+                                                      255.0
+                                                 : 1.0;
+                const double out_a = sa + da * (1.0 - sa);
+                for (std::uint32_t ch = 0; ch < 3; ++ch) {
+                    const double sc = src.at(sx, sy, static_cast<std::uint8_t>(ch)) / 255.0;
+                    const double dc = at(static_cast<std::uint32_t>(tx),
+                                         static_cast<std::uint32_t>(ty),
+                                         static_cast<std::uint8_t>(ch)) /
+                                      255.0;
+                    const double blended =
+                        out_a > 0.0 ? (sc * sa + dc * da * (1.0 - sa)) / out_a : 0.0;
+                    set(static_cast<std::uint32_t>(tx), static_cast<std::uint32_t>(ty),
+                        static_cast<std::uint8_t>(ch),
+                        static_cast<std::uint8_t>(blended * 255.0 + 0.5));
+                }
+                if (channels_ == 4) {
+                    set(static_cast<std::uint32_t>(tx), static_cast<std::uint32_t>(ty), 3,
+                        static_cast<std::uint8_t>(out_a * 255.0 + 0.5));
+                }
+            }
+        }
+    }
+
+    // 最近邻缩放：**不做插值**，避免引入原图没有的颜色（调色板/像素画场景需要）。
+    [[nodiscard]] Bitmap scaled_to(std::uint32_t width, std::uint32_t height) const {
+        Bitmap out(width, height, channels_);
+        if (out.empty() || empty() || w_ == 0 || h_ == 0) {
+            return out;
+        }
+        for (std::uint32_t y = 0; y < height; ++y) {
+            const std::uint32_t sy =
+                std::min(h_ - 1, static_cast<std::uint32_t>(static_cast<std::uint64_t>(y) * h_ /
+                                                             height));
+            for (std::uint32_t x = 0; x < width; ++x) {
+                const std::uint32_t sx =
+                    std::min(w_ - 1, static_cast<std::uint32_t>(static_cast<std::uint64_t>(x) * w_ /
+                                                                 width));
+                for (std::uint8_t ch = 0; ch < channels_; ++ch) {
+                    out.set(x, y, ch, at(sx, sy, ch));
+                }
+            }
+        }
+        return out;
+    }
+
+    // 通道转换：3 → 4（补 alpha），4 → 3（丢 alpha）。已是目标通道数时原样返回。
+    [[nodiscard]] Bitmap with_alpha(std::uint8_t alpha = 255) const {
+        if (channels_ == 4) {
+            return *this;
+        }
+        Bitmap out(w_, h_, 4);
+        for (std::uint32_t y = 0; y < h_; ++y) {
+            for (std::uint32_t x = 0; x < w_; ++x) {
+                out.set(x, y, 0, at(x, y, 0));
+                out.set(x, y, 1, at(x, y, 1));
+                out.set(x, y, 2, at(x, y, 2));
+                out.set(x, y, 3, alpha);
+            }
+        }
+        return out;
+    }
+
+    [[nodiscard]] Bitmap without_alpha() const {
+        if (channels_ == 3) {
+            return *this;
+        }
+        Bitmap out(w_, h_, 3);
+        for (std::uint32_t y = 0; y < h_; ++y) {
+            for (std::uint32_t x = 0; x < w_; ++x) {
+                out.set(x, y, 0, at(x, y, 0));
+                out.set(x, y, 1, at(x, y, 1));
+                out.set(x, y, 2, at(x, y, 2));
+            }
+        }
+        return out;
     }
 
     [[nodiscard]] bool operator==(const Bitmap& other) const noexcept {

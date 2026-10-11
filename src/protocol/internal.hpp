@@ -5,41 +5,15 @@
 #include <cstdint>
 #include <string>
 
+#include "termchart/util/base64.hpp"
+
 namespace termchart::protocol {
 
 inline constexpr char kEsc = '\x1b';
 
-// 标准 base64（无换行）。kitty / iterm2 都需要。
-inline std::string base64_encode(const std::uint8_t* data, std::size_t len) {
-    static constexpr char kTable[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((len + 2) / 3) * 4);
-    std::size_t i = 0;
-    for (; i + 3 <= len; i += 3) {
-        const std::uint32_t v = (static_cast<std::uint32_t>(data[i]) << 16) |
-                                (static_cast<std::uint32_t>(data[i + 1]) << 8) |
-                                static_cast<std::uint32_t>(data[i + 2]);
-        out += kTable[(v >> 18) & 0x3F];
-        out += kTable[(v >> 12) & 0x3F];
-        out += kTable[(v >> 6) & 0x3F];
-        out += kTable[v & 0x3F];
-    }
-    const std::size_t rest = len - i;
-    if (rest == 1) {
-        const std::uint32_t v = static_cast<std::uint32_t>(data[i]) << 16;
-        out += kTable[(v >> 18) & 0x3F];
-        out += kTable[(v >> 12) & 0x3F];
-        out += "==";
-    } else if (rest == 2) {
-        const std::uint32_t v = (static_cast<std::uint32_t>(data[i]) << 16) |
-                                (static_cast<std::uint32_t>(data[i + 1]) << 8);
-        out += kTable[(v >> 18) & 0x3F];
-        out += kTable[(v >> 12) & 0x3F];
-        out += kTable[(v >> 6) & 0x3F];
-        out += '=';
-    }
-    return out;
-}
+// base64 的**唯一实现**在 util/base64.hpp（L1）：term/ 的 OSC 52 剪贴板也要用，
+// 而 term（L2）在 protocol（L9）之下、不能反向依赖，所以实现必须沉到 util。
+// 这里只是转引，让 kitty / iterm2 的调用点继续写作 protocol::base64_encode。
+using util::base64_encode;
 
 }  // namespace termchart::protocol

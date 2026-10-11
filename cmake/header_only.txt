@@ -19,11 +19,13 @@ util/math.hpp
 util/random.hpp
 util/assert.hpp
 color/named_colors.hpp
+util/base64
 scene/command.hpp
 scale/linear
 scale/log
 image/field
 image/bitmap
+image/convert
 document/span
 document/table_model
 layout/box

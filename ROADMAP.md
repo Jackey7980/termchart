@@ -36,7 +36,7 @@
 - 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` 通过；`check_header_only.py` 通过（139 头 / 105 实现）；`check_headers` 通过（139 头全通过）；四个生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille 无 diff）；**`ctest` 24/24 全绿（5 个套件名 + 17 个 example + 2 个 bench 冒烟）；doctest 335 用例 / 185558 断言全绿；golden 9 份**。当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20、21/21、22/22）均为历史快照，不再引用。
 - **R12 已收口（跨层缝，本轮）**：`src/canvas/scene_renderer.cpp` 原先把 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `kStrokeChar = U'*'`、`ImageOp` 填 `kMediumShade`。现在描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 的颜色光栅化后叠加（只覆盖非空格，因此多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke` 的"作用于其后图元"语义与 `backend/vector` 的 SVG 后端正向同构。收口时抓到一个真 bug：**盲文的空白是 `U+2800` 而不是空格**，按空格判空会让每次收口用空白铺满整张画布、把先前画好的内容擦掉（实测折线被后续圆弧的收口抹去），已修并有 `canvas: 多次收口互不擦除` 回归测试。
   **同时澄清一处误判**：`chart`/`graph` 的示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，**从未出占位符**（实测 `*` 计数为 0）；R12 的真实影响面是"同一份 `scene::Scene` 在终端侧能否出真图"，现在能了。
-- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、shape 的 `ellipse`/`hexagon`/`stadium`/`cylinder`/`icon`、diagrams 的 `orgchart`/`dag`/`dependency`）；`image/{decoder,png}`（PNG **解码**方向与通用解码器）；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`、独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`）。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 139 头而规格尚缺约 198 个；`tests/fuzz/` 与 `tests/fixtures/` 目录仍未建立；单头发布（`termchart_full.hpp`）尚未建立。
+- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、diagrams 的 `orgchart`/`dag`/`dependency`）；`layout` 的 `annotation`/`facet`/`auto_margin`/`label_avoid`；`image/{decoder,png}`（PNG **解码**方向与通用解码器）；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`、独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`）。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 157 头而规格尚缺约 181 个；`tests/fuzz/` 与 `tests/fixtures/` 目录仍未建立；单头发布（`termchart_full.hpp`）尚未建立。
 - 权威来源分工不变：`结构.md` 回答"做成什么样"，本文件回答"什么时候做、做到哪"，`CODEBUDDY.md` 是给 AI 的架构摘要。
 
 ---
@@ -111,9 +111,9 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [x] `core/`：`rgb` `color_depth` `attr` `style` `cell` `grapheme` `buffer` `point` `rect` `span_utils` `error` `expected` `arena`
-- [x] `util/` 起步：`utf8` `grapheme` `wcwidth` `text` `bits` `math` `assert` `logging` `format`
-- [x] `color/` 起步：`palette` `quantize` `named_colors` `gradient` `colormap`
-- [x] `term/`：`terminal` `caps` `raw_mode` `size` `ansi` `daemon_safe` `signal` `waker`
+- [x] `util/`：`utf8` `grapheme` `wcwidth` `text` `bits` `math` `assert` `logging` `format` `geom`（点线距离/线段关系/多边形/凸包）`timer`（单调时钟/秒表/帧计时/超时）`scheduler`（单线程定时任务，注入时间源）`task`（可取消句柄）`base64`（**规格清单外**的补充：OSC 52 剪贴板与 kitty/iterm2 协议共用，term 不能反向依赖 protocol，故唯一实现下沉到 L1）
+- [x] `color/`：`palette` `quantize` `named_colors` `gradient` `colormap` `resolve`（Color/Style → 真正 RGB：None 走默认色、按 ColorDepth 先量化再取色，**GUI 与位图输出的分界点**）
+- [x] `term/`：`terminal` `caps` `raw_mode` `size` `ansi` `daemon_safe` `signal` `waker` `mouse_mode`（模式与坐标编码两组独立开关 + 切换前清场）`clipboard`（OSC 52 读写与回包解析）`hyperlink`（OSC 8，参数位与 URI 位分别转义）`capability_query`（DA1/DA2 序列与回复解析）`color_fallback`（TerminalCaps → ColorDepth 桥接，算法唯一实现在 color/quantize）
 - [x] `render/`：`renderer` `sgr` `diff` `damage`
 - [x] `api/` 起步：`quick`（含 `std::call_once` 的 `init_core()`）`opts` `print`
 - [x] `version.hpp` `export.hpp` `deprecate.hpp` `fwd.hpp` `termchart.hpp`
@@ -144,8 +144,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [x] `raster/`：`rasterizer` 基类 + `braille` `halfblock` `quadrant` `ascii` `block` + `registry` + `auto_select`（六分块 `sextant` 用 U+1FBxx 新区块，暂未实现，见下注）
-- [x] `scene/`：`scene` `command` `builder` `visitor`（矢量 IR 本体；`command.hpp` 是 header-only，已在 `cmake/header_only.txt` 里登记）
-- [x] `canvas/`：`canvas` `primitives` `scene_renderer`（起步；`fill` / `path` / `layer` / `transform` / `clip` 待补）
+- [x] `scene/`：`scene` `command` `builder` `visitor`（矢量 IR 本体；`command.hpp` 是 header-only）+ `bounds`（几何包围盒；GUI 侧 `scene_renderer` 要先知道 Scene 多大才能定画布/无效区，故放在 scene 而非 canvas）
+- [x] `canvas/`：`canvas` `primitives` `scene_renderer` + **`fill`（扫描线填充，横向精确覆盖 + 纵向超采样）**、**`path`（曲线自适应细分展平，四段贝塞尔圆）**、**`layer`（Overlay/Replace/Tint 三种合成 + 最小重绘包围盒）**、**`transform`（2D 仿射，含字符宽高比补偿）**、**`clip`（矩形 + 凸多边形；非凸只支持逐点判定并在接口上报 false）**
 - [x] `scale/` 起步：`scale` `linear` `log` `ticks` `nice` `auto_domain`（纯函数部分；`category` / `band` / `registry` 待补）
 - [x] `image/bitmap.hpp`（`Bitmap`：RGBA 像素缓冲，宽/高/通道/行步长）+ `image/field.hpp`（`FloatField`：标量强度场，`raster/` 的输入）；两者都是 header-only。拆开是因为"图片像素"与"标量场"是两种东西，不该挤在一个 `bitmap.hpp` 里
 - [x] `examples/02_sine_wave.cpp`
@@ -225,7 +225,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `graph/` 根：`graph`（节点/有向边容器 + 邻接/度数/并集包围盒）`node` `edge` `attributes`（字符串键值袋）`wiregrid`（原子占用，避免压线）`arrow`（头部字符与占格）`port`（锚点/对侧/朝向）`label_place`（右/左/上/下避让）`crossing`（真交叉计数）
 - [x] `graph/layout/` 起步：`layout`（选项 + 节点尺寸）`grid`（网格）`layered`（分层，含"整图成环时按入度最小者破环、回边不抬层号"）`tree_layout`（根树，支持左右分列）`force`（力导向，确定性圆环初始 + 降温收敛）。`sugiyama`（本仓用 `layered` 覆盖其分层部分）`radial` `kamada_kawai` `circular` 待补
 - [x] `graph/route/` 起步：`route`（同侧端口均匀扇出 + 锚点吸附整数格 + 节点框登记为障碍）`straight` `orthogonal`（Z 形 → L 形 → 直线兜底，方向按节点框相对位置判定）。`spline` `arc` `obstacle` 待补
-- [x] `graph/shape/` 起步：`shape`（轮廓 + 绘制）`box` `rounded` `diamond`。`ellipse` `hexagon` `stadium` `cylinder` `icon` 待补（字符格粒度下椭圆的近似不做假精度，理由见 shape.hpp）
+- [x] `graph/shape/`：`shape`（轮廓 + 绘制，单一 `build_shape` 分派，绘制与轮廓不再各写一份 switch）`box` `rounded` `diamond` `ellipse`（逐行半宽取椭圆方程）`stadium` `hexagon`（六顶点 + 格粒度连线）`cylinder`（顶盖/侧边/底弧）`icon`（无边框，内容由调用方提供）；放不下时优雅退化为矩形/圆角
 - [x] `graph/diagrams/` 起步：`flowchart` `state_machine`（转移事件标签 + 起止标记，标签放不下时**放弃绘制**而不是涂掉节点）`mindmap`（树布局 + 扇形连线）`node_link`（通用节点-连线，供力导向图复用）。`orgchart` `dag` `dependency` 待补
 - [x] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `20_force_graph.cpp`
 - [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp` `test_diagrams_flow.cpp` `test_graph_layout*.cpp` `test_graph_route.cpp` `test_graph_render.cpp`
@@ -263,7 +263,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [x] `image/`：`bitmap`（RGBA）+ `field`（标量场）+ **`png_encode`**（自包含 PNG 编码器：CRC-32 / Adler-32 / zlib stored deflate 块，8 位 RGB·RGBA，非隔行）；`decoder` `png`（**解码**方向）待补
+- [x] `image/`：`bitmap`（RGBA + `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）+ `field`（标量场）+ `convert`（位图 ↔ 标量场：Rec.601 亮度、阈值双色）+ **`png_encode`**（自包含 PNG 编码器：CRC-32 / Adler-32 / zlib stored deflate 块，8 位 RGB·RGBA，非隔行）；`decoder` `png`（**解码**方向）待补
+  > `bitmap` 的合成原语与 `convert` 是规格清单外的补充：GUI 侧要缩放/叠加/上传纹理，终端侧的 sixel 缩略与 PNG 拼版同样需要；`convert` 是"图片 → 盲文/密度预览"的唯一实现（Rec.601 亮度，alpha 乘进结果，透明像素在场里是 0 而不是黑斑）。
   > 取舍：`png_encode` 不引入 zlib，用 stored（未压缩）deflate 块换取"零依赖 + 完全合规"，体积约 +0.03%；将来接真 deflate 只换内部实现。已用 Python 参考 zlib 独立校验：IDAT 解压字节数、滤波字节、逐 chunk CRC、`size=` 声明全部吻合。
 - [x] `protocol/`：`protocol`（基类）`sixel`（量化+调色板+RLE）`kitty_graphics`（原始 RGBA+base64 分块）**`iterm2_inline`**（PNG + base64 + OSC 1337）`halfblock_image`（真彩半块）`fallback`（Kitty > Iterm2 > Sixel > HalfBlock > None）`detect`（环境探测，含 WezTerm/Konsole/iTerm 与手动覆盖开关）
 - [ ] `widget/`：`widget` `container` `vbox` `hbox` `grid_layout` `dock` `panel` `border` `scroll` `styles` `style_sheet` `theme` `theme_dark` `theme_light` `theme_mono` `immediate_widget` `reactive`

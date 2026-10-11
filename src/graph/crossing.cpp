@@ -1,38 +1,20 @@
 // crossing.cpp —— 线段交叉判定与计数
+//
+// 判定规则只有一份，在 util/geom.hpp（L1）：严格异号才算真交叉，共端点、共线重叠、
+// 端点落在另一段上都不算 —— 这正是"连线交叉数"要的口径（贴着端点绕过去不算交叉）。
+// 本文件只负责把它按图的连线组织起来做两两计数。
 #include "termchart/graph/crossing.hpp"
 
 #include <cstddef>
 #include <utility>
 #include <vector>
 
+#include "termchart/util/geom.hpp"
+
 namespace termchart::graph {
 
-namespace {
-
-// 叉积符号：> 0 表示 b 在 o->a 的左侧。
-double orientation(Point o, Point a, Point b) noexcept {
-    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-}
-
-bool same_point(Point a, Point b) noexcept {
-    return a.x == b.x && a.y == b.y;
-}
-
-}  // namespace
-
 bool segments_cross(Point a1, Point a2, Point b1, Point b2) noexcept {
-    // 共端点不算交叉：连线的首尾本就落在节点锚点上。
-    if (same_point(a1, b1) || same_point(a1, b2) || same_point(a2, b1) ||
-        same_point(a2, b2)) {
-        return false;
-    }
-    const double d1 = orientation(b1, b2, a1);
-    const double d2 = orientation(b1, b2, a2);
-    const double d3 = orientation(a1, a2, b1);
-    const double d4 = orientation(a1, a2, b2);
-    // 严格异号才算真交叉；共线或端点落在另一段上（叉积为 0）都不计。
-    return ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) &&
-           ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0));
+    return util::segments_cross(a1, a2, b1, b2);
 }
 
 std::size_t count_crossings(

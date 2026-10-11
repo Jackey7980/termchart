@@ -86,8 +86,9 @@ struct TextOp {
     }
 };
 
-// 图像只带**引用**：像素数据在 image/（L5），而 scene 是 L4，分层不允许
-// scene 依赖 image。image_id 由调用方在导出时解析成实际位图。
+// 图像只带**引用**（image_id），不持有像素：矢量 IR 的职责是"描述画什么"，
+// 把位图塞进来会让一份 Scene 的体积与内存随图片大小失控，也让它无法被廉价复制。
+// image_id 由调用方在导出/渲染时解析成 image/ 里的实际位图。
 struct ImageOp {
     Rect rect;
     std::uint32_t image_id = 0;

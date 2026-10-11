@@ -22,6 +22,7 @@ add_executable(termchart_tests
 
     # ── color ──
     unit/color/test_color.cpp
+    unit/color/test_color_resolve.cpp
 
     # ── term ──
     unit/term/test_term.cpp
@@ -36,9 +37,17 @@ add_executable(termchart_tests
 
     # ── scene ──
     unit/scene/test_scene.cpp
+    unit/scene/test_scene_bounds.cpp
 
     # ── canvas ──
     unit/canvas/test_canvas.cpp
+    unit/canvas/test_canvas_geometry.cpp
+    unit/canvas/test_canvas_path_layer.cpp
+
+    # ── util ──（与既有 misc/grapheme/text/utf8/wcwidth 并列）
+    unit/util/test_base64.cpp
+    unit/util/test_geom.cpp
+    unit/util/test_util_time.cpp
 
     # ── scale ──
     unit/scale/test_scale.cpp
@@ -50,6 +59,7 @@ add_executable(termchart_tests
     unit/image/test_field.cpp
     unit/image/test_bitmap.cpp
     unit/image/test_png_encode.cpp
+    unit/image/test_image_convert.cpp
 
     # ── raster ──
     unit/raster/test_raster_braille.cpp
@@ -76,12 +86,16 @@ add_executable(termchart_tests
     unit/protocol/test_protocol_fallback.cpp
     unit/protocol/test_protocol_detect.cpp
 
+    # ── term ──
+    unit/term/test_term_sequences.cpp
+
     # ── interaction ──
     unit/interaction/test_interaction_input.cpp
     unit/interaction/test_interaction_hit.cpp
 
     # ── graph ──
     unit/graph/test_graph.cpp
+    unit/graph/test_graph_shapes.cpp
     unit/graph/test_wiregrid.cpp
     unit/graph/test_graph_layout.cpp
     unit/graph/test_graph_layout_tree.cpp
