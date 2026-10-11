@@ -9,6 +9,7 @@ foreach(example
         05_showcase
         06_dashboard
         07_fractal
+        08_fractal_levels
         03_function_plot
         03_line_chart
         04_bar_chart
@@ -33,7 +34,7 @@ endforeach()
 # 注意：BUILD_TESTING 由 include(CTest) 定义，本仓库不用它，故看自己的开关。
 if(TERMCHART_BUILD_TESTS)
     foreach(example 01_hello_color 02_sine_wave 03_function_plot 03_line_chart
-                    04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 14_flowchart 15_state_machine
+                    04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 08_fractal_levels 14_flowchart 15_state_machine
                     16_mindmap 20_force_graph 32_quick_one_liner
                     34_export_svg 35_export_html 36_export_json 38_image_sixel)
         add_test(NAME example_${example} COMMAND ${example})
