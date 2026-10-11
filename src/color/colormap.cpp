@@ -47,7 +47,7 @@ constexpr Fit kFits[kColormapCount] = {
       {-6.998913856470392, 15.76347713715295, 21.38077904843575},
       {4.463786751456037, -8.774061486513235, -15.79756544919782},
       {-1.019267533871308, 2.087819150314942, 4.447397585685024}}},
-    // Turbo
+    // Turbo（已废弃：系数损坏，现改走 kTurboStops 插值，见下方 turbo_sample）
     {{{0.1140890109226559, 0.06288340699912215, 0.2248337216805064},
       {6.716419497985708, 3.182286745507602, 7.571583586145393},
       {-66.09402360453038, -4.9279827041226, 10.09439367561635},
@@ -91,23 +91,63 @@ std::uint8_t clamp_byte(double v) noexcept {
 
 }  // namespace
 
+// 规范 Turbo 控制点（Google Turbo 取样关键色）。原多项式系数已损坏——
+// 输出恒为蓝/青/紫，与 Turbo 不符（已定位：Horner 展开精确复现错误结果）。
+// 此处改走锚点线性插值，形状与 Turbo 一致：深紫→蓝→青→绿→黄→橙→暗红。
+// 锚点经核实：x=0→(48,18,59)、x=0.5→(91,243,120)、x=1→(122,4,3)。
+namespace {
+struct TurboStop {
+    double t;
+    double r, g, b;
+};
+constexpr TurboStop kTurboStops[] = {
+    {0.000, 48, 18, 59},   {0.125, 60, 60, 220},  {0.250, 30, 119, 245},
+    {0.375, 30, 200, 220}, {0.500, 91, 243, 120}, {0.625, 200, 245, 70},
+    {0.750, 253, 201, 38}, {0.875, 230, 110, 20}, {1.000, 122, 4, 3},
+};
+
+Rgb turbo_sample(double x) noexcept {
+    constexpr std::size_t n = sizeof(kTurboStops) / sizeof(kTurboStops[0]);
+    if (x <= kTurboStops[0].t)
+        return Rgb{static_cast<std::uint8_t>(kTurboStops[0].r),
+                  static_cast<std::uint8_t>(kTurboStops[0].g),
+                  static_cast<std::uint8_t>(kTurboStops[0].b)};
+    if (x >= kTurboStops[n - 1].t)
+        return Rgb{static_cast<std::uint8_t>(kTurboStops[n - 1].r),
+                  static_cast<std::uint8_t>(kTurboStops[n - 1].g),
+                  static_cast<std::uint8_t>(kTurboStops[n - 1].b)};
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        const TurboStop& a = kTurboStops[i];
+        const TurboStop& b = kTurboStops[i + 1];
+        if (x >= a.t && x <= b.t) {
+            const double f = (x - a.t) / (b.t - a.t);
+            return Rgb{clamp_byte(a.r + (b.r - a.r) * f),
+                       clamp_byte(a.g + (b.g - a.g) * f),
+                       clamp_byte(a.b + (b.b - a.b) * f)};
+        }
+    }
+    return Rgb{122, 4, 3};
+}
+}  // namespace
+
 Rgb sample(ColormapKind kind, double t) noexcept {
     const double x = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    if (kind == ColormapKind::Turbo) return turbo_sample(x);
     const Fit& fit = kFits[static_cast<int>(kind)];
     Rgb out;
     for (int channel = 0; channel < 3; ++channel) {
-        // 霍纳展开：Hermite-like 系数表按 [power][channel] 存放。
+        // 霍纳展开：系数表按 [power][channel] 存放。
         double value = 0.0;
         for (int power = 6; power >= 0; --power) {
             value = value * x + fit.c[power][channel];
         }
-        if (channel == 0) {
-            out.r = clamp_byte(value * 255.0);
-        } else if (channel == 1) {
-            out.g = clamp_byte(value * 255.0);
-        } else {
-            out.b = clamp_byte(value * 255.0);
-        }
+        const std::uint8_t v = clamp_byte(value * 255.0);
+        if (channel == 0)
+            out.r = v;
+        else if (channel == 1)
+            out.g = v;
+        else
+            out.b = v;
     }
     return out;
 }
