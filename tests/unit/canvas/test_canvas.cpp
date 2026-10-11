@@ -163,25 +163,125 @@ TEST_CASE("canvas: to_buffer 是快照，改画布不影响已取出的 buffer")
     CHECK(canvas.at(0, 0).cp == U'b');
 }
 
-TEST_CASE("canvas: render_scene 把折线画进画布") {
+TEST_CASE("canvas: render_scene 把折线画成盲文子像素，占位符 '*' 彻底消失") {
     Scene scene;
+    // 状态在前、几何在后：Fill/Stroke 只作用于其后出现的图元（见 scene_renderer.cpp 注释）。
     scene::SceneBuilder(scene)
+        .stroke(Color::rgb(1, 2, 3))
         .move_to(0.0, 0.0)
-        .line_to(5.0, 2.0)
-        .stroke(Color::rgb(1, 2, 3));
+        .line_to(5.0, 2.0);
 
     Canvas canvas(8, 4);
     render_scene(scene, canvas);
 
-    std::size_t drawn = 0;
+    std::size_t dots = 0;
+    std::size_t placeholders = 0;
+    bool stroke_colored = false;
     for (std::uint32_t x = 0; x < canvas.width(); ++x) {
         for (std::uint32_t y = 0; y < canvas.height(); ++y) {
-            if (canvas.at(x, y).cp == U'*') {
-                ++drawn;
+            const Cell& cell = canvas.at(x, y);
+            if (cell.cp >= U'\u2800' && cell.cp <= U'\u28FF') {  // 盲文点阵区
+                ++dots;
+                if (cell.style.fg() == Color::rgb(1, 2, 3)) {
+                    stroke_colored = true;
+                }
+            }
+            if (cell.cp == U'*') {
+                ++placeholders;
             }
         }
     }
-    CHECK(drawn >= 6);
+    CHECK(dots >= 6);         // 描边落到了子像素上
+    CHECK(placeholders == 0); // 不再是 kStrokeChar 占位
+    CHECK(stroke_colored);    // 颜色来自 StrokeOp
+}
+
+TEST_CASE("canvas: render_scene 的圆弧也是盲文子像素") {
+    Scene scene;
+    scene::SceneBuilder(scene)
+        .stroke(Color::ansi16(2))
+        .arc(Point{6.0, 4.0}, 4.0, 0.0, 6.283185307179586);
+
+    Canvas canvas(16, 10);
+    render_scene(scene, canvas);
+
+    std::size_t dots = 0;
+    for (std::uint32_t x = 0; x < canvas.width(); ++x) {
+        for (std::uint32_t y = 0; y < canvas.height(); ++y) {
+            const char32_t cp = canvas.at(x, y).cp;
+            if (cp >= U'\u2800' && cp <= U'\u28FF') {
+                ++dots;
+            }
+            CHECK_FALSE(cp == U'*');
+        }
+    }
+    CHECK(dots >= 8);  // 一个圆至少要落到多个格上
+}
+
+TEST_CASE("canvas: 多次收口互不擦除（盲文空白不算内容）") {
+    Scene scene;
+    scene::SceneBuilder(scene)
+        .stroke(Color::ansi16(2))
+        .move_to(0.0, 0.0)
+        .line_to(5.0, 0.0)
+        .stroke(Color::ansi16(4))  // 换色触发第一次收口
+        .move_to(0.0, 3.0)
+        .line_to(5.0, 3.0);
+
+    Canvas canvas(8, 5);
+    render_scene(scene, canvas);
+
+    // 只统计"真的有点"的盲文格；U+2800 是空白，不算内容。
+    const auto dots_in_row = [&canvas](std::uint32_t y) {
+        std::size_t count = 0;
+        for (std::uint32_t x = 0; x < canvas.width(); ++x) {
+            const char32_t cp = canvas.at(x, y).cp;
+            if (cp > U'\u2800' && cp <= U'\u28FF') {
+                ++count;
+            }
+        }
+        return count;
+    };
+    const auto blank_braille_in_row = [&canvas](std::uint32_t y) {
+        std::size_t count = 0;
+        for (std::uint32_t x = 0; x < canvas.width(); ++x) {
+            if (canvas.at(x, y).cp == U'\u2800') {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    CHECK(dots_in_row(0) > 0);  // 第一条线还在
+    CHECK(dots_in_row(3) > 0);  // 第二条线画上了
+    CHECK(blank_braille_in_row(0) == 0);  // 第二次收口没有把空白铺回来
+}
+
+TEST_CASE("canvas: Stroke 是状态指令 —— 画在其前的几何用旧颜色") {
+    Scene scene;
+    scene::SceneBuilder(scene)
+        .move_to(0.0, 0.0)  // 几何在前
+        .line_to(5.0, 0.0)
+        .stroke(Color::rgb(200, 0, 0));  // 之后才设色
+
+    Canvas canvas(8, 3);
+    render_scene(scene, canvas);
+
+    std::size_t dots = 0;
+    bool got_new_color = false;
+    for (std::uint32_t x = 0; x < canvas.width(); ++x) {
+        for (std::uint32_t y = 0; y < canvas.height(); ++y) {
+            const Cell& cell = canvas.at(x, y);
+            if (cell.cp >= U'\u2800' && cell.cp <= U'\u28FF') {
+                ++dots;
+                if (cell.style.fg() == Color::rgb(200, 0, 0)) {
+                    got_new_color = true;
+                }
+            }
+        }
+    }
+    CHECK(dots >= 4);
+    CHECK_FALSE(got_new_color);  // 后设的颜色不该回头染上已画出的线
 }
 
 TEST_CASE("canvas: Fill 是状态指令 —— 作用于其后的矩形") {

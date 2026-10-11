@@ -44,10 +44,12 @@ add_executable(termchart_tests
     unit/scale/test_scale.cpp
     unit/scale/test_nice.cpp
     unit/scale/test_ticks.cpp
+    unit/scale/test_scale_registry.cpp
 
     # ── image ──
     unit/image/test_field.cpp
     unit/image/test_bitmap.cpp
+    unit/image/test_png_encode.cpp
 
     # ── raster ──
     unit/raster/test_raster_braille.cpp
@@ -70,7 +72,9 @@ add_executable(termchart_tests
     # ── protocol ──
     unit/protocol/test_protocol_sixel.cpp
     unit/protocol/test_protocol_kitty.cpp
+    unit/protocol/test_protocol_iterm2.cpp
     unit/protocol/test_protocol_fallback.cpp
+    unit/protocol/test_protocol_detect.cpp
 
     # ── interaction ──
     unit/interaction/test_interaction_input.cpp
@@ -101,6 +105,7 @@ add_executable(termchart_tests
     golden/golden_runner.cpp
     golden/test_golden_ansi_props.cpp
     golden/test_golden_exports.cpp
+    golden/test_golden_scene_raster.cpp
 
     # ── 集成 ──
     integration/test_terminal_restore.cpp

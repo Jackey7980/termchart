@@ -78,6 +78,11 @@ if(TERMCHART_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+# 性能基线：零外部依赖、编译快；`--quick` 档进 ctest 冒烟（见 bench/CMakeLists.txt）。
+if(TERMCHART_BUILD_BENCH)
+    add_subdirectory(bench)
+endif()
+
 # ── 生成规则与校验目标（护栏入口） ─────────────────────────────────────────
 include(TermchartGenerate)   # 数据表 / 附一 / 附四 / 单头 + check_* 目标
 include(TermchartSingleHeader)

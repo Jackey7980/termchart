@@ -14,7 +14,7 @@ using namespace termchart::protocol;
 
 }  // namespace
 
-TEST_CASE("protocol/fallback: 优先级 Kitty > Sixel > HalfBlock > None") {
+TEST_CASE("protocol/fallback: 优先级 Kitty > Iterm2 > Sixel > HalfBlock > None") {
     ProtocolCaps caps;
     CHECK(pick_protocol(caps) == ProtocolKind::None);
 
@@ -24,20 +24,24 @@ TEST_CASE("protocol/fallback: 优先级 Kitty > Sixel > HalfBlock > None") {
     caps.sixel = true;
     CHECK(pick_protocol(caps) == ProtocolKind::Sixel);
 
+    caps.iterm2 = true;
+    CHECK(pick_protocol(caps) == ProtocolKind::Iterm2);
+
     caps.kitty = true;
     CHECK(pick_protocol(caps) == ProtocolKind::Kitty);
 }
 
-TEST_CASE("protocol/fallback: 探测到 iterm2 也不选（编码器待 PNG）") {
+TEST_CASE("protocol/fallback: 只有 iterm2 时选 Iterm2（PNG 编码器已就位）") {
     ProtocolCaps caps;
     caps.iterm2 = true;
-    CHECK(pick_protocol(caps) == ProtocolKind::None);
+    CHECK(pick_protocol(caps) == ProtocolKind::Iterm2);
 }
 
 TEST_CASE("protocol: 协议命名") {
     CHECK(std::string(protocol_name(ProtocolKind::None)) == "none");
     CHECK(std::string(protocol_name(ProtocolKind::Sixel)) == "sixel");
     CHECK(std::string(protocol_name(ProtocolKind::Kitty)) == "kitty");
+    CHECK(std::string(protocol_name(ProtocolKind::Iterm2)) == "iterm2");
     CHECK(std::string(protocol_name(ProtocolKind::HalfBlock)) == "halfblock");
 }
 

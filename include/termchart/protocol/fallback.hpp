@@ -12,11 +12,12 @@ namespace termchart::protocol {
 struct ProtocolCaps {
     bool kitty = false;
     bool sixel = false;
-    bool iterm2 = false;    // 可被探测到，但编码器依赖 PNG（待补），故不参与选择
+    bool iterm2 = false;
     bool truecolor = false; // 24-bit 颜色，半块降级需要它
 };
 
-// 选择顺序：Kitty > Sixel > HalfBlock（需 truecolor）> None。
+// 选择顺序：Kitty > Iterm2 > Sixel > HalfBlock（需 truecolor）> None。
+// 排在前面的协议保真度更高（像素级原图 + 无需量化），半块只作最后兜底。
 TERMCHART_API ProtocolKind pick_protocol(const ProtocolCaps& caps) noexcept;
 
 }  // namespace termchart::protocol

@@ -1,4 +1,4 @@
-// 38_image_sixel.cpp —— 终端内显示图片（按能力选择 sixel / kitty / 半块）
+// 38_image_sixel.cpp —— 终端内显示图片（按能力选择 kitty / iterm2 / sixel / 半块）
 //
 // 演示 protocol/ 的完整链路：Bitmap → 探测能力 → 选协议 → 编码 → 写 stdout。
 #include <cstdint>
@@ -8,6 +8,7 @@
 #include "termchart/protocol/detect.hpp"
 #include "termchart/protocol/fallback.hpp"
 #include "termchart/protocol/halfblock_image.hpp"
+#include "termchart/protocol/iterm2_inline.hpp"
 #include "termchart/protocol/kitty_graphics.hpp"
 #include "termchart/protocol/sixel.hpp"
 
@@ -40,6 +41,9 @@ int main() {
     switch (kind) {
         case protocol::ProtocolKind::Kitty:
             bytes = protocol::KittyProtocol{}.encode(bmp);
+            break;
+        case protocol::ProtocolKind::Iterm2:
+            bytes = protocol::Iterm2Inline{}.encode(bmp);
             break;
         case protocol::ProtocolKind::Sixel:
             bytes = protocol::SixelProtocol{}.encode(bmp);

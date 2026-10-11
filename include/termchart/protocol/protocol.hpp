@@ -4,8 +4,8 @@
 // 它不做布局、不移动光标、不写 stdout——定位由调用方决定。于是同一张位图可以
 // 用 sixel / kitty / 半块字符三种方式表达，降级链见 fallback.hpp。
 //
-// 注：iTerm2 内联图像需要 PNG 负载（原始 RGBA 不被识别），PNG 编码器（image/png_encode）
-// 尚未落地，故暂不提供 Iterm2 编码器——宁缺毋滥。
+// 注：iTerm2 内联图像只认 PNG 负载（原始 RGBA 不被识别），其编码器
+// （protocol/iterm2_inline.hpp）建立在内置的 image/png_encode 之上。
 #ifndef TERMCHART_PROTOCOL_PROTOCOL_HPP
 #define TERMCHART_PROTOCOL_PROTOCOL_HPP
 
@@ -21,6 +21,7 @@ enum class ProtocolKind {
     None,       // 不支持任何图像协议（调用方应转而画字符）
     Sixel,      // DEC sixel（DCS 0;0;0q ... ST）
     Kitty,      // Kitty 图形协议（ESC_G，原始 RGBA）
+    Iterm2,     // iTerm2 内联图像（OSC 1337，PNG + base64）
     HalfBlock,  // 真彩半块字符（▀ + 前景/背景色），任何 24-bit 终端可用
 };
 

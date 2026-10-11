@@ -13,6 +13,8 @@ const char* protocol_name(ProtocolKind kind) noexcept {
             return "sixel";
         case ProtocolKind::Kitty:
             return "kitty";
+        case ProtocolKind::Iterm2:
+            return "iterm2";
         case ProtocolKind::HalfBlock:
             return "halfblock";
     }

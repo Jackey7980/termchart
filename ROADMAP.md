@@ -22,20 +22,21 @@
 | 2026-10-10 | 阶段 0 / 阶段 1 落地并跑通：护栏三件套全绿、ctest 7/7、doctest 84 用例 / 4154 断言 | 0、1 |
 | 2026-10-11 | 风险登记册新增 R9（GLOB 重扫描瞬时失败），记录新增源文件后首次构建的假失败陷阱与对策 | 0–8 |
 | 2026-10-11 | Windows 控制台 VT 修复：新增 `platform::enable_vt/disable_vt`（`enter()` 开 `ENABLE_VIRTUAL_TERMINAL_PROCESSING`，`leave()` 按原 mode 恢复）；`caps` 用 `WT_SESSION` 识别真彩色宿主、删除「TERM 为空即无色」误判；风险登记册新增 R10（ANSI/编码陷阱）与 R11（图像尺寸须自适应终端）；新增示例 `03_function_plot`、`04_heatmap`（自适应终端尺寸），改写 `02_sine_wave` 为盲文高精细版，修正 examples 中指向缺失源文件的坏引用 | 0–8 |
-| 2026-10-11 | **深度代码审计（L0–L21 真实落地度）**：逐模块 LOC 统计 + 桩标记扫描 + 崩溃桩扫描 + 四护栏重跑。结论：L0–L16 全部有真实实现（合计约 16.7k 行，生成代码 0 行混入源树：graph 1636 / term 1432 / backend 1134 / interaction 814 / util 1192 / core 1175 / render 721 / raster 689 / color 674 / chart 577 / protocol 492 / canvas 435 / layout 429 / scene 399 / scale 449 / document 271 / image 157 header-only / api 366）；L17 dsl / L18 widget / L19 plugin / L20 app 为零代码空洞（代码与构建脚本均无引用）；L21 api 有实现。护栏全绿（check_layers、check_header_only 135头/101实现、check_headers 135头、4 生成器 --check、ctest 全绿）。**关键发现：canvas/scene_renderer.cpp 的 Scene→Canvas 桥接仍用占位字符（`kStrokeChar=U'*'`、ImageOp 用 `kMediumShade`），raster 取字符留到阶段 7——高级 chart/graph 路径当前出占位符而非真盲文/半块；02/03/04 因直连 raster 才正常。** 桩标记 7 处均为文档化阶段 7 占位、非隐藏空函数；崩溃桩扫描无异常（仅注册表 return nullptr）。登记风险 R12，并修正「现状」对 graph 的漏判，以及 ctest/doctest 计数（ROADMAP 此前写 16/16 / 279 为早期构建子集的陈旧数字；2026-10-11 干净重跑 `ctest --preset ninja` 确权为 17/17 / 303 用例 / 185209 断言，与 CODEBUDDY 一致）。 | 0–8 |
+| 2026-10-11 | **深度代码审计（L0–L21 真实落地度）**：逐模块 LOC 统计 + 桩标记扫描 + 崩溃桩扫描 + 四护栏重跑。结论：L0–L16 全部有真实实现（合计约 16.7k 行，生成代码 0 行混入源树：graph 1636 / term 1432 / backend 1134 / interaction 814 / util 1192 / core 1175 / render 721 / raster 689 / color 674 / chart 577 / protocol 492 / canvas 435 / layout 429 / scene 399 / scale 449 / document 271 / image 157 header-only / api 366）；L17 dsl / L18 widget / L19 plugin / L20 app 为零代码空洞（代码与构建脚本均无引用）；L21 api 有实现。护栏全绿（check_layers、check_header_only 135头/101实现、check_headers 135头、4 生成器 --check、ctest 全绿）。**关键发现**：审计当时 `canvas/scene_renderer.cpp` 的 Scene→Canvas 桥接尚用占位字符（`kStrokeChar=U'*'`、ImageOp 用 `kMediumShade`），即 R12 缺口。**该缺口已于后续提交收口**：描边改走 braille 2×4、填充改走 halfblock 1×2，golden `scene_raster/` 锁外观；`chart`/`graph` 示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，从未出占位符（实测 `*` 计数为 0）。桩标记 5 处（scene_renderer 仅剩 ImageOp、layout/internal.hpp、canvas.cpp、api/quick.cpp、core/error.cpp）均为文档化占位、非隐藏空函数；崩溃桩扫描无异常（仅注册表 return nullptr）。登记风险 R12（现已收口），并修正「现状」对 graph 的漏判，以及 ctest/doctest 计数（早期构建子集曾写 16/16 / 279、17/17 / 303 / 185209，均陈旧；2026-10-11 及本轮干净重跑 `ctest --preset ninja` 确权为 24/24 / 335 用例 / 185558 断言，与 CODEBUDDY 一致）。 | 0–8 |
 
 ---
 
 ## 一、项目现状
 
-**一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。**阶段 4 图可视化已接通**：`graph` 根（节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数）+ 布局（网格/分层/根树/力导向）+ 路由（直线/正交）+ 形状（矩形/圆角/菱形）+ 图种（流程图/状态机图/思维导图/节点-连线），示例 14·15·16·20 跑通。代码量真实（include+src 合计约 16.3k 行，生成代码 0 行混入源树），**但跨层集成 `canvas/scene_renderer.cpp` 的 Scene→raster 取字符留作阶段 7 占位**——高级 chart / graph 路径当前出占位符（`*` / 阴影块）而非真盲文/半块子像素图；02/03/04 因直连 raster 才正常显示。
+**一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。**阶段 4 图可视化已接通**：`graph` 根（节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数）+ 布局（网格/分层/根树/力导向）+ 路由（直线/正交）+ 形状（矩形/圆角/菱形）+ 图种（流程图/状态机图/思维导图/节点-连线），示例 14·15·16·20 跑通。代码量真实（include+src 合计约 16.5k 行，生成代码 0 行混入源树）；**跨层缝 R12 已收口**——`canvas/scene_renderer.cpp` 的描边改走 braille 2×4 子像素、填充改走 halfblock 1×2 实心，`Scene → Canvas` 现在出真图，外观由 golden `scene_raster/basic.txt` 锁住。
 
 - 已完成：`结构.md` 已定义 22 个模块（L0–L21）、三条渲染路径、三物种后端、注册表语义、完整测试/文档/工具链。
-- 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 435 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：四个生成器产物落在 `detail/`（2116 行）不参与此统计，未灌入主源树。
-- 桩标记扫描（6 处，均为文档化阶段 7 占位，非隐藏空函数）：`scene_renderer.cpp`（kStrokeChar 占位 / ImageOp 占位）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
-- 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` 通过；`check_header_only.py` 通过（139 头 / 105 实现）；`check_headers` 通过（139 头全通过）；四个生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille 无 diff）；**`ctest` 21/21 全绿（5 个套件名 + 16 个 example）；doctest 319 用例 / 185314 断言全绿**。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20）均为早期构建子集，不再引用。
-- **关键缺口（决定"看起来做完但没全通"）**：`src/canvas/scene_renderer.cpp` 把 Scene 的所有 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `constexpr char32_t kStrokeChar = U'*'`，`ImageOp` 填充 `kMediumShade`，注释明示「光栅器（raster/，阶段 7 起）接入后会被盲文/半块字符替换。接口不变，观感变」。因此走 `chart`/`graph` 高级 API（Scene→ScenePainter→Canvas）的图目前是占位符；真正能出子像素图的是 `raster::braille`/`halfblock` 直连 `canvas.put` 的旁路（02/03/04 即此路）。
-- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、shape 的 `ellipse`/`hexagon`/`stadium`/`cylinder`/`icon`、diagrams 的 `orgchart`/`dag`/`dependency`）；`image/{decoder,png,png_encode}`、`protocol/iterm2_inline`；阶段 3 收尾项（`scale/registry.hpp`、`latex_backend`、`png_screenshot`、`37_export_latex`、各 bench 与独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`、`bench/` 骨架与 sugiyama·force 基线）；**Scene→raster 取字符集成（R12）**。
+- 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 614 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：四个生成器产物落在 `detail/`（2116 行）不参与此统计，未灌入主源树。
+- 桩标记扫描（5 处，均为文档化占位，非隐藏空函数）：`scene_renderer.cpp`（**仅剩 ImageOp**——Scene 里没有像素数据）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**R12 收口后 `kStrokeChar = U'*'` 已从代码中删除**，描边改走真 braille 子像素。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
+- 验证状态（2026-10-11 深度审计 + 干净重跑 `ctest --preset ninja`）：`check_layers.py` 通过；`check_header_only.py` 通过（139 头 / 105 实现）；`check_headers` 通过（139 头全通过）；四个生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille 无 diff）；**`ctest` 24/24 全绿（5 个套件名 + 17 个 example + 2 个 bench 冒烟）；doctest 335 用例 / 185558 断言全绿；golden 9 份**。当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20、21/21、22/22）均为历史快照，不再引用。
+- **R12 已收口（跨层缝，本轮）**：`src/canvas/scene_renderer.cpp` 原先把 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `kStrokeChar = U'*'`、`ImageOp` 填 `kMediumShade`。现在描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 的颜色光栅化后叠加（只覆盖非空格，因此多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke` 的"作用于其后图元"语义与 `backend/vector` 的 SVG 后端正向同构。收口时抓到一个真 bug：**盲文的空白是 `U+2800` 而不是空格**，按空格判空会让每次收口用空白铺满整张画布、把先前画好的内容擦掉（实测折线被后续圆弧的收口抹去），已修并有 `canvas: 多次收口互不擦除` 回归测试。
+  **同时澄清一处误判**：`chart`/`graph` 的示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，**从未出占位符**（实测 `*` 计数为 0）；R12 的真实影响面是"同一份 `scene::Scene` 在终端侧能否出真图"，现在能了。
+- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `radial`/`kamada_kawai`/`circular`、route 的 `spline`/`arc`/`obstacle`、shape 的 `ellipse`/`hexagon`/`stadium`/`cylinder`/`icon`、diagrams 的 `orgchart`/`dag`/`dependency`）；`image/{decoder,png}`（PNG **解码**方向与通用解码器）；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`、独立 fuzz 目标）；阶段 4 收尾项（`17_uml_class`）。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 139 头而规格尚缺约 198 个；`tests/fuzz/` 与 `tests/fixtures/` 目录仍未建立；单头发布（`termchart_full.hpp`）尚未建立。
 - 权威来源分工不变：`结构.md` 回答"做成什么样"，本文件回答"什么时候做、做到哪"，`CODEBUDDY.md` 是给 AI 的架构摘要。
 
 ---
@@ -154,7 +155,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `examples/03_line_chart.cpp` `04_bar_chart.cpp`
 - [x] `tests/unit/layout/*` `chart/*`
 - [ ] `tests/fuzz/fuzz_utf8.cpp` `fuzz_grapheme.cpp`
-- [ ] `bench/bench_raster.cpp` `bench_utf8.cpp` `bench_scene.cpp`
+- [x] `bench/` 骨架建立：`bench/bench.hpp`（零依赖计时骨架，中位数取样 + `--quick` 冒烟档）、`bench/CMakeLists.txt`（`TERMCHART_BUILD_BENCH` 开关，`--quick` 进 ctest）；本阶段三条（`bench_raster` `bench_utf8` `bench_scene`）待补
 
 > 注：`sextant`（2×3 六分块）映射到 Unicode "Symbols for Legacy Computing" 区块 U+1FB00+，属于较新范围，终端支持度低且与 blind/quadrant 重叠；当前阶段先交盲文/象限，sextant 留待阶段 7 图元数据密度需求再补。若补，需先扩展 `detail/` 六分块表。
 
@@ -185,7 +186,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `backend/` 起步：根 `backend` + `snapshot/`（`backend` `ansi_backend` `text_backend` `html_pre_backend` `json_backend`，`ansi_backend` 复用唯一收窄边 `> render/sgr`）+ `vector/`（`backend` `svg_entities` `svg_backend`）+ `structured/`（`backend` `html_backend` `markdown_backend`）。三物种各至少一个后端；`png_screenshot` 待补
 - [x] `tests/unit/document/*` `backend/*`
 - [x] `interaction/` 起步：`event` `key` `mouse` `input` `input_parser`（ASCII/UTF-8/CSI/SS3/SGR 鼠标/OSC/Alt/Ctrl，含跨包不完整序列）`focus` `hit_test`（只碰 `HitRegion` 几何，**无图表名**）`dispatcher`
-- [ ] `scale/registry.hpp`（本轮新增，与 chart/raster 对齐）
+- [x] `scale/registry.hpp`（`ScaleRegistry`：function-local static 单例、工厂登记、内置 `linear`/`log`、`names()` 去重有序；与 chart/raster 同一套契约）
 - [x] `examples/03_line_chart.cpp` `04_bar_chart.cpp` `34_export_svg.cpp` `35_export_html.cpp` `36_export_json.cpp`（`37_export_latex.cpp` 待补）
 - [x] **`tests/integration/replace_backend_html_pre.cpp`（实验 A）**——实现 `SnapshotBackend` 接口即接入，核心零改动
 - [x] **`tests/integration/replace_chart_radial.cpp`（实验 B）**——实现 `Chart` + `ChartRegistry::register_chart`，核心零改动
@@ -228,12 +229,12 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `graph/diagrams/` 起步：`flowchart` `state_machine`（转移事件标签 + 起止标记，标签放不下时**放弃绘制**而不是涂掉节点）`mindmap`（树布局 + 扇形连线）`node_link`（通用节点-连线，供力导向图复用）。`orgchart` `dag` `dependency` 待补
 - [x] `examples/14_flowchart.cpp` `15_state_machine.cpp` `16_mindmap.cpp` `20_force_graph.cpp`
 - [x] `tests/unit/graph/test_graph.cpp` `test_wiregrid.cpp` `test_diagrams_flow.cpp` `test_graph_layout*.cpp` `test_graph_route.cpp` `test_graph_render.cpp`
-- [ ] `bench/bench_sugiyama.cpp` `bench_force.cpp`（`bench/` 目录与计时骨架尚未建立）
+- [x] `bench/bench_sugiyama.cpp` `bench_force.cpp`（已实测：`layout_layered` 64→1024 节点 120→2210 µs（≈线性）；`layout_force` 20→160 节点 / 200 迭代 2.6→146 ms（≈平方，**已知性能边界**，大图需 Barnes-Hut 或减迭代））
 
 #### 出口条件
 
 - [x] example 14·15·16·20 跑通（`17_uml_class` 待补）
-- [ ] sugiyama / force 有性能基线（需先建 `bench/` 骨架）
+- [x] sugiyama / force 有性能基线（`bench/bench_sugiyama` + `bench/bench_force`，数值与结论见 `docs/reference/capability_matrix.md` 第四节）
 - [ ] `interaction > graph` 放行验证（分层规则已放行；待用一张图的实际命中判定补上端到端验证）
 
 ---
@@ -262,9 +263,9 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [x] `image/` 起步：`bitmap`（RGBA）+ `field`（标量场）；`decoder` `png` `png_encode`（zlib **只在此引入**）待补
-- [x] `protocol/` 起步：`protocol`（基类）`sixel`（量化+调色板+RLE）`kitty_graphics`（原始 RGBA+base64 分块）`halfblock_image`（真彩半块）`fallback`（Kitty>Sixel>HalfBlock>None）`detect`（环境探测）；`iterm2_inline` 待补
-  > `iterm2_inline` 需要 **PNG** 负载（iTerm2 不认原始 RGBA），而 PNG 编码器（`image/png_encode`，含 deflate/CRC32/adler32）尚未落地，故暂缺——宁可不出错误字节流。`ProtocolKind::Iterm2` 已预留但 `pick_protocol` 不选它。
+- [x] `image/`：`bitmap`（RGBA）+ `field`（标量场）+ **`png_encode`**（自包含 PNG 编码器：CRC-32 / Adler-32 / zlib stored deflate 块，8 位 RGB·RGBA，非隔行）；`decoder` `png`（**解码**方向）待补
+  > 取舍：`png_encode` 不引入 zlib，用 stored（未压缩）deflate 块换取"零依赖 + 完全合规"，体积约 +0.03%；将来接真 deflate 只换内部实现。已用 Python 参考 zlib 独立校验：IDAT 解压字节数、滤波字节、逐 chunk CRC、`size=` 声明全部吻合。
+- [x] `protocol/`：`protocol`（基类）`sixel`（量化+调色板+RLE）`kitty_graphics`（原始 RGBA+base64 分块）**`iterm2_inline`**（PNG + base64 + OSC 1337）`halfblock_image`（真彩半块）`fallback`（Kitty > Iterm2 > Sixel > HalfBlock > None）`detect`（环境探测，含 WezTerm/Konsole/iTerm 与手动覆盖开关）
 - [ ] `widget/`：`widget` `container` `vbox` `hbox` `grid_layout` `dock` `panel` `border` `scroll` `styles` `style_sheet` `theme` `theme_dark` `theme_light` `theme_mono` `immediate_widget` `reactive`
 - [ ] `app/`：`app` `loop` `animation` `config` `post` `immediate_app` `headless`
 - [ ] `plugin/`：`plugin` `loader` `dynamic` `manifest`
@@ -370,7 +371,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 | R9 | GLOB 重扫描瞬时失败 | CMake 用 `file(GLOB)` 收集源文件，新增 `.cpp` 后首次构建偶发"代码无误却编不过"（曾现 `layout.cpp` 的 `Rect::bottom()` 假错误），强制重编即过 | 新增源文件后先 `cmake --preset ninja` 重新 configure 一次再构建 | 0–8 |
 | R10 | Windows 控制台 ANSI/编码 | Windows 中文环境（传统 ConsoleHost，`[Console]::OutputEncoding` 为 GBK/936）下运行时：ANSI 转义序列裸露成 `[38;2;…m`、盲文/框线/`▀` 显示为乱码（`鈹` `猓`）。**`chcp 65001` 不足**——它只改控制台代码页，管不到 PowerShell 解码子进程输出的那一层 | 两端配合：① 库层 `Terminal::enter()` 调 `platform::enable_vt()` 置位 `ENABLE_VIRTUAL_TERMINAL_PROCESSING`（`leave()` 按原 mode 精确恢复）；② 用户层设 `[Console]::OutputEncoding=[Text.Encoding]::UTF8`。最省事：改用 Windows Terminal / VS Code 终端（默认 UTF-8 + VT）。另：cmd 用 `chcp 65001`、PowerShell 用 `[Console]::OutputEncoding`，二者只设其一时字符层仍会坏 | 0–8 |
 | R11 | 图像尺寸超终端导致错位 | 绘图时把画布/图像写死成大于终端可视区的尺寸（如热力图 90 列，而终端只有 60 列）：超宽每行折行、超高触发滚动，两者叠加使图像错位（看起来像"颜色溢出/串色"，甚至顶部被截断） | 绘图前用 `terminal.size()` 取**实际**可视区自适应：宽 = `cols`、高 = `rows - 1`（留一行给命令行提示符）；并按字符格约 1:2 的宽高比做等比取景避免变形 | 0–8 |
-| R12 | 高级路径占位渲染（Scene→raster 断层） | `canvas/scene_renderer.cpp` 的 Scene→Canvas 桥接用占位字符 `kStrokeChar=U'*'` 画所有线/弧/矩形轮廓、`ImageOp` 用 `kMediumShade` 填充，注释写明「光栅器（raster/，阶段 7 起）接入后会被盲文/半块替换」。`raster`（盲文/半块/象限/块）本身已实现且可用 | 经 `chart`/`graph` 高级 API 走 Scene→Canvas 的图当前出占位符，**不是真子像素图**；要出真图必须绕开 Scene 直连 `raster::braille`/`halfblock` → `canvas.put` → `renderer`（02/03/04 即此旁路）。把 scene_renderer 接到 raster 是阶段 7 的明确收尾项，且是端到端"用高级 API 出图"的前置条件 | 2/7 |
+| R12 | 高级路径占位渲染（Scene→raster 断层）— **已收口** | 原 `canvas/scene_renderer.cpp` 用占位字符 `kStrokeChar=U'*'` 画所有线/弧/矩形轮廓、`ImageOp` 用 `kMediumShade` 填充。现已接 raster：描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 颜色光栅化后叠加（仅覆盖非空格，多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke`「作用于其后图元」语义与 `backend/vector` 的 SVG 后端正向同构。收口时修了一个真 bug：盲文空白是 `U+2800` 而非空格，按空格判空会擦掉先前内容（回归测试 `canvas: 多次收口互不擦除`）。`raster`（盲文/半块/象限/块）本身已实现且可用 | 现状：同一份 `scene::Scene` 现已能在终端侧出真盲文/半块图，外观由 golden `scene_raster/basic.txt` 锁住。**唯一残留占位为 `ImageOp`**：因 `scene` 层按分层规则禁止依赖 `image`，Scene 里没有像素数据可光栅化（同一份 Scene 在 SVG 等 vector 后端正常出图）。`chart`/`graph` 示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text`，从不经 Scene，故从未是占位符 | 0/7 |
 
 ---
 
