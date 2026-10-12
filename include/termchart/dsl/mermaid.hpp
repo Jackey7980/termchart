@@ -3,7 +3,12 @@
 // 职责只有两件：
 //   1. **识别**首行指令，判断这是哪种图（docs/guide/dsl_reference.md 的表格口径）；
 //   2. 分发到对应方言解析器。
-// 本切片只实现 flowchart；其余识别得到但返回 NotImplemented，**绝不假装解析成功**。
+//
+// 分发去处的产物类型不同，这是刻意的：
+//   flowchart / classDiagram / stateDiagram → `AstGraph`（可 to_graph 落到 graph::Graph）
+//   sequenceDiagram                        → **不在这里**：序列图是时间轴模型，
+//     见 mermaid_sequence.hpp 的 `parse_sequence()`；本入口对它返回 `Unsupported`
+//     并在诊断里说明原因，**绝不假装解析成功**。
 //
 // 自动识别规则（首个非空、非注释行）：
 //   flowchart / graph   → Flowchart

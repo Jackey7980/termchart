@@ -1,0 +1,87 @@
+# ci.yml —— 最小可信 CI
+#
+# 原则（与 ROADMAP/协议一致）：
+#   * 两平台：ubuntu（TSan/ASan 可跑）+ windows（本仓库的主开发平台，MinGW）；
+#   * 护栏与测试同门槛：check_layers / check_header_only / 生成器 --check 与 ctest
+#     一起进必过清单——护栏只在本地跑等于没有护栏；
+#   * 不追矩阵花样：preset 名与 CMakePresets.json 一一对应，改预设必须同步这里。
+
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  guardrails:
+    name: guardrails (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 分层校验
+        run: python tools/check_layers.py
+      - name: 头文件自洽
+        run: python tools/check_header_only.py
+      - name: 生成物与生成器一致
+        run: |
+          python tools/gen_unicode_tables.py --check
+          python tools/gen_grapheme_tables.py --check
+          python tools/gen_braille_table.py --check
+          python tools/gen_turbo_table.py --check
+          python tools/gen_dsl_samples.py --check
+          python tools/gen_module_graph.py --check
+
+  linux:
+    name: ubuntu (gcc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置
+        run: cmake --preset debug
+      - name: 构建
+        run: cmake --build build/debug -j 4
+      - name: 测试
+        run: ctest --test-dir build/debug --output-on-failure
+
+  windows:
+    name: windows (mingw)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            python
+      - name: 配置
+        run: cmake -S . -B build/ci-windows -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: 构建
+        run: cmake --build build/ci-windows -j 4
+      - name: 测试
+        run: ctest --test-dir build/ci-windows --output-on-failure
+
+  sanitizers:
+    name: ubuntu (asan+ubsan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置
+        run: cmake --preset asan
+      - name: 构建
+        run: cmake --build build/asan -j 4
+      - name: 测试
+        run: ctest --test-dir build/asan --output-on-failure

@@ -1,0 +1,17 @@
+' sample_plantuml.txt —— 由 tools/gen_dsl_samples.py 生成，禁手改。
+' 覆盖点：包裹、类体逐行保留、五种关系语义（含 <|-- 的方向反转）、多重度、标签、
+' 以及必须被静默跳过的 note / skinparam。
+@startuml Pipeline
+    skinparam monochrome true
+    class Reader {
+        +open(path)
+        -buffer
+    }
+    class Parser as "Parser 核心"
+    interface Source
+    Source <|-- Reader
+    Reader "1" *-- "*" Parser : parses
+    Parser o-- Token : yields
+    Parser ..> Error : may raise
+    note right of Reader : 需要先 open 再 parse
+@enduml

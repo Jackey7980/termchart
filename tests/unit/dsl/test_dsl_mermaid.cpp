@@ -16,7 +16,10 @@
 #include "termchart/dsl/dsl_registry.hpp"
 #include "termchart/dsl/lexer.hpp"
 #include "termchart/dsl/mermaid.hpp"
+#include "termchart/dsl/mermaid_class.hpp"
 #include "termchart/dsl/mermaid_flow.hpp"
+#include "termchart/dsl/mermaid_sequence.hpp"
+#include "termchart/dsl/mermaid_state.hpp"
 #include "termchart/graph/graph.hpp"
 
 namespace {
@@ -176,10 +179,12 @@ TEST_CASE("dsl/mermaid: 识别各类图种首行") {
     CHECK(detect_diagram("") == MermaidDiagram::Unknown);
     CHECK(detect_diagram("digraph G {}") == MermaidDiagram::Unknown);
 
-    SUBCASE("未实现的图种明确报 NotImplemented，而不是假装成功") {
-        const Result<AstGraph> result = parse_mermaid("sequenceDiagram\n A->>B");
+    SUBCASE("序列图不被塞进图模型：Unsupported + 指向 parse_sequence") {
+        ParseDiagnostic diagnostic;
+        const Result<AstGraph> result = parse_mermaid("sequenceDiagram\n A->>B", {}, &diagnostic);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error() == ErrorCode::NotImplemented);
+        CHECK(result.error() == ErrorCode::Unsupported);
+        CHECK(diagnostic.message.find("parse_sequence") != std::string::npos);
     }
     SUBCASE("识别不了报 ParseError") {
         const Result<AstGraph> result = parse_mermaid("随便写点什么");
@@ -381,7 +386,10 @@ TEST_CASE("dsl/registry: function-local static + 快照语义") {
         CHECK(ast->edges.size() == 1);
     }
     SUBCASE("未注册方言返回 Unsupported") {
-        const Result<AstGraph> missing = first.parse("plantuml", "@startuml\n@enduml");
+        // `yaml` 不在规格的方言清单里，是"永远不该被注册"的样本；
+        // 已登记的方言（flowchart/class/state/dot/plantuml/d2）若在这里断言失败，
+        // 说明注册面变了——那应该改的是期望值，而不是注册表。
+        const Result<AstGraph> missing = first.parse("yaml", "x -> y");
         REQUIRE_FALSE(missing.has_value());
         CHECK(missing.error() == ErrorCode::Unsupported);
     }
@@ -452,3 +460,264 @@ TEST_CASE("dsl/fixtures: sample_mermaid.txt 可解析且覆盖受支持子集") 
     CHECK(produced->edges().size() == ast.edges.size());
 }
 #endif
+
+// ── stateDiagram ──────────────────────────────────────────────────────────
+TEST_CASE("dsl/state: 迁移、[*] 起止与组合态归属") {
+    const std::string source = R"(stateDiagram-v2
+        direction LR
+        [*] --> 空闲
+        空闲 --> 处理中: 收到任务
+        处理中 --> 空闲: 完成
+        处理中 --> [*]
+        state 处理中 {
+            校验 --> 提交
+            提交 --> 校验
+        }
+        note right of 空闲 : 启动即进入
+    )";
+    const Result<AstGraph> result = parse_state_diagram(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+    CHECK(ast.directive == "stateDiagram-v2");
+    CHECK(ast.direction == "LR");
+
+    // 伪状态 [*] 不建节点，语义落到真实状态上。
+    CHECK(ast.find_node("[*]") == nullptr);
+    const AstNode* idle = ast.find_node("空闲");
+    REQUIRE(idle != nullptr);
+    bool initial = false;
+    bool final = false;
+    bool note = false;
+    for (const AstAttribute& attribute : idle->attributes) {
+        initial = initial || attribute.key == "initial";
+        note = note || attribute.key == "note";
+    }
+    const AstNode* busy = ast.find_node("处理中");
+    REQUIRE(busy != nullptr);
+    for (const AstAttribute& attribute : busy->attributes) {
+        final = final || attribute.key == "final";
+    }
+    CHECK(initial);
+    CHECK(final);
+    CHECK(note);
+
+    // 组合态：本身标记 composite，内部状态记 parent。
+    bool composite = false;
+    for (const AstAttribute& attribute : busy->attributes) {
+        composite = composite || attribute.key == "composite";
+    }
+    CHECK(composite);
+    const AstNode* inner = ast.find_node("校验");
+    REQUIRE(inner != nullptr);
+    REQUIRE_FALSE(inner->attributes.empty());
+    CHECK(inner->attributes[0].value == "处理中");
+
+    SUBCASE("缺头部报 ParseError") {
+        ParseDiagnostic diagnostic;
+        const Result<AstGraph> bad = parse_state_diagram("空闲 --> 处理中", {}, &diagnostic);
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error() == ErrorCode::ParseError);
+        CHECK(diagnostic.line == 1);
+    }
+    SUBCASE("组合态缺少 end 也要报错") {
+        const Result<AstGraph> bad = parse_state_diagram("stateDiagram-v2\n state A {\n B\n");
+        REQUIRE_FALSE(bad.has_value());
+    }
+}
+
+// ── classDiagram ──────────────────────────────────────────────────────────
+TEST_CASE("dsl/class: 关系方向语义（继承谁不能反）") {
+    const std::string source = R"(classDiagram
+        class Animal {
+            +String name
+            +eat()
+        }
+        Animal <|-- Dog
+        Dog --|> Runnable
+        Animal *-- Leg
+        Animal o-- Tail
+        Dog ..> Collar : uses
+        Dog : +bark()
+        class Runnable["可运行"]
+    )";
+    const Result<AstGraph> result = parse_class_diagram(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+
+    const auto relation_of = [&ast](std::string_view from, std::string_view to) {
+        for (const AstEdge& edge : ast.edges) {
+            if (edge.from == from && edge.to == to) {
+                for (const AstAttribute& attribute : edge.attributes) {
+                    if (attribute.key == "relation") {
+                        return attribute.value;
+                    }
+                }
+            }
+        }
+        return std::string("missing");
+    };
+
+    // `A <|-- B`：B 继承 A → 边从 B 指向 A。
+    CHECK(relation_of("Dog", "Animal") == "inheritance");
+    CHECK(relation_of("Animal", "Dog") == "missing");
+    // `A --|> B`：A 继承 B。
+    CHECK(relation_of("Dog", "Runnable") == "inheritance");
+    CHECK(relation_of("Animal", "Leg") == "composition");
+    CHECK(relation_of("Animal", "Tail") == "aggregation");
+    CHECK(relation_of("Dog", "Collar") == "dependency");
+
+    const AstNode* animal = ast.find_node("Animal");
+    REQUIRE(animal != nullptr);
+    std::size_t members = 0;
+    for (const AstAttribute& attribute : animal->attributes) {
+        if (attribute.key == "member") {
+            ++members;
+        }
+    }
+    CHECK(members == 2);  // 类体两行
+
+    const AstNode* dog = ast.find_node("Dog");
+    REQUIRE(dog != nullptr);
+    bool has_bark = false;
+    for (const AstAttribute& attribute : dog->attributes) {
+        has_bark = has_bark || attribute.value == "+bark()";
+    }
+    CHECK(has_bark);
+    CHECK(ast.find_node("Runnable")->label == "可运行");
+}
+
+TEST_CASE("dsl/class: 多重度与构造型") {
+    const std::string source = R"(classDiagram
+        class Order {
+            +int id
+        }
+        Order "1" --> "*" Item : contains
+    )";
+    const Result<AstGraph> result = parse_class_diagram(source);
+    REQUIRE(result.has_value());
+    REQUIRE(result->edges.size() == 1);
+    const AstEdge& edge = result->edges[0];
+    CHECK(edge.label == "contains");
+    bool from_multi = false;
+    bool to_multi = false;
+    for (const AstAttribute& attribute : edge.attributes) {
+        from_multi = from_multi || (attribute.key == "from_multiplicity" && attribute.value == "1");
+        to_multi = to_multi || (attribute.key == "to_multiplicity" && attribute.value == "*");
+    }
+    CHECK(from_multi);
+    CHECK(to_multi);
+
+    SUBCASE("方向反转时多重度跟着端点换") {
+        const Result<AstGraph> reversed =
+            parse_class_diagram("classDiagram\n A \"1\" <|-- \"*\" B\n");
+        REQUIRE(reversed.has_value());
+        REQUIRE(reversed->edges.size() == 1);
+        const AstEdge& edge2 = reversed->edges[0];
+        CHECK(edge2.from == "B");
+        CHECK(edge2.to == "A");
+        for (const AstAttribute& attribute : edge2.attributes) {
+            if (attribute.key == "from_multiplicity") {
+                CHECK(attribute.value == "*");  // 挂在 B 上
+            }
+            if (attribute.key == "to_multiplicity") {
+                CHECK(attribute.value == "1");  // 挂在 A 上
+            }
+        }
+    }
+}
+
+// ── sequenceDiagram（独立类型，不进图模型） ───────────────────────────────
+TEST_CASE("dsl/sequence: 参与者、消息种类与激活") {
+    const std::string source = R"(sequenceDiagram
+        participant A as 客户端
+        actor B
+        A->>B: 请求
+        B-->>A: 响应
+        B-)A: 通知
+        A-xB: 丢弃
+        activate B
+        deactivate B
+        Note left of A: 发起方
+        Note over A,B: 交互区间
+        loop 重试
+            A->>B: 再来一次
+        end
+        autonumber
+    )";
+    const Result<AstSequence> result = parse_sequence(source);
+    REQUIRE(result.has_value());
+    const AstSequence& sequence = *result;
+    CHECK(sequence.directive == "sequenceDiagram");
+    REQUIRE(sequence.participants.size() == 2);
+    CHECK(sequence.participants[0].label == "客户端");
+    CHECK(sequence.participants[1].kind == "actor");
+
+    REQUIRE(sequence.messages.size() == 5);
+    CHECK(sequence.messages[0].kind == MessageKind::Async);
+    CHECK(sequence.messages[1].kind == MessageKind::AsyncDotted);
+    CHECK(sequence.messages[2].kind == MessageKind::Open);
+    CHECK(sequence.messages[3].kind == MessageKind::Cross);
+    CHECK(sequence.messages[0].text == "请求");
+    CHECK(sequence.messages[0].order == 0);
+    CHECK(sequence.messages[4].order == 4);
+
+    REQUIRE(sequence.notes.size() == 2);
+    CHECK(sequence.notes[0].placement == SequenceNote::Placement::Left);
+    CHECK(sequence.notes[0].participants[0] == "A");
+    CHECK(sequence.notes[1].placement == SequenceNote::Placement::Over);
+    CHECK(sequence.notes[1].participants.size() == 2);
+
+    SUBCASE("块语句与 autonumber 只登记不报错") {
+        bool saw_block = false;
+        bool saw_autonumber = false;
+        for (const AstAttribute& attribute : sequence.attributes) {
+            saw_block = saw_block || attribute.key == "ignored_block";
+            saw_autonumber = saw_autonumber || attribute.key == "autonumber";
+        }
+        CHECK(saw_block);
+        CHECK(saw_autonumber);
+    }
+    SUBCASE("激活简写") {
+        const Result<AstSequence> shorthand = parse_sequence(
+            "sequenceDiagram\n A->>+B: 开\n B-->>-A: 关\n");
+        REQUIRE(shorthand.has_value());
+        REQUIRE(shorthand->messages.size() == 2);
+        CHECK(shorthand->messages[0].activate_target);
+        CHECK(shorthand->messages[1].deactivate_source);
+    }
+    SUBCASE("缺接收者报 ParseError") {
+        const Result<AstSequence> bad = parse_sequence("sequenceDiagram\n A->>");
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error() == ErrorCode::ParseError);
+    }
+    SUBCASE("消息种类有稳定名字（渲染器与文档共用）") {
+        CHECK(std::string(message_kind_name(MessageKind::AsyncDotted)) == "async-dotted");
+    }
+}
+
+TEST_CASE("dsl/mermaid: class/state 走 parse_mermaid，sequence 明确指向专用入口") {
+    const Result<AstGraph> class_ast = parse_mermaid("classDiagram\n A <|-- B\n");
+    REQUIRE(class_ast.has_value());
+    CHECK(class_ast->edges.size() == 1);
+
+    const Result<AstGraph> state_ast = parse_mermaid("stateDiagram-v2\n [*] --> A\n");
+    REQUIRE(state_ast.has_value());
+    CHECK(state_ast->find_node("A") != nullptr);
+
+    ParseDiagnostic diagnostic;
+    const Result<AstGraph> sequence_ast =
+        parse_mermaid("sequenceDiagram\n A->>B: hi\n", {}, &diagnostic);
+    REQUIRE_FALSE(sequence_ast.has_value());
+    CHECK(sequence_ast.error() == ErrorCode::Unsupported);
+    CHECK(diagnostic.message.find("parse_sequence") != std::string::npos);
+}
+
+TEST_CASE("dsl/registry: class/state 已登记，sequence 刻意不登记") {
+    DslRegistry& registry = DslRegistry::instance();
+    (void)register_builtin_dsls();
+    CHECK(registry.find("class") != nullptr);
+    CHECK(registry.find("state") != nullptr);
+    CHECK(registry.find("sequence") == nullptr);  // 产物不是 AstGraph，契约不兼容
+    CHECK(registry.parse("class", "classDiagram\n A <|-- B").has_value());
+    CHECK(registry.parse("state", "stateDiagram-v2\n [*] --> A").has_value());
+}

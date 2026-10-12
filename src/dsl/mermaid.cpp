@@ -1,6 +1,8 @@
 #include "termchart/dsl/mermaid.hpp"
 
+#include "termchart/dsl/mermaid_class.hpp"
 #include "termchart/dsl/mermaid_flow.hpp"
+#include "termchart/dsl/mermaid_state.hpp"
 
 namespace termchart::dsl {
 namespace {
@@ -92,14 +94,25 @@ Result<AstGraph> parse_mermaid(std::string_view source, const MermaidOptions& op
             flowchart_options.max_nodes = options.max_nodes;
             return parse_flowchart(source, flowchart_options, out_diagnostic);
         }
+        case MermaidDiagram::Class: {
+            ClassParseOptions class_options;
+            class_options.max_nodes = options.max_nodes;
+            return parse_class_diagram(source, class_options, out_diagnostic);
+        }
+        case MermaidDiagram::State: {
+            StateParseOptions state_options;
+            state_options.max_nodes = options.max_nodes;
+            return parse_state_diagram(source, state_options, out_diagnostic);
+        }
         case MermaidDiagram::Sequence:
-        case MermaidDiagram::Class:
-        case MermaidDiagram::State:
+            // 序列图**不是图模型**：本入口的契约是返回 AstGraph，硬塞会得到既不是图、
+            // 也画不出序列图的半成品。请改用 mermaid_sequence.hpp 的 parse_sequence()。
             if (out_diagnostic != nullptr) {
-                out_diagnostic->code = ErrorCode::NotImplemented;
-                out_diagnostic->message = "该 Mermaid 图种尚未实现（当前仅 flowchart）";
+                out_diagnostic->code = ErrorCode::Unsupported;
+                out_diagnostic->message =
+                    "序列图不是图模型：请使用 dsl/mermaid_sequence.hpp 的 parse_sequence()";
             }
-            return Unexpected<ErrorCode>(ErrorCode::NotImplemented);
+            return Unexpected<ErrorCode>(ErrorCode::Unsupported);
         case MermaidDiagram::Unknown:
             break;
     }

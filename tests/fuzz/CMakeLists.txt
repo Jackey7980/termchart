@@ -17,7 +17,9 @@ set(_termchart_fuzz_targets
     fuzz_input_parser
     fuzz_colormap
     fuzz_sixel
-    fuzz_png)
+    fuzz_png
+    fuzz_mermaid
+    fuzz_dsl_lexer)
 
 foreach(fuzz ${_termchart_fuzz_targets})
     add_executable(${fuzz} ${fuzz}.cpp)

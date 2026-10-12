@@ -22,9 +22,9 @@
 | `sample_data.hpp` | 通用数据系列样例（折线/柱/散点共用） | **待补** |
 | `sample_graph.hpp` | 图模型样例（含环、孤立点、长标签等边界） | **待补** |
 | `sample_mermaid.txt` | Mermaid 源文本（`dsl/` 解析输入） | **已有**：生成器 `tools/gen_dsl_samples.py`，`check_generated` 守一致性；覆盖 8 种节点形状 / 两种边标签 / 边链 / subgraph / 需忽略指令 |
-| `sample_dot.txt` | Graphviz DOT 源文本 | **待补**（同上） |
-| `sample_plantuml.txt` | PlantUML 源文本 | **待补**（同上） |
-| `sample.csv` | CSV 表格输入（`document/` 或 `dsl`） | **待补** |
+| `sample_dot.txt` | Graphviz DOT 源文本 | **已有**：同生成器；覆盖 rankdir、含 `->` 的引号标签、形状、并列节点集 |
+| `sample_plantuml.txt` | PlantUML 源文本 | **已有**：同生成器；覆盖类体、五种关系、多重度、被忽略的 note/skinparam |
+| `sample.csv` | CSV 表格输入（`dsl`） | **已有**：同生成器；覆盖引号字段含分隔符与换行、混合列类型推断 |
 | `sample_grapheme.txt` | 字素簇用例（组合记号、ZWJ、区域指示符） | **待补** |
 
 补齐顺序建议：`sample_graph.hpp` / `sample_data.hpp`（不依赖空层，且能立刻给

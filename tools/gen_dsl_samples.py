@@ -9,8 +9,9 @@
 以及"认得出但不做"的指令（classDef / click / style）——它们必须被静默跳过而非报错。
 只使用 mermaid_flow.hpp 明确列出的支持子集：这里出现什么形状，解析器就必须认什么。
 
-`sample_dot.txt` / `sample_plantuml.txt` / `sample.csv` 在对应方言落地后追加
-（当前 L17 只有 flowchart 解析器，先不产出没有消费者的夹具）。
+`sample_dot.txt` / `sample_plantuml.txt` / `sample.csv` 同样由本脚本产出：
+四个文件各自覆盖对应方言「已声明支持」的那部分语法，方言支持面缩水时
+`tests/unit/dsl/test_dsl_fixtures.cpp` 会红。
 """
 from __future__ import annotations
 
@@ -46,9 +47,58 @@ graph LR
 """
 
 
+SAMPLE_DOT = """// sample_dot.txt —— 由 tools/gen_dsl_samples.py 生成，禁手改。
+// 覆盖点：rankdir、带引号且含 "->" 的标签（属性按原文切片读，不能被箭头误伤）、
+// 形状映射、带属性边、并列节点集展开、无向图语法、以及被忽略的默认属性行。
+strict digraph Pipeline {
+    rankdir=LR
+    node [shape=box]
+    a [label="read -> parse", shape=ellipse]
+    b [label="parse"]
+    c [label="validate", shape=diamond]
+    d [label="sink", shape=cylinder]
+    a -> b
+    b -> c [label="ok", style=dashed]
+    b -> {d e} -> f
+    c -- d [dir=both]
+    e [label="旁路"]
+}
+"""
+
+SAMPLE_PLANTUML = """' sample_plantuml.txt —— 由 tools/gen_dsl_samples.py 生成，禁手改。
+' 覆盖点：包裹、类体逐行保留、五种关系语义（含 <|-- 的方向反转）、多重度、标签、
+' 以及必须被静默跳过的 note / skinparam。
+@startuml Pipeline
+    skinparam monochrome true
+    class Reader {
+        +open(path)
+        -buffer
+    }
+    class Parser as "Parser 核心"
+    interface Source
+    Source <|-- Reader
+    Reader "1" *-- "*" Parser : parses
+    Parser o-- Token : yields
+    Parser ..> Error : may raise
+    note right of Reader : 需要先 open 再 parse
+@enduml
+"""
+
+SAMPLE_CSV = """id,name,score,active,joined,note
+1,Alice,91.5,true,2026-01-04,"hello, world"
+2,Bob,78,no,2026-02-11,"multi
+line note"
+3,Carol,,yes,2026-03-02,
+4,Dave,-4.25,false,2026-04-19,plain
+"""
+
+
 def main(argv: list[str]) -> int:
     check = wants_check(argv)
     changed = emit(FIXTURES / "sample_mermaid.txt", SAMPLE_MERMAID, check)
+    changed |= emit(FIXTURES / "sample_dot.txt", SAMPLE_DOT, check)
+    changed |= emit(FIXTURES / "sample_plantuml.txt", SAMPLE_PLANTUML, check)
+    changed |= emit(FIXTURES / "sample.csv", SAMPLE_CSV, check)
     return 1 if changed and check else 0
 
 

@@ -1,0 +1,16 @@
+// sample_dot.txt —— 由 tools/gen_dsl_samples.py 生成，禁手改。
+// 覆盖点：rankdir、带引号且含 "->" 的标签（属性按原文切片读，不能被箭头误伤）、
+// 形状映射、带属性边、并列节点集展开、无向图语法、以及被忽略的默认属性行。
+strict digraph Pipeline {
+    rankdir=LR
+    node [shape=box]
+    a [label="read -> parse", shape=ellipse]
+    b [label="parse"]
+    c [label="validate", shape=diamond]
+    d [label="sink", shape=cylinder]
+    a -> b
+    b -> c [label="ok", style=dashed]
+    b -> {d e} -> f
+    c -- d [dir=both]
+    e [label="旁路"]
+}

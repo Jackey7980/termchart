@@ -80,6 +80,16 @@ add_executable(termchart_tests
     unit/chart/test_chart_extras.cpp
     unit/chart/test_chart_area_step.cpp
     unit/chart/test_chart_hist_heatmap.cpp
+    unit/chart/test_chart_cartesian_a.cpp
+    unit/chart/test_chart_cartesian_b.cpp
+    unit/chart/test_chart_polar.cpp
+    unit/chart/test_chart_statistical.cpp
+    unit/chart/test_chart_financial.cpp
+    unit/chart/test_chart_hierarchical.cpp
+    unit/chart/test_chart_flow.cpp
+    unit/chart/test_chart_geo.cpp
+    unit/chart/test_chart_text.cpp
+    unit/chart/test_chart_indicator.cpp
 
     # ── document ──
     unit/document/test_doc_ir.cpp
@@ -97,6 +107,11 @@ add_executable(termchart_tests
     # ── interaction ──
     unit/interaction/test_interaction_input.cpp
     unit/interaction/test_interaction_hit.cpp
+    unit/interaction/test_interaction_legend.cpp
+    unit/interaction/test_interaction_highlight.cpp
+    unit/interaction/test_interaction_select.cpp
+    unit/interaction/test_interaction_brush.cpp
+    unit/interaction/test_interaction_immediate.cpp
     unit/interaction/test_interaction_viewport.cpp
     unit/interaction/test_interaction_overlay.cpp
 
@@ -114,6 +129,9 @@ add_executable(termchart_tests
     unit/graph/test_graph_render.cpp
     unit/graph/test_diagrams_flow.cpp
     unit/graph/test_diagrams_orgchart.cpp
+    unit/graph/test_graph_layout_metro_cluster.cpp
+    unit/graph/test_graph_route_obstacle_bundling.cpp
+    unit/graph/test_diagrams_dag.cpp
 
     # ── backend ──
     unit/backend/test_backend_snapshot.cpp
@@ -122,6 +140,11 @@ add_executable(termchart_tests
 
     # ── dsl ──
     unit/dsl/test_dsl_mermaid.cpp
+    unit/dsl/test_dsl_dot.cpp
+    unit/dsl/test_dsl_plantuml.cpp
+    unit/dsl/test_dsl_csv.cpp
+    unit/dsl/test_dsl_fixtures.cpp
+    unit/dsl/test_dsl_d2.cpp
 
     # ── 跨模块不变量 ──
     unit/test_contracts.cpp

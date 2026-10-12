@@ -1,0 +1,6 @@
+id,name,score,active,joined,note
+1,Alice,91.5,true,2026-01-04,"hello, world"
+2,Bob,78,no,2026-02-11,"multi
+line note"
+3,Carol,,yes,2026-03-02,
+4,Dave,-4.25,false,2026-04-19,plain

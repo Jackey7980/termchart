@@ -19,6 +19,10 @@
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
 | TBD | 初稿建立 | 全部 |
+| 2026-10-12 | **graph 6 缺口落地（并行包）**：`layout/metro`（链分解 + 45° 之字 + 栅格路由：直连→45°步进→L形→直线兜底）、`layout/cluster`、`route/bundling`、`route/obstacle`、`diagrams/dag`（含环检测）、`diagrams/dependency`，3 个测试文件 17 用例。**最终验证**：`ctest` 全绿（除 metro 3 用例）、doctest **756 用例 / 190874 断言、753 通过**；`check_header_only` 275 头 / 235 实现。**已知红（3 用例 / 23 断言，均在 metro）**：①测试期望用 opts.step=8，未考虑实现文档化的"step 抬升到最大框宽高"（测试需按有效 step 断言）；②metro 路由 45°/穿框检查未过，需跑实现定位（可能实现有真 bug）。这 3 例是下一切片的第一件事 | 2–4 |
+| 2026-10-12 | **chart 全子目录铺开（68 文件）**：6 个并行包 + 主线收口。cartesian 23/23（补 16 图种）、polar 8/8、statistical 11/11、hierarchical 6+1、financial 7/7、flow 2/2、geo 4/4、text 4/4、indicator 5/5——规格 9 子目录全部齐备。断点恢复过程中修掉 2 处遗留编译错误（choropleth 的 Color/Style 误用、wordcloud 重复定义）、补齐 drawdown/yield_curve 两个缺失实现；statistical/financial 各缺的 7+3 个图种与 4 个缺失 cpp 由收尾包补齐。测试：chart 九个子目录的测试文件**全部接入**（polar/statistical/financial/hierarchical/flow/geo/text/indicator/cartesian×3，**ctest 42/42、doctest 739 用例 / 190594 断言全绿**；此前登记的 13 处"已知红"实为中断瞬间的中间态二进制，干净重跑即全绿）。横切：`.github/workflows/ci.yml` 新增（护栏三件套 + ctest 双平台必过）。 | 3 |
+| 2026-10-12 | **阶段 5 收口：interaction 深化（5 个缺失组件）+ example 30**。新增 `highlight`（高亮放大：锚点居中、跨度 /magnify，复用 zoom 的锚点性质措辞）、`select`（框选状态机：begin/update/end/cancel，矩形归一化、payloads_inside 保持输入顺序）、`brush`（刷选：半径吸附、首次顺序去重）、`legend_toggle`（图例点击切换：id→可见性，payload 0 永不生效，click_at 复用 topmost_hit）、`immediate`（Event 流路由进 Viewport/BoxSelect 的最小粘合层）。新增 `examples/30_legend_toggle.cpp`（三帧脚本：全可见 → 点 sin 隐藏 → 恢复 sin 隐藏 cos，图例 `[x]` 标记与状态同源）。两个并行工作包（hl-select / brush-imm）+ 主线（legend_toggle + example 30 + 收口），共享文件仍只有 tests/CMakeLists.txt 与 examples/CMakeLists.txt 的追加行。**最终验证**：`ctest` **42/42 全绿**（doctest **601 用例 / 190214 断言**），四护栏全绿（`check_header_only` 205 头 / 165 实现）。阶段 5 出口条件（example 21·22·30·33 / 三个 dsl fuzz / dsl_registry 快照语义）**全部满足** | 5 |
+| 2026-10-12 | **L17 `dsl` 第一阶段（6/14 文件）**：`parser_base` / `lexer` / `ast` / `dsl_registry` / `mermaid` / `mermaid_flow` + 单测 + `sample_mermaid.txt` + example 33。验证：独立构建目录 `build/dsl-ninja` 构建零失败、`ctest` 32/32、四护栏全绿 | 5 |
 | 2026-10-12 | **L17 `dsl` 开始落地（第一批 6/14 文件）**：`parser_base`（递归下降框架：peek/advance/match + 首个诊断定位）/ `lexer`（箭头感知切分、UTF-8 标签、注释前缀可配、非法字节不阻塞游标）/ `ast`（中立模型 + `to_graph` 唯一适配点）/ `dsl_registry`（function-local static + 快照语义 + 幂等内置登记）/ `mermaid`（首行指令识别与分发，未实现图种返回 `NotImplemented`）/ `mermaid_flow`（头部/方向、8 种节点形状、9 种箭头、两种边标签写法、边链、subgraph 归属）。配套：`tests/unit/dsl/test_dsl_mermaid.cpp`（15 用例 / 153 断言）、`tests/fixtures/sample_mermaid.txt`（生成器 `tools/gen_dsl_samples.py`，已接入 `generate_all` / `check_generated`）、`examples/33_mermaid_flowchart.cpp`（解析→Graph→复用 `render_flowchart`）。本轮在独立构建目录 `build/dsl-ninja` 验证：构建 96 目标零失败、`ctest` **32/32 全绿**（doctest 513 用例 / 189524 断言）、四护栏全绿。**未做（明确留给后续切片）**：`mermaid_sequence`/`mermaid_class`/`mermaid_state`、`graphviz_dot`、`plantuml`、`d2`、`table_markdown`、`csv_sniff`，以及 `fuzz_mermaid`/`fuzz_dsl_lexer`/`bench_mermaid_parse`、`sample_dot.txt`/`sample_plantuml.txt`/`sample.csv` | 5 |
 | 2026-10-10 | 阶段 0 / 阶段 1 落地并跑通：护栏三件套全绿、ctest 7/7、doctest 84 用例 / 4154 断言 | 0、1 |
 | 2026-10-11 | 风险登记册新增 R9（GLOB 重扫描瞬时失败），记录新增源文件后首次构建的假失败陷阱与对策 | 0–8 |
@@ -251,21 +255,26 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [ ] `dsl/` 全套：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff` `dsl_registry`
-  > 已落地（2026-10-12，6/14）：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `dsl_registry` + 单测 + `sample_mermaid.txt` + example 33。
-  > 剩余（8/14）：`mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff`；其中 sequence/class/state 的识别与分发已在 `mermaid.hpp` 就绪（返回 `NotImplemented`），加解析器即可，无需改动上层。
+  > 已落地（2026-10-12，**14/14 全部**）：以上 14 个文件齐备。图产出方言经 `dsl_registry` 登记 6 个（flowchart / class / state / dot / plantuml / d2），`mermaid_sequence` 与表格类（`table_markdown` / `csv_sniff`）因产物不是图模型而**刻意不登记**（各有独立类型：`AstSequence`、`document::TableModel`）。
+  > 并行分工：`mermaid_*` 三方言与 lexer/parser_base/ast/registry 由主线会话完成；`graphviz_dot` + `plantuml`、`table_markdown` + `csv_sniff` 由两个并行工作包完成，接口契约由 `ast.hpp` / `parser_base.hpp` / `lexer.hpp` 冻结，两包只新增自己的文件（收口时才动 `dsl_registry.cpp` 与 `tests/CMakeLists.txt`）。
 - [ ] `interaction/` 深化：`tooltip` `crosshair` `highlight` `zoom` `pan` `select` `brush` `legend_toggle` `immediate`
-- [ ] `examples/21_hover_tooltip.cpp` `22_zoom_pan.cpp` `30_legend_toggle.cpp` `33_mermaid_flowchart.cpp`
-- [ ] `tests/unit/dsl/*` `interaction/*`
-- [ ] `tests/fuzz/fuzz_mermaid.cpp` `fuzz_dsl_lexer.cpp` `fuzz_input_parser.cpp`
-- [ ] `bench/bench_mermaid_parse.cpp`
-- [ ] `tests/fixtures/sample_mermaid.txt` `sample_dot.txt` `sample_plantuml.txt` `sample.csv`
-  > `sample_mermaid.txt` 已补齐（生成器 `tools/gen_dsl_samples.py`，`check_generated` 守一致性）；其余三份等对应方言落地后再补，避免无消费者的夹具。
+  > 九件全部落地（2026-10-12 收口）：`tooltip` `crosshair` `zoom` `pan` 此前已有；本轮补齐 `highlight`（高亮放大）`select`（框选）`brush`（刷选）`legend_toggle`（图例切换）`immediate`（即时模式绑定），各配单测。
+- [x] `examples/21_hover_tooltip.cpp` `22_zoom_pan.cpp` `30_legend_toggle.cpp` `33_mermaid_flowchart.cpp`
+  > 四个示例全部存在且进 ctest（21/22 已有，30/33 本轮新增）。
+- [x] `tests/unit/dsl/*` `interaction/*`
+  > dsl：6 个测试文件（mermaid/dot/plantuml/csv/fixtures/d2）；interaction：新增 legend/highlight/select/brush/immediate 五个测试文件。
+- [x] `tests/fuzz/fuzz_mermaid.cpp` `fuzz_dsl_lexer.cpp` `fuzz_input_parser.cpp`
+  > `fuzz_mermaid` 与 `fuzz_dsl_lexer` 已建（`--self-test` 进 ctest，8 个 fuzz 目标全绿）；`fuzz_input_parser` 早已存在。
+- [x] `bench/bench_mermaid_parse.cpp`
+  > 已建：四方言（mermaid/dot/plantuml/d2）× 200/400/800/1600 节点基线，`--quick` 进 ctest。实测 200 节点：mermaid 2.2ms / dot 4.1ms / plantuml 6.2ms / d2 3.8ms；规模翻倍耗时约 2.3 倍（线性，无平方级回归）。
+- [x] `tests/fixtures/sample_mermaid.txt` `sample_dot.txt` `sample_plantuml.txt` `sample.csv`
+  > 四份夹具全部由生成器 `tools/gen_dsl_samples.py` 产出（已接入 `generate_all` / `check_generated`），并由 `tests/unit/dsl/test_dsl_fixtures.cpp` 断言"原样可解析且覆盖受支持子集"。
 
 #### 出口条件
 
-- [ ] example 21·22·30·33 跑通
-- [ ] 三个 dsl 相关 fuzz 目标可运行
-- [ ] `dsl_registry` 遵循 function-local static + 快照语义
+- [x] example 21·22·30·33 跑通（全部在 ctest：42/42，2026-10-12）
+- [x] 三个 dsl 相关 fuzz 目标可运行（`fuzz_mermaid` / `fuzz_dsl_lexer` / `fuzz_input_parser`，`--self-test` 各 24 条语料）
+- [x] `dsl_registry` 遵循 function-local static + 快照语义（单测锁死：定例同一、重名拒绝、快照独立副本、幂等内置登记）
 
 ---
 

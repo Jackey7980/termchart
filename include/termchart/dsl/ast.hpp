@@ -18,10 +18,12 @@
 #include "termchart/core/error.hpp"
 #include "termchart/core/expected.hpp"
 #include "termchart/export.hpp"
+#include "termchart/graph/graph.hpp"
 
-namespace termchart::graph {
-class Graph;
-}  // namespace termchart::graph
+// 注意：这里 include graph/graph.hpp 而不是前向声明——`to_graph()` 的返回类型是
+// `Result<graph::Graph>`，而 `Expected<T, E>` 内部持有 `std::variant<T, E>`，
+// T 不完整就无法实例化（任何调用 to_graph 的 TU 都会撞上）。层号上 dsl(17) ≥
+// graph(13)，这个方向本来就是允许的。
 
 namespace termchart::dsl {
 
@@ -58,6 +60,9 @@ struct AstGraph {
     std::string name;        // 图名（digraph G / flowchart 无名时为空）
     std::string directive;   // 原文指令，例如 "flowchart TD"、"digraph"
     std::string direction;   // "TD"/"LR"/... 或空；由渲染侧决定用哪个布局
+    // 图级元信息：方言里"不属于任何节点"的属性（D2 的顶层 `label:`、rankdir 原文等）。
+    // 放在图上而不是塞进第一个节点，避免凭空造出幽灵节点。
+    std::vector<AstAttribute> attributes;
     std::vector<AstNode> nodes;
     std::vector<AstEdge> edges;
 
