@@ -154,7 +154,7 @@ private:
     void parse_participant() {
         const std::string kind = advance().text;
         if (!(check_kind(TokenKind::Identifier) || check_kind(TokenKind::Text))) {
-            report(ErrorCode::ParseError, "participant 缺少女名");
+            report(ErrorCode::ParseError, "participant 缺少命名");
             skip_to_end_of_line();
             return;
         }
@@ -176,7 +176,7 @@ private:
         const bool activating = check_keyword("activate");
         (void)advance();
         if (!(check_kind(TokenKind::Identifier) || check_kind(TokenKind::Text))) {
-            report(ErrorCode::ParseError, "activate/deactivate 缺少女名");
+            report(ErrorCode::ParseError, "activate/deactivate 缺少命名");
             skip_to_end_of_line();
             return;
         }
@@ -224,7 +224,7 @@ private:
             }
         }
         if (note.participants.empty()) {
-            report(ErrorCode::ParseError, "note 缺少女名");
+            report(ErrorCode::ParseError, "note 缺少命名");
             skip_to_end_of_line();
             return;
         }

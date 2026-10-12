@@ -99,4 +99,19 @@ TEST_CASE("interaction/legend: hide_all / show_all / set_visible") {
     CHECK(legend.series_count() == 2);
 }
 
+TEST_CASE("interaction/legend: toggle 翻转可见性") {
+    LegendToggle legend;
+    legend.register_series(1, "sin");
+    legend.register_series(2, "cos");
+    CHECK(legend.visible(1));
+    legend.toggle(1);
+    CHECK_FALSE(legend.visible(1));
+    legend.toggle(1);
+    CHECK(legend.visible(1));
+    legend.toggle(0);  // payload 0 无效，无状态变化
+    CHECK(legend.visible(2));
+    legend.toggle(2);
+    CHECK_FALSE(legend.visible(2));
+}
+
 }  // namespace

@@ -132,4 +132,6 @@ TEST_CASE("dsl/fixtures: Markdown 表格夹具内联样本（暂无独立文件�
 }
 
 }  // namespace
+#else
+#error "TERMCHART_FIXTURES_DIR 未定义：DSL 夹具测试需要由 CMake 注入 tests/fixtures 路径，否则用例会被静默丢弃"
 #endif
