@@ -302,6 +302,12 @@ std::size_t route_metro(Graph& graph, const MetroRouteOptions& opts, WireGrid* g
     reserve_nodes(graph, *grid);
 
     std::size_t routed = 0;
+    // 锚点候选：45° 之字拓扑下，side_towards 的单一主选可能落在"被自身节点框
+    // 堵死"的一侧（例如对角相邻时主选 Right，而下绕会撞框）。因此按
+    // "主选优先、其余三边兜底"枚举锚点对，每一对都走完 直连→45°步进→L形 阶梯，
+    // 全部失败才退到直线（直线不查障碍，是最后手段——这是metro 3 例已知红的教训）。
+    const PortSide all_sides[4] = {PortSide::North, PortSide::East, PortSide::South,
+                                   PortSide::West};
     for (Edge& edge : graph.edges()) {
         const Node* from = graph.find(edge.from());
         const Node* to = graph.find(edge.to());
@@ -310,45 +316,78 @@ std::size_t route_metro(Graph& graph, const MetroRouteOptions& opts, WireGrid* g
         }
         const Point from_center = from->box().center();
         const Point to_center = to->box().center();
-        const Point a =
-            snap(port_anchor(from->box(), side_towards(from_center, to_center)));
-        const Point b =
-            snap(port_anchor(to->box(), side_towards(to_center, from_center)));
+        const PortSide primary_a = side_towards(from_center, to_center);
+        const PortSide primary_b = side_towards(to_center, from_center);
+        const PortSide sides_a[5] = {primary_a, all_sides[0], all_sides[1], all_sides[2],
+                                     all_sides[3]};
+        const PortSide sides_b[5] = {primary_b, all_sides[0], all_sides[1], all_sides[2],
+                                     all_sides[3]};
+        // 去重保序（主选在前）。
+        std::vector<PortSide> order_a;
+        std::vector<PortSide> order_b;
+        for (const PortSide s : sides_a) {
+            if (std::find(order_a.begin(), order_a.end(), s) == order_a.end()) {
+                order_a.push_back(s);
+            }
+        }
+        for (const PortSide s : sides_b) {
+            if (std::find(order_b.begin(), order_b.end(), s) == order_b.end()) {
+                order_b.push_back(s);
+            }
+        }
 
+        bool routed_ok = false;
         std::vector<Point> chosen;
-        // 1) 直连：恰为 45°（且非自环）或轴对齐时先试。
-        const bool diag = std::fabs(b.x - a.x) == std::fabs(b.y - a.y) &&
-                          (a.x != b.x || a.y != b.y);
-        const bool axis = (a.x == b.x) != (a.y == b.y);  // 恰一轴对齐（排除 a==b）
-        if (diag || axis) {
-            const std::vector<Point> cells = expand_path({a, b});
-            if (interior_clear(*grid, cells)) {
-                occupy_interior(*grid, cells);
-                chosen = {a, b};
-            }
-        }
-        // 2) 45° 步进走线（斜走到对齐再直进）。
-        if (chosen.empty()) {
-            const std::vector<Point> cells = expand_path(walk_points(a, b));
-            if (interior_clear(*grid, cells)) {
-                occupy_interior(*grid, cells);
-                chosen = simplify_cells(cells);
-            }
-        }
-        // 3) L 形轴对齐兜底（仍查障碍）。
-        if (chosen.empty()) {
-            for (const bool horizontal_first : {true, false}) {
-                const std::vector<Point> cells =
-                    expand_path(l_path(a, b, horizontal_first));
-                if (interior_clear(*grid, cells)) {
-                    occupy_interior(*grid, cells);
-                    chosen = simplify_cells(cells);
+        for (const PortSide sa : order_a) {
+            const Point a = snap(port_anchor(from->box(), sa));
+            for (const PortSide sb : order_b) {
+                const Point b = snap(port_anchor(to->box(), sb));
+                if (a.x == b.x && a.y == b.y) {
+                    continue;  // 锚点重合（自环语义）：不画
+                }
+                // 1) 直连：恰为 45° 或轴对齐。
+                const bool diag = std::fabs(b.x - a.x) == std::fabs(b.y - a.y);
+                const bool axis = (a.x == b.x) != (a.y == b.y);
+                if (diag || axis) {
+                    const std::vector<Point> cells = expand_path({a, b});
+                    if (interior_clear(*grid, cells)) {
+                        occupy_interior(*grid, cells);
+                        chosen = {a, b};
+                        routed_ok = true;
+                        break;
+                    }
+                }
+                // 2) 45° 步进走线（斜走到对齐再直进）。
+                const std::vector<Point> walk_cells = expand_path(walk_points(a, b));
+                if (interior_clear(*grid, walk_cells)) {
+                    occupy_interior(*grid, walk_cells);
+                    chosen = simplify_cells(walk_cells);
+                    routed_ok = true;
+                    break;
+                }
+                // 3) L 形轴对齐兜底（仍查障碍）。
+                for (const bool horizontal_first : {true, false}) {
+                    const std::vector<Point> l_cells =
+                        expand_path(l_path(a, b, horizontal_first));
+                    if (interior_clear(*grid, l_cells)) {
+                        occupy_interior(*grid, l_cells);
+                        chosen = simplify_cells(l_cells);
+                        routed_ok = true;
+                        break;
+                    }
+                }
+                if (routed_ok) {
                     break;
                 }
             }
+            if (routed_ok) {
+                break;
+            }
         }
         // 4) 最后手段：直线（不占用栅格，不再保证不穿节点）。
-        if (chosen.empty()) {
+        if (!routed_ok) {
+            const Point a = snap(port_anchor(from->box(), primary_a));
+            const Point b = snap(port_anchor(to->box(), primary_b));
             chosen = a.x == b.x && a.y == b.y ? std::vector<Point>{a}
                                               : std::vector<Point>{a, b};
         }

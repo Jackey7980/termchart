@@ -98,38 +98,53 @@ TEST_CASE("graph/layout_metro: 空图返回零矩形") {
     CHECK(bounds.empty());
 }
 
-TEST_CASE("graph/route_metro: 路由连通端点且生成有效折线") {
+TEST_CASE("graph/route_metro: 每段是 45° 或轴对齐且中间格不进任何节点框") {
     Graph graph;
     const NodeId a = graph.add_node("aaa").id();
     const NodeId b = graph.add_node("bbb").id();
     const NodeId c = graph.add_node("ccc").id();
     (void)graph.add_edge(a, b);
     (void)graph.add_edge(b, c);
-    // 跨链边 a-c 在密集三角拓扑下可能触发 metro 的"直线兜底"（已知局限，不保证不穿框）；
-    // 本用例聚焦链路由契约（链相邻边天然 45° 直连且不穿框），故去掉跨链边。
+    // 仅测链相邻边（a-b, b-c）。metro 的锚点候选对枚举（metro.cpp）保证链边能选到
+    // 不被自身节点框堵死的锚点，从而走 45° 直连/走线且不穿框。跨链边 a-c 在密集拓扑
+    // 下仍可能退化为直线兜底（已知局限），其穿框由实现后续增强，不纳入此严格断言。
 
     (void)layout_metro(graph, MetroOptions{});
     CHECK(route_metro(graph, MetroRouteOptions{}) == 2);
 
-    // metro 路由对链相邻边优先走 45° 直连/走线；仅在无路可走时退化为直线兜底
-    // （metro.cpp 注释明确：直线兜底不保证不穿节点框）。因此本用例只校验"路由把
-    // 每条边连成了端点落在对应框上的有效折线"，不再钉死"不穿框"这一 metro 已知局限。
+    std::vector<Rect> boxes;
+    for (const Node& n : graph.nodes()) {
+        boxes.push_back(n.box());
+    }
+
     for (const Edge& edge : graph.edges()) {
         const std::vector<Point>& route = edge.route();
         REQUIRE(route.size() >= 2);
-        const Rect from_box = graph.find(edge.from())->box();
-        const Rect to_box = graph.find(edge.to())->box();
-        const Point p0 = route.front();
-        const Point p1 = route.back();
-        // 端点落在其节点的边框邻域（±1 容差，锚点吸附到整数格后可能恰在边界）。
-        CHECK(p0.x >= from_box.x - 1.0);
-        CHECK(p0.x <= from_box.right() + 1.0);
-        CHECK(p0.y >= from_box.y - 1.0);
-        CHECK(p0.y <= from_box.bottom() + 1.0);
-        CHECK(p1.x >= to_box.x - 1.0);
-        CHECK(p1.x <= to_box.right() + 1.0);
-        CHECK(p1.y >= to_box.y - 1.0);
-        CHECK(p1.y <= to_box.bottom() + 1.0);
+        for (std::size_t i = 1; i < route.size(); ++i) {
+            const double dx = std::fabs(route[i].x - route[i - 1].x);
+            const double dy = std::fabs(route[i].y - route[i - 1].y);
+            // 每段要么是 45° 斜线，要么是轴对齐直线。
+            const bool ok = dx == dy || dx == 0.0 || dy == 0.0;
+            CHECK(ok);
+        }
+        // 展开成逐格点列，检查中间格不落在任何节点框内。
+        std::vector<Point> cells;
+        for (std::size_t i = 1; i < route.size(); ++i) {
+            const Point p0 = route[i - 1];
+            const Point p1 = route[i];
+            const double steps = std::max(std::fabs(p1.x - p0.x), std::fabs(p1.y - p0.y));
+            for (int s = 0; s <= static_cast<int>(steps); ++s) {
+                const double t = steps < 0.5 ? 0.0 : static_cast<double>(s) / steps;
+                cells.push_back(Point{std::round(p0.x + (p1.x - p0.x) * t),
+                                      std::round(p0.y + (p1.y - p0.y) * t)});
+            }
+        }
+        REQUIRE(cells.size() >= 2);
+        for (std::size_t i = 1; i + 1 < cells.size(); ++i) {
+            for (const Rect& box : boxes) {
+                CHECK_FALSE(box.contains(cells[i]));
+            }
+        }
     }
 }
 
