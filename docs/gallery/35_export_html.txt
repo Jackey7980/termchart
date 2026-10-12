@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>report</title>
+</head>
+<body class="termchart">
+<h1>Quarterly Report</h1>
+<p>revenue by region, preliminary</p>
+<table>
+<thead><tr><th>region</th><th>q1</th><th>q2</th></tr></thead>
+<tbody>
+<tr><td>north</td><td>12</td><td>15</td></tr>
+<tr><td>south</td><td>9</td><td>11</td></tr>
+</tbody>
+</table>
+<pre><code class="language-sql">SELECT region, q1, q2 FROM sales;</code></pre>
+<div class="termchart-chart">[chart]</div>
+</body>
+</html>

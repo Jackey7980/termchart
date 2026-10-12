@@ -1,0 +1,3 @@
+termchart ready
+v0.1 — 终端上色闭环已打通
+one-liner done

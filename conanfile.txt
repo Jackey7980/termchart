@@ -1,0 +1,15 @@
+# conanfile.txt —— termchart 的 Conan 依赖声明
+#
+# 本库零强制依赖：库本体不链接任何第三方包。
+# 可选依赖（libpng / zlib / utf8proc）不经包管理器，一律走 CMake 的
+# find_package 探测（见 cmake/FindTermchartDeps.cmake），缺失只降级不失败。
+#
+# 因此 [requires] 刻意留空；下游若想用 Conan 供给可选依赖，
+# 请在自己的消费方清单里声明，而不是往这里加。
+
+[requires]
+
+[generators]
+
+[layout]
+cmake_layout

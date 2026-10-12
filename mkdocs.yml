@@ -1,0 +1,19 @@
+# mkdocs.yml —— 文档站导航
+#
+# 运行：mkdocs serve / mkdocs build（产物默认 site/）
+# 注意：mkdocs 的 docs_dir 是 docs/，nav 只能引用 docs/ 内的文件；
+# 根目录的 ROADMAP.md / 结构.md / README.md 不进站（构建会因找不到文件而失败），
+# 由 docs/ 内页面用相对链接 ../ROADMAP.md 引用。
+# Doxygen 产物 build/doxygen/html 不挂进 mkdocs，构建后本地浏览。
+
+site_name: termchart
+site_description: 零强制依赖的 C++20 终端图表库
+repo_url: https://github.com/Jackey7980/teamchart
+repo_name: Jackey7980/teamchart
+
+nav:
+  - 能力矩阵: reference/capability_matrix.md
+  - 模块矩阵: reference/module_matrix.md
+  - API 参考: reference/api.md
+  - 质量待办: reference/quality_todo.md
+  - 示例画廊: gallery.md

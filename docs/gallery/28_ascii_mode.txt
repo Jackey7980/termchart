@@ -1,0 +1,8 @@
+== TrueColor ==
+termchart               
+== Ansi256 ==
+termchart               
+== Ansi16 ==
+termchart               
+== None（纯文本）==
+termchart               

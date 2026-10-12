@@ -1,0 +1,2 @@
+termchart v0.1          
+hello, colored terminal 

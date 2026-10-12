@@ -13,11 +13,12 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 set(_gen_dir "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 
 function(_termchart_add_py_target name script)
+    # 可选附加参数（cmakeARGN 除 name/script 外原样传给脚本，如 --build-dir）。
     if(NOT Python3_Interpreter_FOUND)
         return()
     endif()
     add_custom_target(${name}
-        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/${script}"
+        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/${script}" ${ARGN}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "运行 ${script}"
         VERBATIM)
@@ -29,11 +30,18 @@ _termchart_add_py_target(generate_braille_table gen_braille_table.py)
 _termchart_add_py_target(generate_turbo_table gen_turbo_table.py)
 _termchart_add_py_target(generate_dsl_samples gen_dsl_samples.py)
 _termchart_add_py_target(generate_module_graph gen_module_graph.py)
+_termchart_add_py_target(generate_api_docs gen_api_docs.py)
+# 阶段 7：单头产物（拓扑排序 + 去重 + 自包含），纯头拼接，--check 可进护栏。
+_termchart_add_py_target(generate_single_header gen_single_header.py)
+# gallery 依赖"已构建的示例二进制"：--build-dir 用当前构建目录，
+# 因此该目标只在示例构建之后才有完整产出（CI 在构建后单独跑）。
+_termchart_add_py_target(generate_gallery gen_gallery.py --build-dir "${CMAKE_BINARY_DIR}")
 
 add_custom_target(generate_all
     COMMENT "生成全部产物（数据表 / 附一 / 附四 / module_matrix）")
 foreach(_t generate_unicode_tables generate_grapheme_tables generate_braille_table
-        generate_turbo_table generate_dsl_samples generate_module_graph)
+        generate_turbo_table generate_dsl_samples generate_module_graph
+        generate_api_docs generate_gallery generate_single_header)
     if(TARGET ${_t})
         add_dependencies(generate_all ${_t})
     endif()
@@ -60,6 +68,9 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_turbo_table.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_dsl_samples.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_module_graph.py" --check
+        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_single_header.py" --check
+        # api_docs 纯头扫描，任何时刻可校验；gallery 依赖已构建示例，不进 check
+        # （在 CI 的"构建后"阶段单独跑 generate_gallery，见 .github/workflows/ci.yml）。
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "生成物与生成器一致（无 diff）"
         VERBATIM)

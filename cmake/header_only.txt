@@ -38,3 +38,6 @@ interaction/event
 interaction/detail/overlay_cells
 graph/attributes
 graph/route/junction
+widget/theme_dark
+widget/theme_light
+widget/theme_mono

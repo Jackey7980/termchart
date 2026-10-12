@@ -1,0 +1,16 @@
+                                                        
+                           wordcloud                    
+                                                        
+                                                        
+                                                        
+                           braille                      
+                           utf8  sixel                  
+                          chart    ansi                 
+                            terminalgrid                
+                                    dsl                 
+                     wcwidth      graph                 
+                           canvascolor                  
+                                                        
+                                                        
+                                                        
+                                                        

@@ -132,6 +132,9 @@ add_executable(termchart_tests
     unit/graph/test_graph_layout_metro_cluster.cpp
     unit/graph/test_graph_route_obstacle_bundling.cpp
     unit/graph/test_diagrams_dag.cpp
+    unit/graph/test_diagrams_uml.cpp
+    unit/graph/test_diagrams_network.cpp
+    unit/graph/test_diagrams_relation.cpp
 
     # ── backend ──
     unit/backend/test_backend_snapshot.cpp
@@ -148,6 +151,13 @@ add_executable(termchart_tests
 
     # ── 跨模块不变量 ──
     unit/test_contracts.cpp
+
+    # ── widget ──
+    unit/widget/test_widget.cpp
+
+    # ── plugin / app ──
+    unit/plugin/test_plugin.cpp
+    unit/app/test_app.cpp
 
     # ── 结构不变量 ──
     unit/test_layering.cpp

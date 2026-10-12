@@ -14,6 +14,14 @@ foreach(example
         03_line_chart
         04_bar_chart
         04_heatmap
+        09_radar
+        10_gauge
+        11_wordcloud
+        12_treemap
+        13_sankey
+        18_uml_sequence
+        28_ascii_mode
+        29_256color_mode
         14_flowchart
         15_state_machine
         16_mindmap
@@ -25,6 +33,7 @@ foreach(example
         30_legend_toggle
         32_quick_one_liner
         33_mermaid_flowchart
+        42_single_header_usage
         34_export_svg
         35_export_html
         36_export_json
@@ -37,13 +46,26 @@ foreach(example
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 endforeach()
 
+# 42 只 include 单头产物（single_include/），证明其自包含——正常 include 路径之外
+# 额外挂 single_include/；注意它仍链接 termchart 库（单头管声明与内联，实现走链接）。
+if(TARGET 42_single_header_usage)
+    # BEFORE：single_include 必须排在链接 termchart 带来的 include/ 之前，
+    # 否则 #include "termchart.hpp" 会解析到极简伞形头而不是单头产物。
+    target_include_directories(42_single_header_usage BEFORE PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../single_include")
+endif()
+
 # 让 `ctest` 也能顺带确认示例可运行（不比对输出，只确认正常退出）。
 # 注意：BUILD_TESTING 由 include(CTest) 定义，本仓库不用它，故看自己的开关。
 if(TERMCHART_BUILD_TESTS)
     foreach(example 01_hello_color 02_sine_wave 03_function_plot 03_line_chart
-                    04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 08_fractal_levels 14_flowchart 15_state_machine
+                    04_bar_chart 04_heatmap 05_showcase 06_dashboard 07_fractal 08_fractal_levels
+                    09_radar 10_gauge 11_wordcloud 12_treemap 13_sankey 18_uml_sequence
+                    28_ascii_mode 29_256color_mode
+                    14_flowchart 15_state_machine
                     16_mindmap 17_uml_class 19_metro_map 20_force_graph 21_hover_tooltip 22_zoom_pan
                     30_legend_toggle 32_quick_one_liner 33_mermaid_flowchart
+                    42_single_header_usage
                     34_export_svg 35_export_html 36_export_json 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})

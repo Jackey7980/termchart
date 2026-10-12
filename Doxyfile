@@ -1,0 +1,46 @@
+# Doxyfile —— termchart API 文档配置
+#
+# 只写非默认项。运行：doxygen Doxyfile
+# 输出：build/doxygen/html/（结构.md 根目录表约定输出到 build/doxygen）
+#
+# 范围说明：输入只含 include/termchart/ 公开头。
+# detail/ 是生成的数据表（无文档注释、禁手改），排除；
+# src/ 是私有实现，不属于 API 面。
+
+DOXYFILE_ENCODING      = UTF-8
+PROJECT_NAME           = termchart
+PROJECT_NUMBER         = 0.1.0
+PROJECT_BRIEF          = "零强制依赖的 C++20 终端图表库"
+
+OUTPUT_DIRECTORY       = build/doxygen
+CREATE_SUBDIRS         = NO
+
+INPUT                  = include/termchart
+RECURSIVE              = YES
+EXCLUDE                = include/termchart/detail
+FILE_PATTERNS          = *.hpp
+EXCLUDE_SYMBOLS        = detail
+
+# 公开头注释是 `//` 行注释（非 ///），打开 JAVADOC 风格解析让它们被识别
+EXTENSION_MAPPING      = hpp=C++
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+
+# 本库不向调用方抛异常；value() 的契约破坏异常在 ERROR_POLICY.md 有说明
+SHOW_FILES             = YES
+SHOW_INCLUDE_FILES     = YES
+ALPHABETICAL_INDEX     = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
+QUIET                  = YES
