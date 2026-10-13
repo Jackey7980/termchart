@@ -14,7 +14,7 @@ namespace termchart::chart {
 
 struct ProgressRingOptions {
     bool show_percent = true;
-    Color track_color = Color::ansi16(8);   // 未完成轨道
+    Color track_color = default_color(DefaultColor::Muted);   // 未完成轨道
 };
 
 class ProgressRing final : public Chart {
@@ -28,7 +28,7 @@ public:
 
 private:
     double fraction_ = 0.0;
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     ProgressRingOptions options_;
 };
 

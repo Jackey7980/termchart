@@ -24,8 +24,8 @@ public:
         double close = 0.0;
     };
     struct Options {
-        Color up = Color::ansi16(2);
-        Color down = Color::ansi16(1);
+        Color up = default_color(DefaultColor::Accent);
+        Color down = default_color(DefaultColor::Warn);
         bool show_wicks = true;
     };
 

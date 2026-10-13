@@ -17,7 +17,12 @@ namespace termchart::chart {
 
 class LineChart final : public Chart {
 public:
+    // 追加一条系列（append 语义）。
     void add_series(Series s) { series_.push_back(std::move(s)); }
+    // 替换全部系列（replace 语义）。**两个动词成对提供**：全库约定 `add_*` 是追加、
+    // `set_*` 是替换，只给一半会逼调用方自己 clear()，而 clear() 并不总是对外可见。
+    void set_series(std::vector<Series> series) { series_ = std::move(series); }
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return series_; }
 
     void set_auto_domain(bool on, bool include_zero = false) {
         auto_domain_ = on;

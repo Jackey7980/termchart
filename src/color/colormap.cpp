@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "termchart/detail/turbo_table.hpp"
@@ -59,27 +62,41 @@ constexpr Fit kFits[kColormapCount] = {
       {-52.88903478218835, -21.54527364654712, 110.5174647748972}}},
 };
 
+// 缓存条目**只增不删**（append-only）——这是 stops() 返回 span 的前提。
+//
+// 旧实现按 (kind) 单槽缓存，count 变了就 `table[slot] = std::move(built)`；
+// 而 stops() 返回的是指向该向量的 **span（视图，不是拷贝）**，于是并发调用
+// `stops(Viridis, 256)` 与 `stops(Viridis, 16)` 时，先返回的那份 span 会指向
+// 已被移动/覆盖的向量 —— 静默读到别人的色带。
+//
+// 现在每个 (kind, count) 一份 `shared_ptr<const vector>`，map 里存同一份：
+// map rehash 只搬 shared_ptr，被指向的向量地址终身不变，因此已发布的 span 永久有效。
 struct StopCache {
     std::mutex mutex;
-    std::array<std::vector<Rgb>, kColormapCount> table{};
-    std::array<std::size_t, kColormapCount> sizes{};
+    std::unordered_map<std::uint64_t, std::shared_ptr<const std::vector<Rgb>>> table;
 
-    std::vector<Rgb>& ensure(ColormapKind kind, std::size_t count) {
-        // 用 size_t 而非 int 做下标：std::array 的下标是 size_t，int 会被
-        // -Wsign-conversion 报出来（本文件历史上就带着这几条警告）。
-        const std::size_t slot = static_cast<std::size_t>(kind);
+    // count 占低 32 位：超过 4G 级的色带既无意义也装不进内存。
+    static std::uint64_t key_of(ColormapKind kind, std::size_t count) noexcept {
+        return (static_cast<std::uint64_t>(kind) << 32) |
+               static_cast<std::uint64_t>(static_cast<std::uint32_t>(count));
+    }
+
+    std::shared_ptr<const std::vector<Rgb>> ensure(ColormapKind kind, std::size_t count) {
+        const std::uint64_t key = key_of(kind, count);
         std::lock_guard<std::mutex> lock(mutex);
-        if (sizes[slot] != count) {
-            std::vector<Rgb> built;
-            built.reserve(count);
-            for (std::size_t i = 0; i < count; ++i) {
-                const double t = count <= 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(count - 1);
-                built.push_back(sample(kind, t));
-            }
-            table[slot] = std::move(built);
-            sizes[slot] = count;
+        const auto it = table.find(key);
+        if (it != table.end()) {
+            return it->second;  // 拷贝 shared_ptr：向量地址不变
         }
-        return table[slot];
+        auto built = std::make_shared<std::vector<Rgb>>();
+        built->reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            const double t =
+                count <= 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(count - 1);
+            built->push_back(sample(kind, t));
+        }
+        table.emplace(key, built);
+        return built;
     }
 };
 
@@ -135,8 +152,13 @@ Rgb turbo_sample(double x) noexcept {
 
 Rgb sample(ColormapKind kind, double t) noexcept {
     const double x = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    // 枚举是 uint8_t，调用方可以 static_cast 出任意值；下标前必须校验，
+    // 否则 `kFits[static_cast<int>(kind)]` 就是一次越界读（Turbo 走上面的分支，不在表里）。
+    if (static_cast<std::size_t>(kind) >= static_cast<std::size_t>(kColormapCount)) {
+        return Rgb{};
+    }
     if (kind == ColormapKind::Turbo) return turbo_sample(x);
-    const Fit& fit = kFits[static_cast<int>(kind)];
+    const Fit& fit = kFits[static_cast<std::size_t>(kind)];
     Rgb out;
     for (int channel = 0; channel < 3; ++channel) {
         // 霍纳展开：系数表按 [power][channel] 存放。
@@ -157,7 +179,9 @@ Rgb sample(ColormapKind kind, double t) noexcept {
 
 std::span<const Rgb> stops(ColormapKind kind, std::size_t count) {
     const std::size_t n = count == 0 ? 1 : count;
-    return std::span<const Rgb>(cache().ensure(kind, n));
+    // ensure() 返回的 shared_ptr 在表达式结束时析构，但它指向的向量被缓存永久持有，
+    // 所以这个 span 的生命周期是"进程级"的（见 StopCache 的注释）。
+    return std::span<const Rgb>(*cache().ensure(kind, n));
 }
 
 const char* colormap_name(ColormapKind kind) noexcept {

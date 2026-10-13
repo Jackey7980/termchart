@@ -1,0 +1,20 @@
+# sample_grapheme.txt —— 由 tools/gen_fixtures.py 生成，禁手改。
+#
+# 字素簇用例（tests/fixtures/README.md 的规格清单最后一件）。
+# 格式：每行一条用例，`<标签>\t<文本>`；以 # 开头的行是注释，跳过。
+# 覆盖：纯 ASCII / 单个组合记号 / 多个组合记号 / ZWJ 家庭 / 区域指示符国旗 /
+# emoji+变体选择符 / 泰文上下标元音 / 梵文簇 / 谚文 / 孤立组合记号 / CJK 宽字符。
+#
+# 注意：本文件含 ZWJ(U+200D) 与组合记号等不可见码点，编辑器的规范化会破坏它，
+# 所以它由生成器产出并被 --check 守住——**禁止手改**。
+ascii	abc
+combining_single	é
+combining_multi	ắ
+zwj_family	👨‍👩‍👧
+regional_indicator	🇨🇳
+emoji_vs16	❤️
+thai	กุ
+devanagari	क्षि
+hangul	한국어
+lone_combining	́
+cjk_wide	中文宽度

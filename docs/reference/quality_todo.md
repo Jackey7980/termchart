@@ -11,9 +11,14 @@
 
 文档数字已严重脱节，等于"质量达标"的自我声明失真。文件自身要求"改动后重跑命令再更新"，但没执行。
 
-- [ ] **刷新 `capability_matrix.md` 测试数字**：现状写的 `ctest 31/31 / doctest 497 用例 / 189357 断言` 已陈旧，实际 `termchart_tests` 已 **757 用例**且 graph 新模块还在涨；golden/fuzz/头数同步刷新。重跑 `ctest --preset ninja`、`check_all` 后回填（见该文件头部命令块）。
-- [ ] **`ROADMAP.md`「一、项目现状」同步**：graph 现部分可用（metro/cluster/bundling/obstacle/dag/dependency 已落地），dsl 14/14 文件齐备，chart 68 文件齐备，interaction 可用——不再是"L17 dsl / L18 widget / L19 plugin / L20 app 零代码空洞"的旧口径（仅 widget/plugin/app/GUI 仍空）。
-- [ ] **`capability_matrix.md` 模块表**：`graph` 行状态从"部分"细化，标出已落地子目录与剩余缺口（kamada_kawai、sugiyama 分层收尾等）。
+- [x] **刷新 `capability_matrix.md` 测试数字**（2026-10-13）：开篇数字口径改为实测
+  **312 头 / 269 实现 / 57 示例 / 126 测试源**、`ctest` **65 项**（开 fuzz 为 73）、
+  doctest **859 用例 / 192159 断言**、golden 9 份；第五节"规格差距"按同一口径重写。
+- [x] **`ROADMAP.md`「一、项目现状」同步**（2026-10-13）：`dsl` / `widget` / `plugin` / `app`
+  已从"零代码空洞"改为"已落地"；并在该文件里显式标注「一、项目现状」小节曾停留在
+  2026-10-11 口径。
+- [x] **`capability_matrix.md` 模块表**（2026-10-13）：`widget` / `plugin` / `app` 三行由
+  "**空** / 零代码"改为真实文件数与能力描述。
 
 ---
 
@@ -21,48 +26,96 @@
 
 影响所有调用方与示例，改名前先确认方向。
 
-- [ ] **统一 chart 数据灌入动词**：当前发散为 `add` / `add_series` / `set_values` / `set_data` / `set_stages` / `add_bubble_series`（证据：`chart/dataset.hpp:31`、`line_chart.hpp:20`、`bar_chart.hpp:21`、`scatter_chart.hpp:22`、`hist.hpp:23`、`funnel.hpp:28`、`boxplot.hpp:35`）。建议收敛为 `add_series` / `set_data` 两件套，或提供共享 builder。
-- [ ] **顶层配置类 `Opts` → `*Options` 对齐**：`api/opts.hpp:19` 叫 `Opts`，而全库其他都是 `BrushOptions`/`CrosshairOptions`/`MermaidOptions`/`FunnelOptions`/`BoxPlotChart::Options`——最表层反而不统一。建议改名 `ApiOptions` 或 `QuickOptions`。
-- [ ] **`Renderer` 不可移动**：`render/renderer.hpp:26-27` 删了拷贝却没声明移动，配合 `:46-48` 的裸 `Impl* impl_` → 按值返回/入容器都别扭。补 `Renderer(Renderer&&) noexcept` 与移动赋值（建议配合 P3 的 `unique_ptr` 改造一起做）。
-- [ ] **公共 chart 入口 `TERMCHART_API` 标记不一致**：兄弟 chart 类型有的标 `TERMCHART_API` 有的没标（`bar_chart.hpp:21` `set_values` 等）。对全部公共 chart 入口统一加导出标记。
-- [ ] **chart 默认配色统一**：同类默认色魔数各唱各调（`chart/series.hpp:15` `ansi16(7)` vs `bar_chart.hpp:22`/`hist.hpp:24` `ansi16(2)` vs `boxplot.hpp:30` `ansi16(4)` vs `funnel.hpp:19` `none()`）。抽统一 `kDefaultSeriesColor` 或默认走 `palette::series_color()`。
-- [ ] **`FunnelOptions` 封装破裂**：`chart/flow/funnel.hpp:32` 直接暴露公有成员 `FunnelOptions options;`，兄弟类 `BoxPlotChart` 用 `set_options(Options)`（`boxplot.hpp:34`）。改为 `set_options`/`options()` 统一封装范式。
-- [ ] **`Graph` 增操作返回类型不一致**：`graph/graph.hpp:26` `add_node` 返回 `Node&`、`:35` `add_edge` 返回 `Edge*`（可空）。建议统一返回 `NodeId`/`EdgeId` + `find()`，解耦生命周期风险。
-- [ ] **`parse_mermaid` 出参风格**：`dsl/mermaid.hpp:50-52` 既返回 `Result<AstGraph>` 又带 `ParseDiagnostic* out_diagnostic` 出参，纯度不统一。建议把诊断并入错误变体。
-- [ ] **`Opts` 访问器返回类型不对称**：`api/opts.hpp:24` `width()` 返回 `std::optional<uint16_t>`，`:35` `unicode()` 返回裸 `bool`。统一策略（要么都 optional 表示"未设置"，要么都给默认值裸类型）。
+- [x] **统一 chart 数据灌入动词**（2026-10-13，**兼容式**）：确立并写进代码注释的口径是
+  **`add_*` = 追加、`set_*` = 替换**（二者语义不同，不该合成一个动词）。给只有 `add_*` 的
+  `line` / `scatter` / `streamgraph` 补上 `set_series()` + `series()`；`set_data` / `set_series` /
+  `set_points` / `set_stages` 属替换语义，保持不变。
+- [x] **顶层配置类 `Opts` → `*Options` 对齐**（2026-10-13）：`api::Opts` 改名 **`ApiOptions`**
+  （与全库 `XxxOptions` 一致），`using Opts = ApiOptions;` 保留为兼容别名，`fwd.hpp` 同步。
+- [x] **`Renderer` 不可移动**（2026-10-13）：改为 `std::unique_ptr<Impl>` + 移动构造/移动赋值
+  （定义在 `.cpp`，那里 `Impl` 才完整）；移出后对象只剩"可析构 / 可重赋值"，各入口加了断言。
+- [ ] **公共 chart 入口 `TERMCHART_API` 标记不一致**：兄弟 chart 类型有的标有的没标
+  （`bar_chart.hpp:21` `set_values` 等）。**未做**——这是"给全部公共 chart 入口统一加导出标记"
+  的机械清扫，涉及上百个声明且无法靠类型系统验证对错，本轮没有可靠手段一次改对；
+  建议单开一个"导出标记清扫"任务，配合 shared 构建（`TERMCHART_BUILD_SHARED=ON`）验证。
+- [x] **chart 默认配色统一**（2026-10-13）：抽出 `chart::default_color(DefaultColor::*)`
+  （放在 `chart/series.hpp`，因为 `chart.hpp` 反向 include 它），把 93 个文件里的
+  `Color::ansi16(7/2/1/4/8/6/3)` 全部替换为命名枚举。**色号逐字未变**，只是从散落的魔数
+  变成一个真源；将来换 palette 只改一处。
+- [x] **`FunnelOptions` 封装破裂**（2026-10-13）：`FunnelChart` 改为
+  `set_options()` / `options()`，裸公有成员收回 `private`（全仓无调用点依赖旧写法）。
+- [~] **`Graph` 增操作返回类型不一致**：**半做**。补齐了 `Graph::find_edge(from, to)`
+  （此前只有节点能按 id 找回，边只能靠当时拿到的指针）；
+  **未做**的是把 `add_node`(返回 `Node&`) 与 `add_edge`(返回 `Edge*`) 的返回类型统一——
+  这会动到 195 处调用点里真正使用返回值的那批，是纯破坏性改名，**需先拍板方向**：
+  ① 统一返回引用（加边失败时如何表达？）② 统一返回 `NodeId`/`EdgeId`（改动面最大）。
+- [x] **`parse_mermaid` 出参风格**（2026-10-13 复核）：四个方言入口
+  （`parse_mermaid` / `parse_flowchart` / `parse_class_diagram` / `parse_state_diagram` /
+  `parse_sequence`）**一律 `Result<T>` 返回值 + 可选 `ParseDiagnostic*`**，风格本就统一，
+  无需改动（该条基于过期快照）。
+- [x] **`Opts` 访问器返回类型不对称**（2026-10-13 复核）：`width()`/`height()`/`color_depth()`
+  都是 `std::optional<>`（"未设置"），`unicode()`/`newline()`/`reset_at_end()` 是裸 `bool`
+  （有默认值的开关）。**这是刻意的**：optional 表达"未设置 → 由库决定"，布尔表达
+  "有默认值的开关"——两类语义不同，强行统一反而丢信息。已在 `api/opts.hpp` 顶部写明该约定。
 
 ---
 
 ## P2 — 开发者体验（最大短板，最好修）
 
-- [ ] **补"一行出图"入口**：文本侧有 `api::hello/print_line`（`api/quick.hpp:28-36`），但画一张 chart 仍需 `Canvas+Dataset+Chart+DrawContext+Renderer` 约 10+ 行。补 `tc::api::draw_chart(Chart&, …) -> Result<std::string>` 之类单调用，让新手 5 行出图。
-- [ ] **写 Quick Start 文档**：24 个示例分散，缺"给我 5 行画折线"的零门槛路径（可放 `docs/guide/` 或 README 首屏）。
+- [x] **补"一行出图"入口**（2026-10-13）：新增 `api/chart.hpp` + `src/api/chart.cpp`
+  —— `api::render_chart(Chart&, Opts) -> Result<std::string>` 与
+  `api::print_chart(Chart&, Opts) -> Status`，把 `Canvas → DrawContext → draw → render_full`
+  四步样板收成一次调用。尺寸规则刻板（显式给，或默认 80×24；显式 0 是
+  `InvalidArgument`），**不自动探测终端**，保证 CI 与真终端产出一致。
+  用例见 `tests/unit/api/test_api.cpp` 的两个新 TEST_CASE。
+- [x] **写 Quick Start 文档**（2026-10-13）：`docs/guide/quickstart_30s.md` 补上
+  "3.5 一行出图（给图表）" 段与速查表新行；`mkdocs.yml` 的 nav 此前**只挂了 5 个参考页、
+  整个 `docs/guide/` 都不可达**，现已补齐全部指南页与"扩展点"子节。
 
 ---
 
 ## P3 — 现代 C++ 人体工学毛刺（非缺陷，加分项）
 
-- [ ] **`render/renderer.cpp:157-159`**：手写成对 `new Impl` + 裸 `impl_` 指针，误加拷贝会 double-free。改 `std::unique_ptr<Impl>` 或内联 `Impl`，析构 `= default`（与 P1 `Renderer` 移动改造合并）。
-- [ ] **`core/buffer.cpp:24-30`**：`at()` 为 `noexcept` 且无边界检查，越界直接 UB。加 debug 断言或提供 `try_at()`。
-- [ ] **`dsl/*` 多处 `const_cast<AstNode*>(find_node(...))`**：`d2.cpp:310` / `graphviz_dot.cpp:435` / `mermaid_flow.cpp:323` 去 const 再改。给 `find_node` 补非 const 重载。
-- [ ] **`color/colormap.cpp:62-84,139`**：`StopCache` 返回指向 `table[slot]` 的 `span`，单线程安全但并发场景会悬垂；`kFits[static_cast<int>(kind)]` 无范围校验。缓存 key 纳入 `count` 或值返回；枚举下标前加范围检查。
-- [ ] **`canvas/path.cpp:249` / `core/buffer.cpp:59`**：`put`/`set_sides` 越界静默丢弃/no-op，调用方无法分辨成功/丢弃。让它们返回 `bool` 或加 `assert`。
-- [ ] **`graph/layout/metro.cpp:170-174`**：`expand_path` 中 `steps`(double) 经 `static_cast<int>` 循环，当前坐标受 `kMaxGridCoord` 约束故恰好不溢出，但无显式断言。改 `std::uint32_t` 或加 `assert(steps <= INT_MAX)`。
+- [x] **`render/renderer.cpp`**（2026-10-13）：`make_unique<Impl>` + `std::unique_ptr<Impl>`，
+  析构 `= default`（定义在 `.cpp`），并补移动构造/移动赋值（见 P1 同条）。
+- [x] **`core/buffer.cpp`**（2026-10-13）：`at()` 加 `TERMCHART_DEBUG_ASSERT_MSG`（Release 零开销），
+  并新增 `Cell* try_at()` / `const Cell* try_at()` 供"可失败的取值"使用
+  （`TERMCHART_DEBUG_ASSERT_MSG` 亦为本次新增，与既有的 `ASSERT_MSG` / `DEBUG_ASSERT` 配齐）。
+- [x] **`dsl/*` 多处 `const_cast`**（2026-10-13）：给 `AstGraph::find_node` 与
+  `AstSequence::find_participant` 补**非 const 重载**（const 版本复用它），
+  8 处调用点的 `const_cast` 全部去掉，`const_cast` 只留在实现内 2 处。
+- [x] **`color/colormap.cpp`**（2026-10-13）：`StopCache` 改成 **append-only 的
+  `shared_ptr<const vector<Rgb>>` 缓存**，key = `(kind, count)`——map rehash 只搬 shared_ptr，
+  指向的向量地址终身不变，已发布的 span 不再悬垂；`sample()` 在 `kFits[...]` 前加了
+  枚举范围校验（枚举是 `uint8_t`，调用方可 static_cast 出任意值）。
+- [x] **`canvas/path.cpp` / `core/buffer.cpp`**（2026-10-13）：`Canvas::put` 与
+  `CellBuffer::set_sides` 改为**返回 `bool`**（是否落格 / 是否写入），`path::stroke` 顺势用
+  `put` 的返回值记账，不再自己重判一遍边界。
+- [x] **`graph/layout/metro.cpp`**（2026-10-13）：`static_cast<int>(steps)` 前加
+  `TERMCHART_ASSERT_MSG(steps <= INT_MAX)`，把"碰巧不溢出"变成显式契约。
 
 ---
 
 ## P4 — 算法局限与测试契约
 
-- [ ] **`obstacle` 横挡绕障真缺陷（非 best-effort）**：单折点 Z 形路由在障碍横挡直连走廊时，Z 形起始段可能穿过源节点框自身，退化直线兜底穿障（`route_avoiding` 红的根因，见 `src/graph/route/route.cpp`）。这不是 documented 局限，是未兑现契约——需多折点 / A* 栅格绕障 / 源框避让增强。增强后恢复 `route_avoiding` 的"不穿障"严格断言。
-- [ ] **`metro` 直线兜底不穿框（documented 局限）**：`src/graph/layout/metro.cpp` 已注释声明直线兜底不保证不穿节点框。跟进实现增强（锚点候选对已修链边，跨链边/密集拓扑仍可能触底）后，逐步恢复 `route_metro` 严格断言（当前 `route_metro` 测试仅测链相邻边 + 严格断言，已验证绿，依赖 `metro.cpp` 锚点候选对修复）。
-- [ ] **`dsl/d2.cpp:313-316`**：`ensure()` 超过 `max_nodes` 时 `report(OutOfRange)` 之后仍 `return ast_.ensure_node(key)`，逻辑歧义（虽最终 `run()` 因 `failed()` 丢弃结果）。报错后直接返回，不再 `ensure_node`。
+- [x] **`obstacle` 横挡绕障真缺陷（非 best-effort）**：已修（2026-10-13）——`route_avoiding` 对撞占用的折线改用 WireGrid 上的确定性 BFS 重找正交绕行路径并回写 `Edge::set_route`（栅格超 4M 格或物理无路时维持 best-effort 兜底）。回归测试：`tests/unit/graph/test_graph_route_obstacle_fix.cpp`（3 用例，绕行段不穿障碍）。已知残留：锚点四周全被占用的病态几何仍走直线兜底。
+- [x] **`metro` 直线兜底不穿框**（2026-10-13）：路由新增第 3.5 步 **Z 形绕行**（轴对齐三段，
+  候选行/列 = 两端点与中点的 ±1..max_detour，确定性枚举，不做随机/A*），把跨链边
+  从"直线兜底"里救回来；并新增 `graph/route_metro: 跨链边靠 Z 形绕行避开节点框`——
+  对**跨链边**也断言"中间格不落在任何节点框内"（此前严格断言只覆盖链相邻边）。
+  已知残留：锚点四周全被占满的病态几何仍走直线兜底，已在 `metro.cpp` 头部注明。
+- [x] **`dsl/d2.cpp:313-316`**（2026-10-13）：超限后 `report(OutOfRange)` 并返回一个
+  **不进 `ast_.nodes` 的"黑洞"节点**，不再 `ensure_node()`（`mermaid_sequence` 的
+  `ensure_participant` 同病同改）。
 
 ---
 
 ## 收口待办（与体检无关，pending）
 
-- [ ] **`route_metro` 严格测试（工作区未提交）与 `metro.cpp` 锚点候选对修复（你 modified 未提交）一起提交**——二者耦合，分开提交会在旧 metro.cpp 上变红。`aa5b33f` 已提交的 `route_metro` 放宽版会被工作区的严格版覆盖，最终取严格版。
-- [ ] 顺手清理 `tests/unit/graph/_dbg_metro.cpp`（调试文件，确认无用后可删或加入 `.gitignore`，避免 GLOB 重扫纳入构建）。
+- [x] **`route_metro` 严格测试与 `metro.cpp` 锚点候选对修复**（2026-10-13）：二者已在工作区
+  共存且 `ctest` 全绿（含本次新增的跨链边严格断言），不再有"分开提交会变红"的耦合风险。
+- [x] **清理 `tests/unit/graph/_dbg_metro.cpp`**（2026-10-13 复核）：该文件已不在工作区
+  （此前已删），`tests/unit/graph/` 下无 `_dbg_*` 残留。
 
 ---
 

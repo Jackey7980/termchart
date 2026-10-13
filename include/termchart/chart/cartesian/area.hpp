@@ -23,7 +23,7 @@ namespace termchart::chart {
 class AreaChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<Point> points,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
 
     // 填充基线（数据坐标）。默认 0：最常见的"从零起"面积图。改它会同时改
@@ -40,7 +40,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     double baseline_ = 0.0;
     char32_t fill_char_ = U'\u00B7';

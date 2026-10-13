@@ -48,6 +48,24 @@ Edge* Graph::add_edge(NodeId from, NodeId to, std::string label) {
     return &edges_.back();
 }
 
+Edge* Graph::find_edge(NodeId from, NodeId to) noexcept {
+    for (Edge& edge : edges_) {
+        if (edge.from() == from && edge.to() == to) {
+            return &edge;
+        }
+    }
+    return nullptr;
+}
+
+const Edge* Graph::find_edge(NodeId from, NodeId to) const noexcept {
+    for (const Edge& edge : edges_) {
+        if (edge.from() == from && edge.to() == to) {
+            return &edge;
+        }
+    }
+    return nullptr;
+}
+
 bool Graph::remove_edge(NodeId from, NodeId to) {
     const auto it = std::find_if(edges_.begin(), edges_.end(),
                                  [from, to](const Edge& e) {

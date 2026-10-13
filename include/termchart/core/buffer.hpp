@@ -45,8 +45,15 @@ public:
         return x < width_ && y < height_;
     }
 
+    // 越界即 UB（Debug 下断言，Release 下不付代价）。调用方该先问 contains()。
     TERMCHART_API Cell& at(std::uint32_t x, std::uint32_t y) noexcept;
     TERMCHART_API const Cell& at(std::uint32_t x, std::uint32_t y) const noexcept;
+
+    // 可失败的取值：越界返回 nullptr，而不是 UB。热路径上先 contains() 再 at()，
+    // 冷路径（导后端的边界扫描等）用这个。
+    [[nodiscard]] TERMCHART_API Cell* try_at(std::uint32_t x, std::uint32_t y) noexcept;
+    [[nodiscard]] TERMCHART_API const Cell* try_at(std::uint32_t x,
+                                                   std::uint32_t y) const noexcept;
 
     // 线性索引版本：热路径避免乘法。（索引 = y * width + x）
     [[nodiscard]] constexpr std::size_t index_of(std::uint32_t x,
@@ -65,7 +72,9 @@ public:
     [[nodiscard]] TERMCHART_API bool has_sides(std::size_t index) const noexcept;
     [[nodiscard]] TERMCHART_API const SideBearingList* sides(std::size_t index) const noexcept;
     // count 为实际有效项数（≤ kMaxSideBearings）；超出部分被截尾。
-    TERMCHART_API void set_sides(std::size_t index, const char32_t* data, std::size_t count);
+    // 返回是否写入：index 越界或 count == 0 时不写入并返回 false
+    // （旧版静默丢弃，调用方无从分辨"写成功了"与"被丢了"）。
+    TERMCHART_API bool set_sides(std::size_t index, const char32_t* data, std::size_t count);
     TERMCHART_API void clear_sides(std::size_t index);
     [[nodiscard]] TERMCHART_API std::size_t side_entry_count() const noexcept;
 

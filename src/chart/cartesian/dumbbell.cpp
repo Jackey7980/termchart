@@ -53,7 +53,7 @@ void DumbbellChart::draw(DrawContext ctx) {
 
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, {}, grid_style);
     }

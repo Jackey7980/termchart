@@ -36,7 +36,10 @@ jobs:
           python tools/gen_braille_table.py --check
           python tools/gen_turbo_table.py --check
           python tools/gen_dsl_samples.py --check
+          python tools/gen_fixtures.py --check
           python tools/gen_module_graph.py --check
+          python tools/gen_single_header.py --check
+          python tools/check_headers.py --compiler c++ --include "$PWD/include"
 
   linux:
     name: ubuntu (gcc)
@@ -85,3 +88,40 @@ jobs:
         run: cmake --build build/asan -j 4
       - name: 测试
         run: ctest --test-dir build/asan --output-on-failure
+
+  # TSan 只在 Linux 上跑：MinGW 没有 libtsan（windows 作业因此不碰它，
+  # 见 cmake/Sanitizers.cmake 的平台说明）。
+  tsan:
+    name: ubuntu (tsan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置
+        run: cmake --preset tsan
+      - name: 构建
+        run: cmake --build build/tsan -j 4
+      - name: 测试
+        run: ctest --test-dir build/tsan --output-on-failure
+
+  coverage:
+    name: ubuntu (coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 装 gcovr
+        run: pip install gcovr
+      - name: 配置
+        run: cmake --preset coverage
+      - name: 构建
+        run: cmake --build build/coverage -j 4
+      - name: 测试
+        run: ctest --test-dir build/coverage --output-on-failure
+      - name: 汇总
+        run: |
+          gcovr --root . \
+            --exclude 'tests/.*' --exclude 'examples/.*' \
+            --exclude 'bench/.*' --exclude 'third_party/.*' \
+            --exclude 'single_include/.*' --print-summary

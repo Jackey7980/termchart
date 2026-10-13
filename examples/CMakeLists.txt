@@ -34,7 +34,29 @@ foreach(example
         32_quick_one_liner
         33_mermaid_flowchart
         42_single_header_usage
+        23_multi_chart_dashboard
+        24_theme_switching
+        25_animation
+        26_realtime_stream
+        27_background_thread
+        31_plugin_custom_chart
+        39_headless_render
+        40_immediate_mode
+        41_reactive_dashboard
+        43_contour
+        44_violin
+        45_ridgeline
+        46_parallel
+        47_gantt
+        48_forest
+        49_ecdf
+        50_qq
+        51_hexbin
+        52_chord
+        53_er_diagram
+        54_dag
         34_export_svg
+        37_export_latex
         35_export_html
         36_export_json
         38_image_sixel
@@ -66,7 +88,12 @@ if(TERMCHART_BUILD_TESTS)
                     16_mindmap 17_uml_class 19_metro_map 20_force_graph 21_hover_tooltip 22_zoom_pan
                     30_legend_toggle 32_quick_one_liner 33_mermaid_flowchart
                     42_single_header_usage
-                    34_export_svg 35_export_html 36_export_json 38_image_sixel
+                    23_multi_chart_dashboard 24_theme_switching 25_animation
+                    26_realtime_stream 27_background_thread 31_plugin_custom_chart
+                    39_headless_render 40_immediate_mode 41_reactive_dashboard
+                    43_contour 44_violin 45_ridgeline 46_parallel 47_gantt 48_forest
+                    49_ecdf 50_qq 51_hexbin 52_chord 53_er_diagram 54_dag
+                    34_export_svg 35_export_html 36_export_json 37_export_latex 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})
     endforeach()

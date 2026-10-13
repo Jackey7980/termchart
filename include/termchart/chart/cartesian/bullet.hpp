@@ -25,7 +25,7 @@ public:
 
     struct Options {
         char32_t target_char = U'\u2502';    // │
-        Color bar_color = Color::ansi16(4);
+        Color bar_color = default_color(DefaultColor::Neutral);
         bool show_legend = false;
     };
 

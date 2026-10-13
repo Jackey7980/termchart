@@ -26,7 +26,7 @@ struct RegressionOptions {
 class RegressionChart final : public Chart {
 public:
     TERMCHART_API void set_points(std::vector<Point> points,
-                                  Color color = Color::ansi16(4),
+                                  Color color = default_color(DefaultColor::Neutral),
                                   std::string name = "y");
 
     void set_options(RegressionOptions options) { options_ = options; }
@@ -42,7 +42,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     std::string name_ = "y";
     RegressionOptions options_{};
     bool show_legend_ = true;

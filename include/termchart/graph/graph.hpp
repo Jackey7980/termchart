@@ -31,8 +31,15 @@ public:
     // 删除节点及其全部关联边；不存在返回 false。
     bool remove_node(NodeId id);
 
-    // 端点必须已存在；否则返回 nullptr 且不添加。
+    // 端点必须已存在；否则返回 nullptr 且不添加。**返回指针**（而 add_node 返回引用）
+    // 是因为加边真的可能失败；需要长期持有请取 `Edge::id()` 再 `find_edge()`。
     Edge* add_edge(NodeId from, NodeId to, std::string label = {});
+
+    // 按端点找回第一条匹配边：与节点的 find(NodeId) 对称（此前只有节点能按 id
+    // 找回，边只能靠"当时拿到的指针"——而指针在容器重排后会失效）。
+    // 边本身没有 id（from/to 才是它的身份），所以这里按 (from, to) 查。
+    [[nodiscard]] Edge* find_edge(NodeId from, NodeId to) noexcept;
+    [[nodiscard]] const Edge* find_edge(NodeId from, NodeId to) const noexcept;
     // 删除 from→to 的第一条边；不存在返回 false。
     bool remove_edge(NodeId from, NodeId to);
 

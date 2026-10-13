@@ -107,7 +107,7 @@ void RoseChart::draw(DrawContext ctx) {
     if (ctx.draw_grid) {
         // 外圈参考环 = 最大半径刻度。
         draw_ring(ctx.canvas, f, U'\u00B7',
-                  Style{}.set_fg(Color::ansi16(8)));
+                  Style{}.set_fg(default_color(DefaultColor::Muted)));
     }
 
     // 逐格填充：扇区等角，落笔判据 rnorm ≤ value/vmax。

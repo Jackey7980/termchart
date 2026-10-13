@@ -110,7 +110,7 @@ void SeasonalChart::draw(DrawContext ctx) {
                                             inner.x, inner.right()));
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, {}, grid_style);
     }
@@ -156,7 +156,7 @@ void SeasonalChart::draw(DrawContext ctx) {
                            kLineChar, st);
         }
         ctx.canvas.draw_text(Point{0.0, band_area.inner_rect().y},
-                             bands[b].label, Style{}.set_fg(Color::ansi16(7)));
+                             bands[b].label, Style{}.set_fg(default_color(DefaultColor::Series)));
         if (ctx.draw_axes) {
             layout::draw_axis_x(ctx.canvas, band_area, xticks, "", ctx.axis_style);
         }

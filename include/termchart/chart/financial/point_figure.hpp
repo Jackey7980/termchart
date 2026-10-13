@@ -20,8 +20,8 @@ namespace termchart::chart {
 struct PointFigureOptions {
     double box_size = 0.0;  // ≤0 → 自动 = 全距/10
     int reversal = 3;       // 反转所需格数（≥1）
-    Color up = Color::ansi16(2);
-    Color down = Color::ansi16(1);
+    Color up = default_color(DefaultColor::Accent);
+    Color down = default_color(DefaultColor::Warn);
 };
 
 struct PfColumn {

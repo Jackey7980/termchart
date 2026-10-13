@@ -59,7 +59,7 @@ void GaugeChart::draw(DrawContext ctx) {
     const PolarFrame f = make_frame(inner);
 
     const Style gauge_style = Style{}.set_fg(color_);
-    const Style tick_style = Style{}.set_fg(Color::ansi16(8));
+    const Style tick_style = Style{}.set_fg(default_color(DefaultColor::Muted));
 
     // 弧体：按角度采样，步长随周长走，保证相邻采样点格间连续。
     const int steps = std::max(24, static_cast<int>(std::lround(

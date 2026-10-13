@@ -17,6 +17,8 @@ namespace termchart::chart {
 
 void StreamgraphChart::add_series(Series series) { layers_.push_back(std::move(series)); }
 
+void StreamgraphChart::set_series(std::vector<Series> layers) { layers_ = std::move(layers); }
+
 void StreamgraphChart::draw(DrawContext ctx) {
     // 只保留非空层；各层长度以最短者为准（按序号堆叠，超出部分丢弃）。
     std::vector<const Series*> layers;

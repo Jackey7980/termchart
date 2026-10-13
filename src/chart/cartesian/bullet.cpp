@@ -63,7 +63,7 @@ void BulletChart::draw(DrawContext ctx) {
     }
 
     const Rect inner = area_.inner_rect();
-    const Style target_st = Style{}.set_fg(Color::ansi16(1));
+    const Style target_st = Style{}.set_fg(default_color(DefaultColor::Warn));
 
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const Row& r = rows[i];

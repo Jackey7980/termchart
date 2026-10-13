@@ -25,7 +25,7 @@ class YieldCurveChart final : public Chart {
 public:
     TERMCHART_API void set_curve(std::vector<double> maturities,
                                  std::vector<double> yields,
-                                 Color color = Color::ansi16(6),
+                                 Color color = default_color(DefaultColor::Cyan),
                                  std::string name = "yield");
 
     void set_options(YieldCurveOptions options) { options_ = options; }
@@ -38,7 +38,7 @@ public:
 
 private:
     std::vector<Point> points_;  // (期限, 收益率)，按期限升序
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     std::string name_ = "yield";
     YieldCurveOptions options_{};
     bool show_legend_ = true;

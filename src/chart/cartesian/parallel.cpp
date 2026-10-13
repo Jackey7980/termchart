@@ -85,7 +85,7 @@ void ParallelChart::draw(DrawContext ctx) {
 
     if (options_.show_axes) {
         const Style axis_st = ctx.axis_style.fg().is_none()
-                                  ? Style{}.set_fg(Color::ansi16(8))
+                                  ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                   : ctx.axis_style;
         for (int j = 0; j < k; ++j) {
             const double ax = axis_x[static_cast<std::size_t>(j)];

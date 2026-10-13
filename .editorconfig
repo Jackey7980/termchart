@@ -1,0 +1,47 @@
+# .editorconfig —— 跨编辑器的最小共识（https://editorconfig.org）
+#
+# 只放"不随编辑器而异、且机器可判"的那几条；风格细节交给 .clang-format。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# C++ 源：与 .clang-format 的 ColumnLimit 对齐（仅供参考，不强制）
+[*.{hpp,h,cpp,cc,cxx,ipp,tcc}]
+indent_size = 4
+max_line_length = 100
+
+[*.{cmake,txt}]
+indent_size = 4
+
+[CMakeLists.txt]
+indent_size = 4
+
+[*.{md,markdown}]
+trim_trailing_whitespace = false
+indent_size = 2
+
+# 生成物：禁手改，编辑器也别顺手格式化
+[include/termchart/detail/*.hpp]
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+[single_include/*.hpp]
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+[tests/golden/**]
+insert_final_newline = true
+trim_trailing_whitespace = false
+end_of_line = lf
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.py]
+indent_size = 4

@@ -47,7 +47,7 @@ void FunnelChart::draw(DrawContext ctx) {
         canvas.fill_rect(Rect{bar_x, row_y, bar_w, 1.0}, kBarChar, st);
 
         std::string label = stage.name;
-        if (options.show_values) {
+        if (options().show_values) {
             label += ' ';
             label += layout::format_tick(stage.value);
         }

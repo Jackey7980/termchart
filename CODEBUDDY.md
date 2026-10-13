@@ -1,8 +1,8 @@
 # CODEBUDDY.md This file provides guidance to CodeBuddy when working with code in this repository.
 
-> 仓库阶段：规格先行、分阶段落地。已实现 `core / util / color / term / render / api / scene / canvas / scale / image / raster / layout / chart / document / backend / protocol / interaction` + `detail/`；`scene/`（矢量 IR）与 `canvas/`（格粒度画布 + Scene→Canvas 桥接）已接通，`scale/`、`image/`（`Bitmap` RGBA + `FloatField` 标量场 + 自包含 `png_encode`）、`raster/`、`layout/`（轴/网格/图例/标题）、`chart/`（折线/柱状/散点/迷你线 + 绘制上下文 + dataset + 注册表 + `hit_region`）、`document/`（Document IR）、`backend/`（**三物种**：snapshot ansi/text/html_pre/json、vector svg、structured html/markdown）、`protocol/`（sixel / kitty / iterm2 内联 / halfblock / fallback / detect）、`interaction/`（输入解析 + 命中测试 + 分发 + 焦点）、`graph/`（根：节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数；子目录：`shape` 形状轮廓、`layout` 网格与分层布局、`route` 直线与正交路由、`diagrams`（flowchart / state_machine / mindmap / **orgchart** / 节点-连线）端到端渲染）已落地，`dsl/`、`widget/` 等 4 个模块（dsl/widget/plugin/app）与 `graph` 其余子目录（layout 的 radial/kamada_kawai/circular、route 的 spline/arc/obstacle、diagrams 的 dag/dependency）尚在 `结构.md` 里。写任何代码前先确认目标阶段是否已开工；规格问题查 `结构.md`，进度问题查 `ROADMAP.md`，二者都不查本文件。
+> 仓库阶段：规格先行、分阶段落地。**v0.x 规格的 22 个模块（L0–L21）已全部有真实实现**（`core / util / color / scale / scene / image / raster / term / document / protocol / canvas / layout / chart / graph / render / interaction / backend / dsl / widget / plugin / app / api` + 横切 `detail/`）；`scene/`（矢量 IR）与 `canvas/`（格粒度画布 + Scene→Canvas 桥接）已接通，`scale/`、`image/`（`Bitmap` RGBA + `FloatField` 标量场 + 自包含 `png_encode`）、`raster/`、`layout/`（轴/网格/图例/标题）、`chart/`（折线/柱状/散点/迷你线 + 绘制上下文 + dataset + 注册表 + `hit_region`）、`document/`（Document IR）、`backend/`（**三物种**：snapshot ansi/text/html_pre/json、vector svg、structured html/markdown）、`protocol/`（sixel / kitty / iterm2 内联 / halfblock / fallback / detect）、`interaction/`（输入解析 + 命中测试 + 分发 + 焦点）、`graph/`（根：节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数；子目录：`shape` 形状轮廓、`layout` 网格与分层布局、`route` 直线与正交路由、`diagrams`（flowchart / state_machine / mindmap / **orgchart** / 节点-连线）端到端渲染）**同样已落地**；`dsl/`（mermaid 等）、`widget/`、`plugin/`、`app/` 在阶段 5–7 补齐。剩余缺口只登记在 `docs/reference/backlog.md`（功能/规格/工程/质量/文档同步/GUI 六类）与 `docs/reference/quality_todo.md`（体检 P0–P4）里。写任何代码前先确认目标阶段是否已开工；规格问题查 `结构.md`，进度问题查 `ROADMAP.md`，二者都不查本文件。
 >
-> 阶段 0（护栏）与阶段 1（终端上色闭环）已跑通，阶段 2 的 `Scene → Canvas → CellBuffer`、`scale/`、`image/`、`raster/`，阶段 3 起步的 `layout/`、`chart/`、`document/`、三条 `backend/`（snapshot/vector/structured），以及阶段 6 起步的 `image/`（Bitmap）/`protocol/` 已接通：库已能把数据系列画成带坐标轴的终端折线/柱状图（`examples/03`、`04`），把 `CellBuffer`/`Scene`/`Document` 分别导出成 ANSI·文本·HTML·JSON / SVG / HTML·Markdown（`examples/34`、`35`、`36`），并在终端里用 sixel/kitty/半块显示位图（`examples/38`）。**三个可扩展性契约实验**（新增 backend / chart / raster，核心零改动，`tests/integration/replace_*.cpp`）与 **text/svg/json 三类 golden** 已建立；`interaction/` 起步（ANSI/UTF-8/SGR 鼠标字节流解析、HitRegion 命中测试、事件分发、焦点链）已落地 —— 阶段 3 的交付项至此全部勾选。图可视化可从 `Graph` 一路画到终端：`examples/14_flowchart`（分层布局 + 正交路由 + 形状/标签/箭头）、`15_state_machine`（转移事件标签 + 起止标记）、`16_mindmap`（树布局 + 扇形连线）、`20_force_graph`（力导向 + 节点-连线视图）。`Scene → Canvas` 也出真图（`render_scene` 描边走 braille 2×4 子像素、填充走 halfblock 1×2 实心，R12 已收口，golden `scene_raster/basic.txt` 锁外观）。性能基线已建立（`bench/bench_sugiyama`、`bench/bench_force`，零外部依赖、`--quick` 进 ctest 冒烟）。`ctest` 31/31、doctest 497 用例 / 189357 断言全绿、`check_all`（分层 + 自洽 + 生成物 + **每头独立编译**，186 头 / 146 实现）通过；另有 `ctest --preset fuzz` 13 项（含 6 个 fuzz 目标的 `--self-test`）。**当前真实能力与规格差距以手写文档 `docs/reference/capability_matrix.md` 为准**（含示例索引：哪些示例走真 raster / 哪些走 Scene）。
+> **阶段 0–7 的出口条件已全部闭合**（阶段 8 GUI 平行栈未开工）。各阶段接通的能力：库已能把数据系列画成带坐标轴的终端折线/柱状图（`examples/03`、`04`），把 `CellBuffer`/`Scene`/`Document` 分别导出成 ANSI·文本·HTML·JSON / SVG / HTML·Markdown（`examples/34`、`35`、`36`），并在终端里用 sixel/kitty/半块显示位图（`examples/38`）。**三个可扩展性契约实验**（新增 backend / chart / raster，核心零改动，`tests/integration/replace_*.cpp`）与 **text/svg/json 三类 golden** 已建立；`interaction/` 起步（ANSI/UTF-8/SGR 鼠标字节流解析、HitRegion 命中测试、事件分发、焦点链）已落地 —— 阶段 3 的交付项至此全部勾选。图可视化可从 `Graph` 一路画到终端：`examples/14_flowchart`（分层布局 + 正交路由 + 形状/标签/箭头）、`15_state_machine`（转移事件标签 + 起止标记）、`16_mindmap`（树布局 + 扇形连线）、`20_force_graph`（力导向 + 节点-连线视图）。`Scene → Canvas` 也出真图（`render_scene` 描边走 braille 2×4 子像素、填充走 halfblock 1×2 实心，R12 已收口，golden `scene_raster/basic.txt` 锁外观）。阶段 4 起：`graph/` 21 个图种端到端（`examples/13`–`20`）；阶段 5：`dsl/mermaid` + `interaction` 深化（zoom/pan/tooltip/crosshair/highlight/select/brush/legend_toggle/immediate，`examples/21`·`22`·`30`·`33`）；阶段 6：`widget` / `plugin` / `app` + `protocol` 全套 + `latex_backend` / `png_screenshot`；阶段 7：`chart` 九个子目录 + 单头分发 `single_include/termchart.hpp`（`examples/42`）。性能基线已建立（`bench/bench_sugiyama`、`bench/bench_force`，零外部依赖、`--quick` 进 ctest 冒烟）。**进度数字一律以 `ROADMAP.md` 修订记录为准**（见文末「进度口径说明」）；fuzz 另跑 `ctest --preset fuzz`。**当前真实能力与规格差距以手写文档 `docs/reference/capability_matrix.md` 为准**（含示例索引：哪些示例走真 raster / 哪些走 Scene）。
 
 ## 常用命令
 
@@ -10,13 +10,13 @@
 
 **Windows 备用预设**：`cmake --preset debug-windows`（MinGW Makefiles）。注意 GNU make 在含非 ASCII 字符的路径下会**把参数按 ANSI 破坏**，`mingw32-make` 连编译器自检都过不了；工作区路径含中文时必须用 `ninja` 预设。 (60字)
 
-**跑测试**：`ctest --preset ninja`。`tests/CMakeLists.txt` 注册了 5 个套件名（`termchart_tests` 全量 + `tests_golden` / `tests_render` / `tests_core` / `tests_util` 过滤跑），外加每个 example 一个 `example_<name>` 测试（当前共 16 个）。 (60字)
+**跑测试**：`ctest --preset ninja`。`tests/CMakeLists.txt` 注册了 5 个套件名（`termchart_tests` 全量 + `tests_golden` / `tests_render` / `tests_core` / `tests_util` 过滤跑），外加每个 example 一个 `example_<name>` 测试（`examples/` 现有 57 个源，规格示例 01–54 齐备；全量 `ctest` 计 73 项）。 (60字)
 
 **跑单个用例（最快）**：直接跑 doctest 二进制并过滤，绕开 ctest：`build/debug-windows/tests/termchart_tests --test-case=*core*`，或 `--source-file=` / `-tc=` 精确定位。源文件→用例的对应关系在 `tests/CMakeLists.txt` 里一目了然。 (55字)
 
 **护栏三件套**：`cmake --build --preset <预设> --target check_all`（依赖 `check_layers`、`check_header_only`、`check_generated`）。等价的直接调用：`python tools/check_layers.py`、`python tools/check_header_only.py`、`python tools/gen_{unicode_tables,grapheme_tables,braille_table}.py --check`。改了 `#include` 必跑分层校验。 (70字)
 
-**重新生成产物**：`cmake --build --preset <预设> --target generate_all`，或直接 `python tools/gen_unicode_tables.py`、`gen_grapheme_tables.py`、`gen_braille_table.py`、`gen_module_graph.py`。`--check` 非零即表示生成物与生成器不一致，**只能重跑生成器，不得手改产物**。 (60字)
+**重新生成产物**：`cmake --build --preset <预设> --target generate_all`，或直接跑 `tools/` 下的生成器（`gen_unicode_tables` / `gen_grapheme_tables` / `gen_braille_table` / `gen_turbo_dat` / `gen_turbo_table` / `gen_module_graph` / `gen_single_header` / `gen_api_docs` / `gen_gallery` / `gen_golden` / `gen_dsl_samples` / `gen_png_samples`）。`--check` 非零即表示生成物与生成器不一致，**只能重跑生成器，不得手改产物**。注意 `gen_gallery` 依赖已构建的示例二进制，**刻意不进 `check_generated`**（在"构建后"单独跑）。 (60字)
 
 **最小构建**：`cmake -DTERMCHART_MINIMAL_BUILD=ON`，只保留 core/util/color/term/render/api（开关在 `cmake/TermchartOptions.cmake`）。可选依赖 libpng/zlib/utf8proc 默认 OFF，缺失只降级不失败。 (40字)
 
@@ -30,7 +30,7 @@
 
 ### 定位与规格层级
 
-termchart 是零强制依赖的 C++20 终端图表库。`结构.md` 定义 22 个模块、约 400 个头文件的目标形态；`ROADMAP.md` 定义 v0.1–v0.7 八个阶段的垂直切片与「出口条件」，并声明自己是**唯一进度口径**——判断「某功能是否该有」只以它的勾选清单为准。当前代码处于阶段 0（地基护栏）+ 阶段 1（终端上色闭环）：`include/termchart/` 下只有 core、util、color、term、render、api 六个模块目录、横切的 `detail/`，以及 `version.hpp / export.hpp / deprecate.hpp / fwd.hpp / termchart.hpp` 五个顶层头。
+termchart 是零强制依赖的 C++20 终端图表库。`结构.md` 定义 22 个模块、约 400 个头文件的目标形态；`ROADMAP.md` 定义 v0.1–v0.7 八个阶段的垂直切片与「出口条件」，并声明自己是**唯一进度口径**——判断「某功能是否该有」只以它的勾选清单为准（`ROADMAP.md` 的「修订记录」表最新行 > 「一、项目现状」小节，后者停留在 2026-10-11 口径、已过时）。当前代码已走完阶段 0–7：`include/termchart/` 下 22 个模块目录全部有真实实现（实测 **312 个头 / `src/` 269 个 `.cpp` / `examples/` 57 个源 / `tests/` 126 个源**），横切 `detail/`（9 个生成器产出头），顶层 `version.hpp / export.hpp / deprecate.hpp / fwd.hpp / termchart.hpp` 五个头。剩余缺口见 `docs/reference/backlog.md`，质量体检见 `docs/reference/quality_todo.md`。
 
 ### 分层规则：机器强制，唯一真源
 
@@ -75,13 +75,13 @@ termchart 是零强制依赖的 C++20 终端图表库。`结构.md` 定义 22 �
 
 ### 物理布局与生成物
 
-`include/termchart/**` 与 `src/**` **严格同路径同名**，一个头一个 cpp（基类也要有 cpp 放虚表锚点），例外只有 `cmake/header_only.txt` 列出的纯头（当前含 `core/point|rect|attr|color_depth|rgb|span_utils`、`util/bits|math|random|assert`、`color/named_colors`）。新增头文件要同步做全套：CMake 引用、`src/` 同名实现、单元测试、自洽性校验。
+`include/termchart/**` 与 `src/**` **严格同路径同名**，一个头一个 cpp（基类也要有 cpp 放虚表锚点），例外只有 `cmake/header_only.txt` 列出的纯头（起点是 `core/point|rect|attr|color_depth|rgb|span_utils`、`util/bits|math|random|assert`、`color/named_colors`，此后随模块铺开持续增长——**以该清单为唯一真源**；改完必须重跑 `generate_all`，因为它是 `结构.md` 附四的输入，见坑 24）。新增头文件要同步做全套：CMake 引用、`src/` 同名实现、单元测试、自洽性校验。
 
 生成物禁手改：`include/termchart/detail/*.hpp` 由三个 `tools/gen_*.py` 产出；`结构.md` 附一/附四与 `docs/reference/module_matrix.md` 由 `tools/gen_module_graph.py` 从 `TermchartModules.cmake` 产出；`single_include/` 与 `tests/golden/` 同样是生成物。
 
 ### 测试形态
 
-doctest 是 vendored 的唯一框架（`third_party/doctest/doctest.h`）。`tests/unit/` 按模块分组；`tests/unit/test_layering.cpp` 守生成数据表的结构不变量而非模块分层（模块分层由 `check_layers.py` 守）。golden 当前只有 `ansi_props` 一类，且刻意**把渲染字节流解析回属性（行/列/码点/前景/背景/属性位）再比对**，不比字节——字节级快照会把「先发 fg 还是先发 bg」这类无关实现选择固化成契约，只产生噪声。`tests/integration/test_full_render.cpp` 覆盖端到端链路。
+doctest 是 vendored 的唯一框架（`third_party/doctest/doctest.h`）。`tests/unit/` 按模块分组；`tests/unit/test_layering.cpp` 守生成数据表的结构不变量而非模块分层（模块分层由 `check_layers.py` 守）。golden 现有 **9 份**快照（含 `ansi_props`、`scene_raster` 等），且刻意**把渲染字节流解析回属性（行/列/码点/前景/背景/属性位）再比对**，不比字节——字节级快照会把「先发 fg 还是先发 bg」这类无关实现选择固化成契约，只产生噪声。`tests/integration/test_full_render.cpp` 覆盖端到端链路。
 
 ### 改代码时最容易踩的坑
 
@@ -111,6 +111,8 @@ doctest 是 vendored 的唯一框架（`third_party/doctest/doctest.h`）。`tes
 24. **子目录 `detail/` 下的纯头文件不会自动豁免**：`tools/check_header_only.py::is_exempt_header()` 的判据是 `header.startswith("detail/") or "/" not in header` —— 即**只豁免顶层 `termchart/detail/` 与顶层头**（`core/point.hpp` 这种）。`interaction/detail/overlay_cells`、`graph/route/junction` 这类既不满足前缀也不满足无斜杠，**必须写进 `cmake/header_only.txt`**；而该清单是生成物 `结构.md` 附四的输入，所以**改完必须重跑 `generate_all`**，否则 `check_generated` 直接失败（只加清单不改生成物＝失败，手改生成物＝更失败）。两条路径都已按此登记。
 25. **并行会话会让"全量构建"随机变红，别据此下结论**：`src/**.cpp` 是 `GLOB_RECURSE CONFIGURE_DEPENDS`，任何人写了半截新文件，**别人的全量构建就跟着失败**（已发生：一方据此误判"仓库整体编不过"，其实是另一方的瞬时中间态，且归属还报错了）。对策：① 各自在隔离工程里把不相关子树标 `HEADER_FILE_ONLY` 再构建；② `check_all` 与全量 `ctest` 只在**所有并行方都报告完成**后跑一次；③ 看到别人文件的编译错误时先别改，等对方报完成再复核。
 
-> **进度口径说明（2026-10-11 干净重跑确权）**：`ctest 31/31`、doctest `497 用例 / 189357 断言` 全绿，由 `ctest --preset ninja` 权威确认；`check_all` 通过（186 头 / 146 实现）；golden 9 份（含 `scene_raster`）；fuzz 另见 `ctest --preset fuzz`（13 项，含 6 条自检；语料 24 条共享 + PNG 专项 6 条；6×20000 组随机输入无崩溃）。
+> **进度口径说明（2026-10-13 刷新）**：以 `ROADMAP.md`「修订记录」最新行为准 —— `ctest` **73/73 全绿**（示例占大头）、doctest **848 用例 / 191580 断言、0 失败**（72/72 时点实测）、四护栏全绿（`check_header_only` **312 头 / 269 实现**）。文件普查（本轮实测）：`include/` 311 个头、`src/` 268 个 `.cpp`、`examples/` 57 个源、`tests/` 126 个源、golden 9 份。
 >
-> **同一 build 目录被两个构建进程同时使用会产出坏二进制**：曾出现 `example_40_advanced_master.exe` 无法启动（"拒绝访问"，PE 结构完整、连 `%TEMP%` 副本也拒），强制重新链接后即恢复正常 —— 那是并发链接写坏的产物，不是代码问题。多人/多会话共用工作区时，构建产物异常先重链一次再排查。规格差距量化见 `docs/reference/capability_matrix.md` 第五节（规格具名头文件尚缺约 166 个；`tests/fuzz/` 已建 6 个目标、`tests/fixtures/` 已建目录与政策说明）。本文件与 `ROADMAP.md`「一、项目现状」已对齐到该真值。读进度优先看 ROADMAP「一、项目现状」的审计结论（含逐模块 LOC 与 Scene→raster 收口 R12）。
+> **注意两点**：① 这些数字来自 ROADMAP 修订记录与本次文件普查，**本轮未重跑 `ctest` 确权**；要确权跑 `ctest --preset ninja`。② `ROADMAP.md`「一、项目现状」小节仍写着"L17–L20 是零代码空洞"，那是 2026-10-11 的陈旧口径，**已过时**（dsl/widget/plugin/app 已在阶段 5–7 落地），读进度请只看「修订记录」表与阶段勾选清单。
+>
+> **同一 build 目录被两个构建进程同时使用会产出坏二进制**：曾出现 `example_40_advanced_master.exe` 无法启动（"拒绝访问"，PE 结构完整、连 `%TEMP%` 副本也拒），强制重新链接后即恢复正常 —— 那是并发链接写坏的产物，不是代码问题。多人/多会话共用工作区时，构建产物异常先重链一次再排查。规格差距量化见 `docs/reference/capability_matrix.md` 第五节（**该节数字待按 310/267 实测口径刷新**，尚缺具名头的旧数字已不可信）；缺口总览见 `docs/reference/backlog.md`。读进度优先看 `ROADMAP.md`「修订记录」表（含逐阶段交付与验证数字），而非「一、项目现状」。

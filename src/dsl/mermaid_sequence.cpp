@@ -304,13 +304,15 @@ private:
     }
 
     SequenceParticipant& ensure_participant(const std::string& key) {
-        if (SequenceParticipant* existing =
-                const_cast<SequenceParticipant*>(ast_.find_participant(key))) {
+        if (SequenceParticipant* existing = ast_.find_participant(key)) {
             return *existing;
         }
         if (ast_.participants.size() >= options_.max_participants) {
+            // 同 d2 的 ensure()：报错后**不再**造参与者，避免"报了错却越过了上限"。
             report(ErrorCode::OutOfRange, "参与者数超过 max_participants");
-            return ast_.ensure_participant(key);
+            overflow_ = SequenceParticipant{};
+            overflow_.key.assign(key);
+            return overflow_;
         }
         SequenceParticipant& participant = ast_.ensure_participant(key);
         participant.kind = "participant";
@@ -319,12 +321,14 @@ private:
 
     SequenceParseOptions options_{};
     AstSequence ast_;
+    // 超限后的返回值落点：不属于 ast_.participants，仅供解析继续走完（结果会被丢弃）。
+    SequenceParticipant overflow_{};
 };
 
 }  // namespace
 
-const SequenceParticipant* AstSequence::find_participant(std::string_view key) const noexcept {
-    for (const SequenceParticipant& participant : participants) {
+SequenceParticipant* AstSequence::find_participant(std::string_view key) noexcept {
+    for (SequenceParticipant& participant : participants) {
         if (participant.key == key) {
             return &participant;
         }
@@ -332,12 +336,16 @@ const SequenceParticipant* AstSequence::find_participant(std::string_view key) c
     return nullptr;
 }
 
+const SequenceParticipant* AstSequence::find_participant(std::string_view key) const noexcept {
+    return const_cast<AstSequence*>(this)->find_participant(key);
+}
+
 bool AstSequence::has_participant(std::string_view key) const noexcept {
     return find_participant(key) != nullptr;
 }
 
 SequenceParticipant& AstSequence::ensure_participant(std::string_view key) {
-    if (SequenceParticipant* existing = const_cast<SequenceParticipant*>(find_participant(key))) {
+    if (SequenceParticipant* existing = find_participant(key)) {
         return *existing;
     }
     SequenceParticipant participant;

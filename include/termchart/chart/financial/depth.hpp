@@ -13,8 +13,8 @@
 namespace termchart::chart {
 
 struct DepthOptions {
-    Color bid = Color::ansi16(2);  // 买盘（绿）
-    Color ask = Color::ansi16(1);  // 卖盘（红）
+    Color bid = default_color(DefaultColor::Accent);  // 买盘（绿）
+    Color ask = default_color(DefaultColor::Warn);  // 卖盘（红）
 };
 
 class DepthChart final : public Chart {

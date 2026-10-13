@@ -25,7 +25,7 @@ struct SeasonalOptions {
 class SeasonalChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(4));
+                                  Color color = default_color(DefaultColor::Neutral));
 
     void set_options(SeasonalOptions options) { options_ = options; }
 
@@ -41,7 +41,7 @@ private:
     void decompose();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     SeasonalOptions options_{};
     std::vector<double> trend_;
     std::vector<double> seasonal_;

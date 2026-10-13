@@ -8,9 +8,11 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径：`include/termchart/**/*.hpp`（186 个）、`src/**/*.cpp`（146 个），
-`ctest --preset ninja`（31 项 = 5 套件 + 24 示例 + 2 bench 冒烟；`ctest --preset fuzz` 另有 6 条 fuzz 自检），
-doctest 497 用例 / 189357 断言，golden 9 份。改动后请重跑下列命令再更新本文件。
+数字口径（2026-10-13 实测）：`include/termchart/**/*.hpp`（310 个）、`src/**/*.cpp`（269 个）、
+`examples/`（57 个源，规格示例 01–54 齐备）、`tests/`（126 个源）、golden 9 份。
+`ctest` **65 项**（5 套件 + 57 示例 + 3 bench 冒烟；开 fuzz 后为 73 项，
+即 `ctest --preset fuzz` 另加 8 条 fuzz 自检），doctest **859 用例 / 192159 断言**。
+改动后请重跑下列命令再更新本文件。
 
 ```bash
 cmake --build --preset ninja
@@ -45,9 +47,9 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `backend` | 16 | 可用 | 三物种各至少一个后端：snapshot（ansi/text/html_pre/json）、vector（svg）、structured（html/markdown） | `png_screenshot`；structured/vector 的 `latex_backend` |
 | `protocol` | 9 | 可用 | sixel（量化+调色板+RLE）、kitty（原始 RGBA+base64 分块）、**iterm2 内联（PNG+base64+OSC 1337）**、半块图像、降级选择（Kitty > Iterm2 > Sixel > HalfBlock > None）、环境探测（含 WezTerm/Konsole/iTerm 与手动覆盖） | — |
 | `dsl` | 17 | **可用（14/14 文件齐备）** | 词法/框架：`lexer`（箭头感知切分 / UTF-8 标签 / 注释前缀可配 / 非法字节不阻塞游标）、`parser_base`（递归下降 + 首个诊断定位）、`ast`（+`to_graph` 唯一适配点）、`dsl_registry`（function-local static + 快照语义 + 幂等内置登记，登记 6 个图产出方言）。方言：`mermaid_flow`（8 形状 / 9 箭头 / 两种边标签 / 边链 / subgraph）、`mermaid_class`（类体成员 + 六种关系语义 + 多重度 + 构造型）、`mermaid_state`（`[*]` 起止 + 组合态 + note）、`mermaid_sequence`（**独立类型 `AstSequence`**：参与者 / 8 种消息 / note / 激活，刻意不进图模型）、`graphviz_dot`（rankdir / 属性按原文切片 / 并列节点集 / `{a b}->c` 展开）、`plantuml`（类体 + 五关系 + 多重度 + 宽松容错）、`d2`（`name: Type` 形状 / 连接 / 容器块 / `name.prop` 属性）、`table_markdown`（GFM 管道表格 + 转义竖线）、`csv_sniff`（引号字段跨行 / BOM / 七类列型推断）。测试：`tests/unit/dsl/` 5 个文件、`tests/fixtures/` 4 份生成物、`fuzz_mermaid` + `fuzz_dsl_lexer`（`--self-test` 进 ctest）、`bench_mermaid_parse`（200/400/800/1600 节点四方言基线） | `table_markdown`/`csv_sniff`/`mermaid_sequence` 的**渲染**侧（尚无表格图与时序图渲染器）；DOT 的 HTML 标签与端口、PlantUML 的组件/活动图族、D2 的 SQL/markdown 嵌入块 |
-| `widget` | 18 | **空** | — | 零代码 |
-| `plugin` | 19 | **空** | — | 零代码 |
-| `app` | 20 | **空** | — | 零代码 |
+| `widget` | 18 | **可用（6 头 / 3 实现）** | `widget`（布局 + 生命周期 + 事件注入）、`immediate_widget`（每帧重建的即时模式）、`reactive`（信号式，脏标记 + 重建）、主题三份（`theme_dark` / `theme_light` / `theme_mono`） | GUI 平行栈的 `widget` 层由 GUI 自己重写（设计选择，见第六节） |
+| `plugin` | 19 | **可用（4 头 / 4 实现）** | `plugin`（接口 + 生命周期）、`manifest`（元数据）、`loader`（加载）、`dynamic`（动态库）；注册表为 function-local static + App 构造时冻结快照（见 `docs/design/registry.md`） | 真·跨动态库加载（当前为同进程登记） |
+| `app` | 20 | **可用（7 头 / 7 实现）** | `app`（reactive 主循环）/ `immediate_app`（即时模式循环）、`loop`（事件循环）、`headless`（无 tty 可测）、`animation`（帧调度）、`post`（帧后处理）、`config`（运行期配置） | 平台原生循环（GUI 侧自写） |
 | `termchart_gui` | — | **空** | — | 平行 GUI 栈整体未开工 |
 
 ## 二、三物种导出能力
@@ -60,7 +62,7 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 
 > 后端不做跨渲染模型转换：输入是哪一种物种，就在类型上钉死（见各 `backend/*/backend.hpp`）。
 
-## 三、示例索引（24 个，全部在 ctest 里冒烟）
+## 三、示例索引（57 个源，规格示例 01–54 齐备，全部在 ctest 里冒烟）
 
 | 示例 | 路径 | 渲染方式 | 备注 |
 | --- | --- | --- | --- |
@@ -107,27 +109,37 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 | `layout_layered` | 1024 节点 / 1953 边 | 2210 µs | 无平方级行为 |
 | `layout_force` | 20 节点 / 200 迭代 | 2.6 ms | 20→160 节点耗时 ×56 ≈ 平方，符合每轮 O(V²) 斥力 |
 | `layout_force` | 160 节点 / 200 迭代 | 146 ms | **已知性能边界**：大图需 Barnes-Hut 近似或降低迭代数 |
+| `mermaid_parse` | 200 / 400 / 800 / 1600 节点，四方言 | — | 方言解析扩展性基线；`--quick` 进 ctest |
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 186 头，**规格具名头文件尚缺约 150–152 个**
-  （口径：规格具名头文件约 336–338 个 − 现有 186；两种数法差 2，故写作区间）；
-  `dsl/ widget/ plugin/ app/ termchart_gui/` 五个目录整体不存在。
-- `examples/`：规格 60 个，实存 24 个（其中 `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`
-  为规格外来源；`07_fractal`、`08_fractal_levels`、`40_advanced_master` 来自并行会话）。
-- `bench/`、`tests/fuzz/`、`tests/fixtures/` 三个目录在本轮之前**完全不存在**，现在三者都已建立：
-  `bench/` 2 条基线；`tests/fuzz/` **6 个目标**（规格 7 个里落地 5 个，另加规格外补充 `fuzz_png`——
-  `decode_png` 是全仓最理想的 fuzz 入口；`fuzz_mermaid` / `fuzz_dsl_lexer` 因 L17 `dsl` 是空层、
-  没有可调用的解析器而**刻意不建空壳**），`--self-test` 已进 ctest（`ctest --preset fuzz`，13 项），
-  并跑过 6×5000 组随机输入无崩溃；`tests/fixtures/` 已建目录与政策说明（夹具即生成物），
-  规格点名的 7 份夹具仍待补（清单见该目录 README）。
+- 按 `结构.md` 的具名文件表核对：`include/` 现有 **312 头**，`src/` **269 个 `.cpp`**。
+  规格具名头文件约 336–338 个，故**尚缺约 26–28 个**（两种数法差 2，故写作区间）；
+  `dsl/ widget/ plugin/ app/` 四个目录**均已落地**（此前为零代码），只剩 `termchart_gui/`
+  属于 GUI 平行栈、刻意未开工。
+- `examples/`：规格 60 个，实存 **57 个源**（规格编号示例 01–54 全部齐备；
+  `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`、`07_fractal`、
+  `08_fractal_levels`、`40_advanced_master` 等为规格外补充，部分来自并行会话）。
+- `bench/` **3 条基线**（`bench_sugiyama` / `bench_force` / `bench_mermaid_parse`），
+  零外部依赖、`--quick` 进 ctest 冒烟。
+- `tests/fuzz/` **8 个目标**，`--self-test` 已进 ctest（`ctest --preset fuzz`），
+  跑过 6×20000 组随机输入无崩溃；语料 24 条共享 + PNG 专项 6 条。
+- `tests/fixtures/`：夹具即生成物。**7 份规格夹具已全部补齐**——
+  `gen_dsl_samples.py` 产 4 份（mermaid / dot / plantuml / csv），
+  `gen_fixtures.py` 产 3 份（`sample_data.hpp` / `sample_graph.hpp` / `sample_grapheme.txt`），
+  两者都进 `check_generated`；消费方 `tests/unit/test_fixtures.cpp` 守夹具自身不变量。
 - `TODO` / `FIXME` 在 `include/`、`src/`、`examples/`、`tests/` 内为 **0**；占位类关键词命中 24 处，
   其中**真实缺口 2 处**（`scene_renderer` 的 `ImageOp`（Scene 里没有像素源）、
   `layout/internal.hpp` 的占位线格字符），其余为文档化阶段占位或正常渲染逻辑。
   `image/{png,png_encode,decoder}` 与 `protocol/iterm2_inline` 曾在此清单里，现已实现：
   PNG 编码器用 Python 参考 zlib 校验过输出，解码器用 `tools/gen_png_samples.py` 造的
   12 个样本（滤波 1–4、动态 Huffman、调色板 4/8 位、16 位灰度、坏 CRC、Adam7）交叉验证。
-- 单头发布（`termchart_full.hpp` / `single_include/`）尚未建立。
+- 单头发布**已建立**：`single_include/termchart.hpp` 由 `tools/gen_single_header.py` 生成
+  （进 `check_generated`），示例 `examples/42_single_header` 在 ctest 里冒烟。
+- **平台现实（不是代码问题）**：本机 MinGW-w64 GCC 15.2 **不带 `libasan` / `libubsan` / `libtsan`**，
+  故 ASan/UBSan/TSan **无法在 Windows 上跑**；覆盖率可跑，但 gcov 运行时写不进含非 ASCII
+  字符的路径，需 `GCOV_PREFIX` 指向 ASCII 目录（实测 382 份 `.gcda` 正常产出）。
+  ASan / TSan / coverage 三项已进 `.github/workflows/ci.yml` 的 ubuntu 作业。
 
 ---
 

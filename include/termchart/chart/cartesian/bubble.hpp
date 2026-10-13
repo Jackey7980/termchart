@@ -22,7 +22,7 @@ public:
         double r = 0.0;  // 第三维：非负半径语义，负值/非有限按 0 处理
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         std::string name = "bubble";
         bool show_legend = true;
     };

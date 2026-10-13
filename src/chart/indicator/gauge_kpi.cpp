@@ -100,7 +100,7 @@ void GaugeKpi::draw(DrawContext ctx) {
     if (options_.show_delta && !delta_.empty() && area.bottom() - 2.0 > row) {
         const double dy = area.bottom() - 2.0;
         const Style dst =
-            Style{}.set_fg(delta_up_ ? Color::ansi16(2) : Color::ansi16(1));
+            Style{}.set_fg(delta_up_ ? default_color(DefaultColor::Accent) : default_color(DefaultColor::Warn));
         const int text_w = util::display_width(delta_);
         const double total = 1.0 + 1.0 + static_cast<double>(text_w);
         double x = cx - total / 2.0;

@@ -106,7 +106,7 @@ void PolarBarChart::draw(DrawContext ctx) {
     const double pad = slot * (1.0 - bar) / 2.0;  // 槽位内两侧留白
 
     if (ctx.draw_grid) {
-        const Style grid_style = Style{}.set_fg(Color::ansi16(8));
+        const Style grid_style = Style{}.set_fg(default_color(DefaultColor::Muted));
         for (const double ring : {0.25, 0.5, 0.75, 1.0}) {
             draw_ring(ctx.canvas, f, ring, start_rad, options_.clockwise, U'\u00B7',
                       grid_style);

@@ -1,0 +1,39 @@
+# .cmake-format.yaml —— cmake/ 与 CMakeLists.txt 的排版
+#
+# 定位同 .clang-format：编辑器与新增文件用，不进 CI 强制。
+# 手工跑：cmake-format -i cmake/*.cmake  （或 gersemi / cmakelang）
+
+parse:
+  additional_commands:
+    termchart_set_warnings:
+      pargs:
+        nargs: '*'
+        flags: []
+      kwargs:
+        WERROR: 1
+    termchart_add_module:
+      pargs:
+        nargs: '*'
+        flags: []
+      kwargs: {}
+
+format:
+  line_width: 100
+  tab_size: 4
+  use_tabchars: false
+
+  # 与本仓一致：命令名小写、关键字保持大写（if(...) / endif()）
+  command_case: canonical
+  keyword_case: unchanged
+
+  dangle_parens: false
+  max_subgroups_hwrap: 2
+  max_pargs_hwrap: 4
+
+  # 注释里的中文与表格不要被重排
+  wrap_decorations: false
+  emit_byteorder_mark: false
+
+  # 既有文件里 `# ── xxx ──` 的分节注释要原样保留
+  literal_comment_pattern: '^# ──'
+  enable_markup: false

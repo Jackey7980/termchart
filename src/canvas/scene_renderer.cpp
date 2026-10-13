@@ -8,6 +8,9 @@
 //
 // 状态语义与 backend/vector 的 SVG 后端严格同构：Fill/Stroke 只作用于**其后**出现的
 // 图元，所以遇到状态指令时先把已累积的几何按**旧颜色**收口，再更新状态。
+//
+// 这套"什么时候收口"的时序**不在本文件**——它在 scene::StatefulVisitor 里，
+// canvas 与 SVG 后端共用同一份；本文件只回答"往哪画"。
 #include "termchart/canvas/scene_renderer.hpp"
 
 #include <algorithm>
@@ -20,7 +23,7 @@
 #include "termchart/detail/block_chars.hpp"
 #include "termchart/image/field.hpp"
 #include "termchart/raster/rasterizer.hpp"
-#include "termchart/scene/visitor.hpp"
+#include "termchart/scene/stateful_visitor.hpp"
 
 namespace termchart::canvas {
 namespace {
@@ -47,54 +50,56 @@ bool to_sub(double value, std::uint32_t& out) noexcept {
     return true;
 }
 
-class ScenePainter final : public scene::CommandVisitor {
+class ScenePainter final : public scene::StatefulVisitor {
 public:
     explicit ScenePainter(Canvas& canvas) noexcept
         : canvas_(&canvas),
           stroke_field_(canvas.width() * kStrokeSubX, canvas.height() * kStrokeSubY, 0.0f),
           fill_field_(canvas.width() * kFillSubX, canvas.height() * kFillSubY, 0.0f) {}
 
-    void visit(const scene::MoveTo& command) override { current_ = command.to; }
-
-    void visit(const scene::LineTo& command) override {
-        plot_segment(current_, command.to);
-        current_ = command.to;
+protected:
+    // ── 路径 hooks ──
+    void begin_path(const Point& /*from*/) override {
+        // 终端侧不需要显式起点：extend_path 自带两端（a→b 整段都画）。
     }
 
-    void visit(const scene::RectOp& command) override {
-        if (!fill_.fg().is_none()) {
-            plot_filled_rect(command.rect);  // 有填充色 → 实心
-            return;
-        }
-        plot_rect_outline(command.rect);  // 否则描边（与旧行为一致）
+    void extend_path(const Point& from, const Point& to) override { plot_segment(from, to); }
+
+    void end_path() override {
+        flush_stroke();  // dirty 守卫，多次调用幂等
     }
 
-    void visit(const scene::ArcOp& command) override { plot_arc(command); }
-
-    // Fill / Stroke 是**状态指令**：先按旧状态收口，再更新状态。
-    void visit(const scene::FillOp& command) override {
-        flush();
-        fill_ = Style{}.set_fg(command.color);
+    // ── 图元 hooks ──
+    void emit_filled_rect(const Rect& rect, const Color& fill) override {
+        // 填充**即时**收口：一次 RectOp 就是一个完整的实心块，没有与别的图元
+        // 合并的必要；且颜色已由参数给定，不必等到 end_path 再取状态。
+        plot_filled_rect(rect);
+        flush_fill(fill);
     }
 
-    void visit(const scene::StrokeOp& command) override {
-        flush();
-        stroke_ = Style{}.set_fg(command.color);
+    void emit_stroked_rect(const Rect& rect, const Color& /*stroke*/, double /*width*/) override {
+        // 描边与填充**反着来**：这里只往 stroke_field_ 累积、自己不 flush，
+        // 真正的刷出在 end_path()（基类遇到状态指令 / 换图元 / run() 收尾时调）。
+        // 原因：同一段描边色下可能连着来多个几何（矩形轮廓 + 若干 LineTo + 弧），
+        // 逐个立即光栅化会把它们拆成多次 blit，既多开销又让叠加顺序不可控；
+        // 累积到一次 end_path() 统一刷出，才与 SVG 的"一条 <path>"同构。
+        // 代价：最后一个图元若是描边矩形，收尾那次 end_path() 是它唯一的刷出点
+        // （见 StatefulVisitor::finish_path() 的注释）。
+        // 线宽在终端侧无意义（一格就是一个字符），故忽略。
+        plot_rect_outline(rect);
     }
 
-    void visit(const scene::TextOp& command) override {
-        canvas_->draw_text(command.at, command.text, command.style);
+    void emit_arc(const scene::ArcOp& arc, const Color& /*stroke*/, double /*width*/) override {
+        plot_arc(arc);
     }
 
-    void visit(const scene::ImageOp& command) override {
+    void emit_text(const scene::TextOp& text) override {
+        canvas_->draw_text(text.at, text.text, text.style);
+    }
+
+    void emit_image(const scene::ImageOp& image) override {
         // Scene 里没有像素数据（分层不允许 scene 依赖 image），这里只能是占位块。
-        canvas_->fill_rect(command.rect, detail::kMediumShade, Style{});
-    }
-
-    // 收口：先填充后描边，轮廓压在填充之上。
-    void flush() {
-        flush_fill();
-        flush_stroke();
+        canvas_->fill_rect(image.rect, detail::kMediumShade, Style{});
     }
 
 private:
@@ -208,19 +213,19 @@ private:
             return;
         }
         raster::RasterOptions opts;
-        opts.fg = stroke_.fg();
-        opts.bg = Color::none();  // 只画点，不动背景
+        opts.fg = current_stroke();  // 旧值：状态指令是"先收口、后赋值"
+        opts.bg = Color::none();     // 只画点，不动背景
         blit(raster::rasterize(stroke_field_, raster::RasterKind::Braille, opts));
         stroke_field_.fill(0.0f);
         stroke_dirty_ = false;
     }
 
-    void flush_fill() {
+    void flush_fill(const Color& fill) {
         if (!fill_dirty_) {
             return;
         }
         raster::RasterOptions opts;
-        opts.fg = fill_.fg();
+        opts.fg = fill;
         opts.bg = Color::none();
         blit(raster::rasterize(fill_field_, raster::RasterKind::HalfBlock, opts));
         fill_field_.fill(0.0f);
@@ -228,9 +233,6 @@ private:
     }
 
     Canvas* canvas_;
-    Point current_{};
-    Style fill_{};
-    Style stroke_{};
     image::FloatField stroke_field_;
     image::FloatField fill_field_;
     bool stroke_dirty_ = false;
@@ -241,8 +243,7 @@ private:
 
 void render_scene(const scene::Scene& scene, Canvas& canvas) noexcept {
     ScenePainter painter(canvas);
-    scene::accept_all(scene, painter);
-    painter.flush();
+    painter.run(scene);
 }
 
 }  // namespace termchart::canvas

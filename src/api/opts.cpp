@@ -2,48 +2,48 @@
 
 namespace termchart::api {
 
-Opts& Opts::width(std::uint16_t value) noexcept {
+Opts& ApiOptions::width(std::uint16_t value) noexcept {
     width_ = value;
     return *this;
 }
 
-Opts& Opts::height(std::uint16_t value) noexcept {
+Opts& ApiOptions::height(std::uint16_t value) noexcept {
     height_ = value;
     return *this;
 }
 
-std::optional<std::uint16_t> Opts::width() const noexcept { return width_; }
+std::optional<std::uint16_t> ApiOptions::width() const noexcept { return width_; }
 
-std::optional<std::uint16_t> Opts::height() const noexcept { return height_; }
+std::optional<std::uint16_t> ApiOptions::height() const noexcept { return height_; }
 
-Opts& Opts::color_depth(ColorDepth value) noexcept {
+Opts& ApiOptions::color_depth(ColorDepth value) noexcept {
     depth_ = value;
     return *this;
 }
 
-std::optional<ColorDepth> Opts::color_depth() const noexcept { return depth_; }
+std::optional<ColorDepth> ApiOptions::color_depth() const noexcept { return depth_; }
 
-Opts& Opts::unicode(bool value) noexcept {
+Opts& ApiOptions::unicode(bool value) noexcept {
     unicode_ = value;
     return *this;
 }
 
-Opts& Opts::ascii_only() noexcept { return unicode(false); }
+Opts& ApiOptions::ascii_only() noexcept { return unicode(false); }
 
-bool Opts::unicode() const noexcept { return unicode_; }
+bool ApiOptions::unicode() const noexcept { return unicode_; }
 
-Opts& Opts::newline(bool value) noexcept {
+Opts& ApiOptions::newline(bool value) noexcept {
     newline_ = value;
     return *this;
 }
 
-bool Opts::newline() const noexcept { return newline_; }
+bool ApiOptions::newline() const noexcept { return newline_; }
 
-Opts& Opts::reset_at_end(bool value) noexcept {
+Opts& ApiOptions::reset_at_end(bool value) noexcept {
     reset_ = value;
     return *this;
 }
 
-bool Opts::reset_at_end() const noexcept { return reset_; }
+bool ApiOptions::reset_at_end() const noexcept { return reset_; }
 
 }  // namespace termchart::api

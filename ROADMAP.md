@@ -19,11 +19,16 @@
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
 | TBD | 初稿建立 | 全部 |
+| 2026-10-13 | **Scene 消费者时序收敛为一份（`scene::StatefulVisitor`）**。新增 `include/termchart/scene/stateful_visitor.hpp` + `src/scene/stateful_visitor.cpp`：把"MoveTo 不收口、LineTo 首个触发 begin_path、Fill/Stroke 先按旧状态收口再更新、Rect 按有无填充分两支"这套时序收在一处；`end_path()` **无条件**调用（判空交给实现的 dirty/空串守卫，加 `if (path_open_)` 会漏收口），`finish_path()` 收口后重置 `path_open_`。消费者改造：`canvas::ScenePainter` 与 `vector::SvgVisitor` 各自只剩"往哪画"的 8 个 hook（canvas 侧 `begin_path` 是 no-op，填充改为即时收口）；SVG 侧顺带修掉"非路径图元后紧跟 LineTo 会丢 M"的隐患。新增 `tests/unit/scene/test_stateful_visitor.cpp`（4 用例，用只记日志的派生类钉住时序）。**验证**：golden 一份未动（canvas 与 SVG 两条路径字节级不变，证实原行为与本时序等价）、`ctest` **65/65**、doctest **859 用例 / 192159 断言、0 失败**、`check_all` 全绿（`check_header_only` 312 头 / 269 实现）。未动：`BoundsVisitor`（无状态消费者，不需要时序）、`visitor.hpp/.cpp` | 4、10、16 |
+| 2026-10-13 | **剩余小项清零（不含 GUI）**。工程设施：根配置 5 件（`.clang-format`/`.clang-tidy`/`.cmake-format.yaml`/`.editorconfig`/`.gitattributes`）+ `scripts/` 三件 shell 封装（各跑通），CI 补 `gen_fixtures`/`gen_single_header`/`check_headers` 三条护栏并新增 **tsan**/**coverage** 两个 ubuntu 作业。具名色：68 → **CSS 全集 148 色**（新增结构不变量用例）。夹具：`tools/gen_fixtures.py` 补齐 `sample_data.hpp`/`sample_graph.hpp`/`sample_grapheme.txt`，**7/7 就位**且都有消费方。P2：`api::render_chart`/`print_chart` 一行出图 + `quickstart_30s.md` 新段 + `mkdocs.yml` nav 补齐（此前整个 `docs/guide/` 不可达）。P3：Renderer 改 `unique_ptr`+移动、`at()` 断言 + `try_at()`、dsl 8 处 `const_cast` 由非 const 重载替掉、`StopCache` 改 append-only shared_ptr、`put`/`set_sides` 返回 bool、metro 步数断言。P4：路由新增 **Z 形绕行**（跨链边不再走直线兜底，新增严格断言回归）、`d2`/`mermaid_sequence` 超限不再造节点。P1（兼容式）：数据动词口径、`Opts`→`ApiOptions`（别名保留）、默认配色收敛为 `default_color()`（色号不变）、Funnel 选项封装、`Graph::find_edge`。sanitizer 确权结论：**本机 MinGW 无 libasan/libubsan/libtsan，只能在 Linux 跑**（已挂 CI）；coverage 本机可跑但需 `GCOV_PREFIX` 指 ASCII 目录。文档：`capability_matrix` 全文按 310/267 实测刷新、`ROADMAP` 现状节改写并标注其历史滞后、backlog/quality_todo 打勾。**最终验证**：`ctest` **65/65**（开 fuzz 73）、doctest **859 用例 / 192159 断言、0 失败** | 0–7 |
+| 2026-10-13 | **示例表收口：37_export_latex 落地**（规格示例 01–54 全部齐备）。消费本轮落地的 latex_backend：片段（裸 tikzpicture）与 standalone（独立可编译文档）双模式对照。`ctest` **73/73 全绿**。规格示例缺口清零；剩余 backlog 全部为小项（具名色 148、根配置 5 件、shell 封装、sanitizer/coverage 确权、capability_matrix 数字刷新）与阶段 8 GUI 线 | 3 |
+| 2026-10-13 | **backlog 轮收口（3 并行包 + 子文档勾选）**：`layout/kamada_kawai` 落地；obstacle 横挡绕障缺陷修复 + 回归测试；`latex_backend` + `png_screenshot` 落地（L16 收尾，TikZ 映射 / PNG 复用 image 编码器）；**examples 补齐 21 个**（23/24/25/26/27/31/39/40/41/43–54，规格表仅余 37_export_latex）；fuzz 条目实证修正（8 目标已齐）。**最终验证**：`ctest` **72/72 全绿**（示例占 51 项）、doctest **848 用例 / 191580 断言、0 失败**；护栏全绿（312 头 / 269 实现）。`docs/reference/backlog.md` 已按实证打勾；剩余：37 示例、具名色 148、根配置 5 件、shell 封装、sanitizer/coverage 全绿、capability_matrix 第五节数字刷新（310/267 实测口径） | 2–6 |
 | 2026-10-13 | **阶段 7 落地：单头生成**。`tools/gen_single_header.py`（拓扑排序 = TermchartModules.cmake 层号 L0→L20、内部 include 剥除、系统 include 按名去重保序、`#pragma once` + `TERMCHART_SINGLE_HEADER` 卫哨、`--check`）；产物 `single_include/termchart.hpp`（自包含证明：产物拷出后**不含 include/ 与 src/ 路径**即可编译通过）；`examples/42_single_header_usage.cpp`（只 include 单头，链接 termchart 库，进 ctest）。接线：`generate_single_header` 进 `generate_all` 与 `check_generated`（纯头拼接，确定性）；示例 42 的目标单独挂 `single_include/` 路径。**最终验证**：`ctest` **51/51 全绿**、doctest 832 用例 / 191305 断言、0 失败；四护栏全绿。阶段 7 出口条件闭合——v0.x 规格的模块与横切全部落地 | 7 |
 | 2026-10-13 | **阶段 6 落地（widget L18 / plugin L19 / app L20）+ 横切收尾，4 并行包**。widget：主头 + 三主题（header-only 常量表，已登记 header_only.txt）+ immediate_widget（无状态组件）+ reactive（响应式通知）；plugin：manifest/dynamic/loader/plugin 注册表（快照语义，供插件注册 Chart 子类）；app：animation/config/post（真跨线程队列）/loop（注入时钟 + max_delta 钳制）/headless（渲染不碰 stdout）。docs 全套 72 个 md（design/guide/charts×9/graph×8/reference/contrib——**只写磁盘真实 API，未做项如实标注**）；tools 新增 gen_gallery.py（跑示例收快照 + 索引）与 gen_api_docs.py（头文件 API 简表），均带 `--check`；根目录配置补齐 13 件（vcpkg/conan/SECURITY/CHANGELOG/CONTRIBUTING/Doxyfile/mkdocs/ABI_POLICY/ERROR_POLICY/AGENTS 等）。**最终验证**：`ctest` **50/50 全绿**、doctest **832 用例 / 191305 断言、0 失败**；四护栏全绿（`check_header_only` 307 头 / 264 实现）。阶段 6 出口条件就此闭合 | 6 |
 | 2026-10-13 | **生成器接线收口**：`gen_api_docs.py`（纯头扫描）纳入 `check_generated`（CI 强制）；`gen_gallery.py` 纳入 `generate_all` 并以 `--build-dir ${CMAKE_BINARY_DIR}` 传参，但**刻意不进 check_generated**——它依赖已构建的示例二进制，在 CI 的"构建后"阶段单独跑（TermchartGenerate.cmake 有注释说明）。`_termchart_add_py_target` 顺带支持附加参数。验证：目标 `generate_api_docs`/`generate_gallery` 实跑一致（无 diff），`ctest` 50/50 保持全绿 | 7 |
 | 2026-10-13 | **diagrams 已知红清零 + examples 13/18 落地**。5 处失败的判定：knowledge_graph 实现的分离步长不足（修实现）；sankey 的丝带 ░/标签/条高为实现缺口（修实现）；petri_net 与 chord 的标签落行为断言行位偏差（修测试）；uml_activity 的"显式 initial/final 优先"语义实现缺失（按头文件承诺修实现）。examples 新增 `13_sankey`（漏斗四段流）与 `18_uml_sequence`（三方两次往返 + Note）。**最终验证**：`ctest` **50/50 全绿**、doctest **794 用例 / 190985 断言、0 失败**、四护栏全绿。**已知红归零** | 2–4 |
 | 2026-10-13 | **质量收口清单纳入子文档** `docs/reference/quality_todo.md`（体检 P0–P4：文档数字同步 / API一致性 / DX一行出图 / 现代C++毛刺 / 算法局限），索引见此 | 7 |
+| 2026-10-13 | **「还没做」总览清单纳入子文档** `docs/reference/backlog.md`（功能/规格/工程/质量/文档同步/GUI 六类缺口），索引见此 | 0–8 |
 | 2026-10-12 | **graph/diagrams 15 图种落地（3 并行包）**：uml_class / uml_sequence（本层模型，留 dsl AstSequence 映射注释）/ uml_usecase / uml_activity / er_diagram / knowledge_graph / social_network / petri_net / metro_map（组合 layout/metro）/ sankey（可组合 cartesian/streamgraph）/ chord / arc_diagram / adjacency_matrix / syntax_tree / circuit，共 30 文件 + 3 测试文件。全库编译通过（`check_header_only` **290 头 / 250 实现**）。**已知红（5 用例 / 9 断言，暂不接入 ctest，清单在 tests/CMakeLists.txt 注释）**：knowledge_graph 力导向盒子重叠 ×2；petri_net 变迁标签行位；sankey 丝带 ░/src/dst 标签/dst 条高 ×4；chord 标签 B 行位；uml_activity 显式 initial/final 时自动 ● 仍出现。**ctest 48/48 全绿**（doctest 757 用例 / 190809 断言，0 失败）。graph/diagrams 规格 **21/21 齐备** | 2–4 |
 | 2026-10-12 | **metro 已知红清零（graph 6 缺口收口）**。根因与修法：①`layout_metro` 的 3 例期望未含实现的"step 抬升到最大框宽高"——测试改为压小框（5×2）使有效 step 恰为 opts.step；②`route_metro` 的真 bug：恰为 45° 对角时 `side_towards` 主选锚点被自身节点框堵死，直连/45°步进/L形全失败后落到"直线兜底"（不查障碍 → 穿框 + 非 45° 段）。修法是**锚点候选对**：主选优先、4 边全枚举（16 对），每对走完 直连→45°步进→L形 阶梯，全败才退直线。**最终验证**：`ctest` **42/42 全绿**、doctest **757 用例 / 190765 断言、0 失败**；四护栏全绿（275 头 / 235 实现）。graph 规格缺口（metro/cluster/bundling/obstacle/dag/dependency）就此闭合 | 2–4 |
 | 2026-10-12 | **graph 6 缺口落地（并行包）**：`layout/metro`（链分解 + 45° 之字 + 栅格路由：直连→45°步进→L形→直线兜底）、`layout/cluster`、`route/bundling`、`route/obstacle`、`diagrams/dag`（含环检测）、`diagrams/dependency`，3 个测试文件 17 用例。**最终验证**：`ctest` 全绿（除 metro 3 用例）、doctest **756 用例 / 190874 断言、753 通过**；`check_header_only` 275 头 / 235 实现。**已知红（3 用例 / 23 断言，均在 metro）**：①测试期望用 opts.step=8，未考虑实现文档化的"step 抬升到最大框宽高"（测试需按有效 step 断言）；②metro 路由 45°/穿框检查未过，需跑实现定位（可能实现有真 bug）。这 3 例是下一切片的第一件事 | 2–4 |
@@ -39,15 +44,45 @@
 
 ## 一、项目现状
 
-**一句话**：规格完备；逐模块 LOC 审计确认 **L0–L16 全部有真实实现、L21 api 有实现**，但 **L17 dsl / L18 widget / L19 plugin / L20 app 是零代码空洞**（代码与构建脚本均无引用）；阶段 6 的 image / protocol 部分提前落地。**阶段 4 图可视化已接通**：`graph` 根（节点/边/元数据/连线栅格/箭头/端口/标签避让/交叉计数）+ 布局（网格/分层/根树/力导向）+ 路由（直线/正交）+ 形状（矩形/圆角/菱形）+ 图种（流程图/状态机图/思维导图/节点-连线），示例 14·15·16·20 跑通。代码量真实（include+src 合计约 16.5k 行，生成代码 0 行混入源树）；**跨层缝 R12 已收口**——`canvas/scene_renderer.cpp` 的描边改走 braille 2×4 子像素、填充改走 halfblock 1×2 实心，`Scene → Canvas` 现在出真图，外观由 golden `scene_raster/basic.txt` 锁住。
+**一句话**（2026-10-13 重写，覆盖 2026-10-11 的旧口径）：规格完备；**L0–L21 全部 22 个模块都有真实实现**
+——阶段 5–7 已把曾经的零代码空洞 `dsl` / `widget` / `plugin` / `app` 全部填上（实测 312 头 / 269 实现）。
+阶段 4 图可视化已接通：`graph` 根 + 布局（网格/分层/根树/力导向/**径向/圆周/metro/cluster/kamada_kawai**）
++ 路由（直线/正交/**样条/弧线/捆绑/障碍避让**）+ 形状八种 + 21 个图种，示例 13–20 跑通。
+**跨层缝 R12 已收口**：`canvas/scene_renderer.cpp` 描边走 braille 2×4、填充走 halfblock 1×2，
+`Scene → Canvas` 出真图，外观由 golden `scene_raster/basic.txt` 锁住。
+
+> ⚠️ 读进度的正确姿势：**本小节（「一、项目现状」）历史上多次落后于真实状态**
+> （本行往上那段"L17–L20 是零代码空洞"就是 2026-10-11 的旧文，已于 2026-10-13 改写）。
+> 唯一可信的进度来源是下方 **「修订记录」表的最新一行** + 各阶段的勾选清单；
+> 数字口径以 `docs/reference/capability_matrix.md` 开篇为准。
 
 - 已完成：`结构.md` 已定义 22 个模块（L0–L21）、三条渲染路径、三物种后端、注册表语义、完整测试/文档/工具链。
 - 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 614 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：**五个**生成器产物（unicode / grapheme / braille / **turbo** / module_graph）落在 `detail/` 不参与此统计，未灌入主源树（`detail/` 合计 2209 行，含 `ansi_tables`/`sixel_table`/`sort_network` 三份手写表）；`assets/colormaps/turbo.dat` 是数据而非代码。
 - 桩标记扫描（5 处，均为文档化占位，非隐藏空函数）：`scene_renderer.cpp`（**仅剩 ImageOp**——Scene 里没有像素数据）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**R12 收口后 `kStrokeChar = U'*'` 已从代码中删除**，描边改走真 braille 子像素。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
-- 验证状态（2026-10-11 干净重跑 `ctest --preset ninja` + `ctest --preset fuzz` + `check_all`）：`check_layers.py` 通过；`check_header_only.py` 通过（**186 头 / 146 实现**）；`check_headers` 通过（186 头全通过）；**五个**生成器 `--check` 一致（结构.md / module_matrix / unicode / grapheme / braille / **turbo** 无 diff）；**`ctest` 31/31 全绿**；**doctest 497 用例 / 189357 断言全绿**；golden 9 份；**`ctest --preset fuzz` 13/13**（6 个 fuzz 目标的 `--self-test`，语料 24 条共享 + PNG 专项 6 条），并实测 6×20000 组随机输入（seed=7/11）无崩溃。全量重编 **0 warning**（vendored `doctest` 按 SYSTEM include；另修掉 3 处历史告警）。当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。两文档已对齐到该真值；历史数字（10/10、16/16、17/17、20/20、21/21、22/22、24/24）均为历史快照，不再引用。
+- 验证状态（2026-10-13 干净重跑，独立构建目录 `build/init-ninja`）：`check_layers.py` 通过；
+  `check_header_only.py` 通过（**312 头 / 269 实现**）；**七个**生成器 `--check` 一致
+  （结构.md / module_matrix / unicode / grapheme / braille / turbo / dsl_samples / **fixtures** /
+  **single_header** 无 diff）；**`ctest` 65/65 全绿**（开 fuzz 预设为 73/73）；
+  **doctest 855 用例 / 192155 断言全绿**；golden 9 份；fuzz 8 个目标 `--self-test` 全绿。
+  当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。
+  历史数字（10/10、16/16、…、31/31、50/50）均为历史快照，不再引用。
+  **平台现实**：本机 MinGW-w64 GCC 15.2 不带 `libasan`/`libubsan`/`libtsan`，
+  ASan/UBSan/TSan **只能在 Linux 上跑**（已挂 CI）；coverage 本机可跑，
+  但需 `GCOV_PREFIX` 指向 ASCII 目录（详见 `capability_matrix.md` 第五节）。
 - **R12 已收口（跨层缝，本轮）**：`src/canvas/scene_renderer.cpp` 原先把 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `kStrokeChar = U'*'`、`ImageOp` 填 `kMediumShade`。现在描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 的颜色光栅化后叠加（只覆盖非空格，因此多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke` 的"作用于其后图元"语义与 `backend/vector` 的 SVG 后端正向同构。收口时抓到一个真 bug：**盲文的空白是 `U+2800` 而不是空格**，按空格判空会让每次收口用空白铺满整张画布、把先前画好的内容擦掉（实测折线被后续圆弧的收口抹去），已修并有 `canvas: 多次收口互不擦除` 回归测试。
   **同时澄清一处误判**：`chart`/`graph` 的示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，**从未出占位符**（实测 `*` 计数为 0）；R12 的真实影响面是"同一份 `scene::Scene` 在终端侧能否出真图"，现在能了。
-- 未落地：`dsl` / `widget` / `plugin` / `app`（L17–L20，零代码）；`graph` 其余子目录（layout 的 `kamada_kawai`、route 的 `obstacle`、diagrams 的 `dag`/`dependency`）；`interaction` 的 `highlight`/`select`/`brush`/`legend_toggle`/`immediate`；阶段 3 收尾项（`latex_backend`、`png_screenshot`、`37_export_latex`）；`chart` 其余图种（`cartesian/` 15 个）与 `polar/`；示例 `18_uml_sequence`。**规格差距量化**（代码清点，详见 capability_matrix 第五节）：按 `结构.md` 具名文件表核对，`include/` 现有 184 头而规格尚缺约 152–154 个；`tests/fixtures/` 目录已建（政策说明 + 7 份待补清单）。**已落地但曾在此清单里**：`layout` 四项、`graph/diagrams/orgchart`、`graph/layout/radial`+`circular`、`graph/route/spline`+`arc`、`interaction/zoom`+`pan`+`tooltip`+`crosshair`、`chart/cartesian/hist`+`heatmap`、`tests/fuzz/` 6 个目标、`example 17_uml_class`+`22_zoom_pan`。
+- 未落地（2026-10-13 重列）：**`termchart_gui`**（GUI 平行栈，25 文件，`结构.md` 标为平行项目、
+  刻意未开工）；`graph` 的 `sugiyama` 独立入口（分层部分已被 `layout/layered` 覆盖）与
+  `18_uml_sequence` 示例（等序列图渲染器）；各图种的多系列/堆叠变体。
+  **规格差距量化**（代码清点，详见 capability_matrix 第五节）：`include/` 现有 **312 头**，
+  按 `结构.md` 具名文件表核对**尚缺约 26–28 个**；`tests/fixtures/` **7 份夹具已全部补齐**
+  （4 份来自 `gen_dsl_samples.py`、3 份来自新增的 `gen_fixtures.py`）。
+- **已落地但曾在本清单里**（2026-10-13 核销）：`dsl`（14/14 文件 + 4 方言 + fuzz/bench）、
+  `widget`（6 头 / 3 实现）、`plugin`（4 头 / 4 实现）、`app`（7 头 / 7 实现）、
+  `graph/layout/kamada_kawai`、`graph/route/obstacle`、`graph/diagrams/dag`+`dependency`、
+  `interaction` 的 `highlight`/`select`/`brush`/`legend_toggle`/`immediate`、
+  `latex_backend` / `png_screenshot` / `37_export_latex`、`chart` 九个子目录 68 文件、
+  `single_include/` 单头分发。
 - 权威来源分工不变：`结构.md` 回答"做成什么样"，本文件回答"什么时候做、做到哪"，`CODEBUDDY.md` 是给 AI 的架构摘要。
 
 ---
@@ -93,12 +128,12 @@
 - [x] `tools/gen_module_graph.py`：读 cmake 生成附一 + `docs/reference/module_matrix.md`（现已支持 `--check`）
 - [x] `cmake/header_only.txt`：12 个纯头清单
 - [x] `cmake/TermchartGenerate.cmake` / `TermchartSingleHeader.cmake` / `FindTermchartDeps.cmake` / `CompilerWarnings.cmake` / `Sanitizers.cmake` / `TermchartOptions.cmake` / `TermchartAbiVersion.cmake` / `TermchartConfig.cmake.in`
-- [ ] `scripts/check_headers.sh` / `check_generated.sh` / `check_license.sh` —— 护栏现由 `cmake --build --target check_all / check_layers / check_header_only / check_generated` 承担，shell 封装待补
+- [x] `scripts/check_headers.sh` / `check_generated.sh` / `check_license.sh` —— 2026-10-13 补齐并各跑通；`check_generated.sh` 的清单与 cmake 的 `check_generated` 目标逐一对应（新增生成器时两处都要加，避免"cmake 侧红、shell 侧绿"的假绿）
+- [x] `.clang-format` / `.clang-tidy` / `.cmake-format.yaml` / `.editorconfig` / `.gitattributes`（2026-10-13 补）；`.gitignore` 早已有，本轮补 `site/`、补丁残留、编辑器本地覆盖三类。**定位：编辑器与增量改动用，不进 CI 强制**（310 头全量格式化会产出上万行无关 diff，理由写在各文件头）
+- [x] `.github/workflows/ci.yml`（2026-10-13 核实确已建：guardrails / linux / windows 三作业 + asan；本轮补 `gen_fixtures` / `gen_single_header` / `check_headers` 三条护栏，并新增 **tsan** 与 **coverage** 两个 ubuntu 作业）
 - [x] `CMakeLists.txt` + `CMakePresets.json`（现八套：debug/release/relwithdebinfo/asan/tsan/coverage + ninja/ninja-release + debug-windows/release-windows/relwithdebinfo-windows）
-- [ ] `.clang-format` / `.clang-tidy` / `.cmake-format.yaml` / `.editorconfig` / `.gitattributes` / `.gitignore`
 - [x] `third_party/doctest/doctest.h` vendored + `tests/main.cpp` 空测试跑通（现已 84 用例）
 - [x] `detail/` 数据表生成器 + 产物：`gen_unicode_tables.py`（`unicode_tables` / `box_chars` / `block_chars`）/ `gen_grapheme_tables.py` / `gen_braille_table.py`；`ansi_tables` / `sixel_table` / `sort_network` 为手写常量表（头部注释已说明，不由生成器产出）
-- [ ] `.github/workflows/ci.yml` 骨架（三平台 + 分层检查 + diff 校验）
 
 #### 出口条件
 

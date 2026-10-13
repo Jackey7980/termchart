@@ -54,20 +54,21 @@ void Canvas::resize(std::uint32_t width, std::uint32_t height) { buffer_.resize(
 
 void Canvas::clear() { buffer_.clear(); }
 
-void Canvas::put(Point p, char32_t cp, const Style& style) noexcept {
+bool Canvas::put(Point p, char32_t cp, const Style& style) noexcept {
     // 左/上边界之外（含 NaN）直接丢弃：**不**折回第 0 列/行，
     // 否则负坐标会悄悄覆盖画布边缘。
     if (!(p.x >= 0.0) || !(p.y >= 0.0)) {
-        return;
+        return false;
     }
-    put(floor_to_cell(p.x), floor_to_cell(p.y), cp, style);
+    return put(floor_to_cell(p.x), floor_to_cell(p.y), cp, style);
 }
 
-void Canvas::put(std::uint32_t x, std::uint32_t y, char32_t cp, const Style& style) noexcept {
+bool Canvas::put(std::uint32_t x, std::uint32_t y, char32_t cp, const Style& style) noexcept {
     if (!buffer_.contains(x, y)) {
-        return;  // 越界静默丢弃：绘图路径不报错
+        return false;  // 越界裁剪：绘图路径不报错，但不再静默——返回 false
     }
     buffer_.at(x, y) = Cell{cp, style};
+    return true;
 }
 
 void Canvas::fill_rect(Rect rect, char32_t cp, const Style& style) noexcept {

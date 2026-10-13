@@ -41,6 +41,11 @@ void ScatterChart::add_series(Series series) {
     weights_.emplace_back();
 }
 
+void ScatterChart::set_series(std::vector<Series> series) {
+    series_ = std::move(series);
+    weights_.assign(series_.size(), {});  // 权重按下标一一对应，必须整重置
+}
+
 void ScatterChart::add_bubble_series(Series series, std::vector<double> weights) {
     series_.push_back(std::move(series));
     weights_.push_back(std::move(weights));
@@ -67,7 +72,7 @@ void ScatterChart::draw(DrawContext ctx) {
     const Style axis_style = ctx.axis_style;
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }

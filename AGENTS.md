@@ -61,8 +61,15 @@ python tools/gen_golden.py                             # 重生成 golden 快照
 5. **宽字符**：写 buffer 的生产者必须自己填续接格 `kContinuationCp`。
 6. GUI 复用边界是 L0–L2（scene 及以下）；不要把 cell/SGR/CellBuffer 带进 GUI。
 
-## 进度口径（2026-10-13 快照，复核以 ROADMAP 为准）
+## 进度口径（2026-10-13 尾段快照，复核以 ROADMAP「修订记录」表为准）
 
-ctest 50/50、doctest 794 用例 / 190985 断言全绿、四护栏全绿
-（`check_header_only` 290 头 / 250 实现）；阶段 0–5 出口条件已满足，
-阶段 6 推进中。能力矩阵：`docs/reference/capability_matrix.md`。
+最新一行：`ctest` **73/73 全绿**、doctest **848 用例 / 191580 断言、0 失败**、
+四护栏全绿（`check_header_only` **312 头 / 269 实现**）；**阶段 0–7 出口条件全部闭合**，
+阶段 8（GUI 平行栈）未开工。文件普查：`include/` 310 头、`src/` 267 `.cpp`、
+`examples/` 57 源、`tests/` 126 源、golden 9 份。
+
+> 注意：`ROADMAP.md`「一、项目现状」小节仍是 2026-10-11 口径
+> （称 L17–L20 为零代码空洞），**已过时**；读进度只看「修订记录」表。
+
+能力矩阵：`docs/reference/capability_matrix.md`；缺口总览：`docs/reference/backlog.md`；
+质量体检：`docs/reference/quality_todo.md`。

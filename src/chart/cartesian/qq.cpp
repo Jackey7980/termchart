@@ -101,7 +101,7 @@ void QQChart::draw(DrawContext ctx) {
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
@@ -112,7 +112,7 @@ void QQChart::draw(DrawContext ctx) {
 
     if (options_.show_line) {
         // 参考线 y = μ + σ·x：先画，点盖在线上。
-        const Style st = Style{}.set_fg(Color::ansi16(8));
+        const Style st = Style{}.set_fg(default_color(DefaultColor::Muted));
         ctx.canvas.draw_line(area_.cell_of(x0, mean + sd * x0),
                              area_.cell_of(x1, mean + sd * x1), kLineChar, st);
     }

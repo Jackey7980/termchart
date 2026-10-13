@@ -34,7 +34,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     PolarLineOptions options_{};
 };
 

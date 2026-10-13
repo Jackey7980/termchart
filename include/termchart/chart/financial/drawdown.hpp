@@ -16,14 +16,14 @@
 namespace termchart::chart {
 
 struct DrawdownOptions {
-    Color color = Color::ansi16(1);  // 水下红
+    Color color = default_color(DefaultColor::Warn);  // 水下红
     bool fill = true;                // 0 基线以下铺 '░'
 };
 
 class DrawdownChart final : public Chart {
 public:
     void set_prices(std::vector<double> prices,
-                    Color color = Color::ansi16(1));
+                    Color color = default_color(DefaultColor::Warn));
 
     void set_options(DrawdownOptions options) { options_ = options; }
 
@@ -36,7 +36,7 @@ public:
 
 private:
     std::vector<double> dd_;
-    Color color_ = Color::ansi16(1);
+    Color color_ = default_color(DefaultColor::Warn);
     DrawdownOptions options_{};
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };

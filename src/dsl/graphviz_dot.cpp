@@ -432,7 +432,7 @@ private:
     }
 
     void apply_node_attributes(const std::vector<AstAttribute>& attrs, const std::string& key) {
-        AstNode* node = const_cast<AstNode*>(ast_.find_node(key));
+        AstNode* node = ast_.find_node(key);
         if (node == nullptr) {
             return;
         }
@@ -477,7 +477,7 @@ private:
     }
 
     AstNode* ensure_node(const std::string& key) {
-        if (AstNode* existing = const_cast<AstNode*>(ast_.find_node(key))) {
+        if (AstNode* existing = ast_.find_node(key)) {
             return existing;
         }
         if (ast_.nodes.size() >= options_.max_nodes) {

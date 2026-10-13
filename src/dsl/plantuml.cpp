@@ -373,7 +373,7 @@ private:
     }
 
     AstNode* ensure_node(const std::string& key) {
-        if (AstNode* existing = const_cast<AstNode*>(ast_.find_node(key))) {
+        if (AstNode* existing = ast_.find_node(key)) {
             return existing;
         }
         if (ast_.nodes.size() >= options_.max_nodes) {

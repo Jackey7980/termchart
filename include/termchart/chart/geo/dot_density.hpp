@@ -20,7 +20,7 @@ struct DotDensityRegion {
     std::string name;
     std::vector<Point> cells;   // 字符格坐标（画布格）
     double value = 0.0;
-    Color color = Color::ansi16(2);
+    Color color = default_color(DefaultColor::Accent);
 };
 
 struct DotDensityOptions {

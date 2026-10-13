@@ -307,7 +307,7 @@ private:
     }
 
     AstNode& ensure(const std::string& key, const std::string& label) {
-        if (AstNode* existing = const_cast<AstNode*>(ast_.find_node(key))) {
+        if (AstNode* existing = ast_.find_node(key)) {
             if (existing->label.empty() || existing->label == existing->key) {
                 existing->label = label;
             }

@@ -12,8 +12,29 @@ repo_url: https://github.com/Jackey7980/teamchart
 repo_name: Jackey7980/teamchart
 
 nav:
-  - 能力矩阵: reference/capability_matrix.md
-  - 模块矩阵: reference/module_matrix.md
-  - API 参考: reference/api.md
-  - 质量待办: reference/quality_todo.md
+  - 30 秒上手: guide/quickstart_30s.md
+  - 指南:
+      - 第一个图表: guide/first_chart.md
+      - 怎么选图: guide/choosing_chart.md
+      - 图可视化: guide/graph_diagrams.md
+      - DSL 参考: guide/dsl_reference.md
+      - 主题与配色: guide/theming.md
+      - 导出: guide/exporting.md
+      - 交互: guide/interaction.md
+      - App 与 Widget: guide/app_and_widget.md
+      - 插件: guide/plugins.md
+      - 单头分发: guide/single_header.md
+      - 最小构建: guide/minimal_build.md
+      - 性能: guide/performance.md
+      - 图像: guide/images.md
+      - 背景数据: guide/background_data.md
+      - 扩展点:
+          - 自定义图表: guide/custom_chart.md
+          - 自定义后端: guide/custom_backend.md
+          - 自定义光栅器: guide/custom_rasterizer.md
+  - 参考:
+      - 能力矩阵: reference/capability_matrix.md
+      - 模块矩阵: reference/module_matrix.md
+      - API 参考: reference/api.md
+      - 质量待办: reference/quality_todo.md
   - 示例画廊: gallery.md

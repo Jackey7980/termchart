@@ -25,7 +25,7 @@ public:
         double x_hi = 0.0;
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         bool show_caps = true;  // 误差端帽
     };
 

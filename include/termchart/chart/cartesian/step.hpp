@@ -26,7 +26,7 @@ public:
     enum class Where { Pre, Post, Mid };
 
     TERMCHART_API void set_values(std::vector<Point> points,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
     void set_where(Where where) { where_ = where; }
     void set_show_legend(bool on) { show_legend_ = on; }
@@ -38,7 +38,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     Where where_ = Where::Post;
     bool show_legend_ = true;

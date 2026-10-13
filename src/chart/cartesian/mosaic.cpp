@@ -84,7 +84,7 @@ void MosaicChart::draw(DrawContext ctx) {
         // 列边界分隔线（跳过最右缘）。
         if (options_.show_separators && c + 1 < cols) {
             ctx.canvas.draw_line(Point{xc + w, inner.y}, Point{xc + w, inner.bottom() - 1.0},
-                                 U'\u2502', Style{}.set_fg(Color::ansi16(8)));
+                                 U'\u2502', Style{}.set_fg(default_color(DefaultColor::Muted)));
         }
         xc += w;
     }

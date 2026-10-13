@@ -2,11 +2,17 @@
 //
 // 布局保证"链内相邻节点外框原点相差 (step, ±step)"，锚点直连天然是 45°；
 // 路由对每条边依次尝试：直连（恰为 45°/轴对齐）→ 45° 步进走线 → L 形轴对齐
-// 折线 → 直线。前三种都在栅格上逐格查障碍（节点框已登记），因此除最后的
-// 直线兜底外，45° 走线不会穿框。自环边两端锚点重合，退化成单点折线（不画）。
+// 折线 → Z 形绕行（轴对齐三段）→ 直线。前四种都在栅格上逐格查障碍
+// （节点框已登记），因此除最后的直线兜底外，走线不会穿框。自环边两端锚点重合，
+// 退化成单点折线（不画）。
+//
+// 直线兜底仍是**已知局限**（不查障碍，可能穿框），但 Z 形绕行把跨链边与密集
+// 拓扑从这条兜底里救回来了大半——兜底现在只在"两端锚点四周全被占满"的病态
+// 几何下才会触发。
 #include "termchart/graph/layout/metro.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +20,7 @@
 #include <vector>
 
 #include "termchart/graph/port.hpp"
+#include "termchart/util/assert.hpp"
 
 namespace termchart::graph {
 
@@ -167,6 +174,10 @@ std::vector<Point> expand_path(const std::vector<Point>& path) {
         if (steps < 0.5) {
             continue;
         }
+        // steps 是 double，`static_cast<int>` 前必须确认它真的装得下：坐标受
+        // kMaxGridCoord 约束，当前恰好不溢出，但那只是"碰巧"——显式断言把它钉死。
+        TERMCHART_ASSERT_MSG(steps <= static_cast<double>(INT_MAX),
+                             "metro: 展开步长溢出 int（坐标失去 kMaxGridCoord 约束？）");
         for (int s = 1; s <= static_cast<int>(steps); ++s) {
             const double t = static_cast<double>(s) / steps;
             cells.push_back(Point{std::round(p0.x + (p1.x - p0.x) * t),
@@ -373,6 +384,65 @@ std::size_t route_metro(Graph& graph, const MetroRouteOptions& opts, WireGrid* g
                         occupy_interior(*grid, l_cells);
                         chosen = simplify_cells(l_cells);
                         routed_ok = true;
+                        break;
+                    }
+                }
+                if (routed_ok) {
+                    break;
+                }
+                // 3.5) Z 形绕行（轴对齐三段）：L 形只在"正对障碍"时无解——
+                // 横段被挡、竖段被挡，两种拐法都不行。此时绕到另一条行/列再回来
+                // 常常就有路了：
+                //     横向绕行  a → (a.x, y') → (b.x, y') → b
+                //     纵向绕行  a → (x', a.y) → (x', b.y) → b
+                // 候选 y'/x' 是**确定性枚举**（两端点与中点 ±1..span），不做随机、
+                // 不做 A*——metro 的拓扑是链带，绕行余量有限，穷举比搜图更可预测。
+                // 这一步把"跨链边 / 密集拓扑"从直线兜底里救回来一大半。
+                const int span = std::min(std::max(1, opts.route.max_detour), 8);
+                const double seeds[3] = {a.y, b.y, (a.y + b.y) / 2.0};
+                for (const double seed : seeds) {
+                    for (int k = 1; k <= span && !routed_ok; ++k) {
+                        for (const double sign : {-1.0, 1.0}) {
+                            const double yy = seed + sign * static_cast<double>(k);
+                            if (yy < 0.0 || yy > kMaxGridCoord) {
+                                continue;
+                            }
+                            const std::vector<Point> z_cells =
+                                expand_path({a, Point{a.x, yy}, Point{b.x, yy}, b});
+                            if (interior_clear(*grid, z_cells)) {
+                                occupy_interior(*grid, z_cells);
+                                chosen = simplify_cells(z_cells);
+                                routed_ok = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (routed_ok) {
+                        break;
+                    }
+                }
+                if (routed_ok) {
+                    break;
+                }
+                const double seeds_x[3] = {a.x, b.x, (a.x + b.x) / 2.0};
+                for (const double seed : seeds_x) {
+                    for (int k = 1; k <= span && !routed_ok; ++k) {
+                        for (const double sign : {-1.0, 1.0}) {
+                            const double xx = seed + sign * static_cast<double>(k);
+                            if (xx < 0.0 || xx > kMaxGridCoord) {
+                                continue;
+                            }
+                            const std::vector<Point> z_cells =
+                                expand_path({a, Point{xx, a.y}, Point{xx, b.y}, b});
+                            if (interior_clear(*grid, z_cells)) {
+                                occupy_interior(*grid, z_cells);
+                                chosen = simplify_cells(z_cells);
+                                routed_ok = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (routed_ok) {
                         break;
                     }
                 }

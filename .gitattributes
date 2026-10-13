@@ -1,0 +1,37 @@
+# .gitattributes —— 行尾与语言归属
+#
+# 目标：① 让 Windows/Unix 两端的 checkout 不互相制造换行 diff；
+#      ② 让 GitHub 的语言统计与 linguist 标注不被生成物污染。
+
+# 统一按 LF 入库，检出时不转换（本仓所有文件都是 LF）
+* text=auto eol=lf
+
+# C/C++ 源
+*.hpp  text diff=cpp
+*.h    text diff=cpp
+*.cpp  text diff=cpp
+*.cc   text diff=cpp
+*.inc  text diff=cpp
+
+# 生成物：禁手改，也别让它们进 diff 统计 / 语言统计
+include/termchart/detail/*.hpp   linguist-generated=true
+single_include/*                 linguist-generated=true
+tests/golden/**                  linguist-generated=true
+tests/fixtures/sample_*.txt      linguist-generated=true
+tests/fixtures/sample_*.hpp      linguist-generated=true
+tests/fixtures/*.csv             linguist-generated=true
+tests/unit/image/*.inc           linguist-generated=true
+docs/reference/module_matrix.md  linguist-generated=true
+
+# vendored 第三方：不计入本仓语言统计
+third_party/**                   linguist-vendored=true
+
+# 二进制：明确声明，避免被当文本 diff
+*.png binary
+*.dat binary
+
+# 文档
+*.md   text diff=markdown
+*.txt  text
+*.yml  text
+*.yaml text

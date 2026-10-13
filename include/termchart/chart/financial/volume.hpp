@@ -14,9 +14,9 @@
 namespace termchart::chart {
 
 struct VolumeOptions {
-    Color up = Color::ansi16(2);    // 价涨柱
-    Color down = Color::ansi16(1);  // 价跌柱
-    Color neutral = Color::ansi16(8);
+    Color up = default_color(DefaultColor::Accent);    // 价涨柱
+    Color down = default_color(DefaultColor::Warn);  // 价跌柱
+    Color neutral = default_color(DefaultColor::Muted);
 };
 
 class VolumeChart final : public Chart {

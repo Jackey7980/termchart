@@ -1,0 +1,56 @@
+# .clang-tidy —— 静态检查的**起步**配置
+#
+# 定位：与 .clang-format 同理，是给"新代码 / 改动到的文件"用的，不是 CI 强制项。
+# 启用策略是**白名单递进**：先只开不会误报、且能映射真实缺陷的几组，
+# 跑干净后再按 `docs/reference/quality_todo.md` 的节奏逐组放开。
+#
+# 手工跑（只对自己改动的文件跑，全量很慢）：
+#   clang-tidy -p build/<preset> --config-file .clang-tidy src/foo/bar.cpp
+#
+# 注意：本仓不提供全量批量脚本——310 个头的全量基线尚未清零，批量跑只会产出噪声。
+
+Checks: >-
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-braces-around-statements,
+  readability-identifier-naming,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-macro-parentheses,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-unused-parameters,
+  -readability-identifier-length
+
+# 与本仓命名一致的检查项（否则会把 310 个既有文件全判红）
+CheckOptions:
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberSuffix
+    value: _
+  - key: readability-identifier-naming.ConstantCase
+    value: aNy_CasE
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: aNy_CasE
+  - key: readability-identifier-naming.EnumConstantCase
+    value: aNy_CasE
+  - key: readability-identifier-naming.MacroDefinitionPrefix
+    value: TERMCHART_
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/termchart/.*'
+FormatStyle: file

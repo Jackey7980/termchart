@@ -21,8 +21,8 @@ public:
     };
 
     struct Options {
-        Color line_color = Color::ansi16(8);  // 连线颜色（暗灰，突出端点）
-        Color dot_color = Color::ansi16(4);
+        Color line_color = default_color(DefaultColor::Muted);  // 连线颜色（暗灰，突出端点）
+        Color dot_color = default_color(DefaultColor::Neutral);
         bool show_legend = false;  // 单系列图例意义不大，默认关
     };
 

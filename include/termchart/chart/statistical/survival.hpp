@@ -20,7 +20,7 @@
 namespace termchart::chart {
 
 struct SurvivalOptions {
-    Color color = Color::ansi16(2);
+    Color color = default_color(DefaultColor::Accent);
     bool show_censored = true;  // 删失 '+' 刻度
 };
 
@@ -28,7 +28,7 @@ class SurvivalChart final : public Chart {
 public:
     // times[i] 为观测时长，events[i] != 0 表示事件发生、0 表示删失。
     TERMCHART_API void set_data(std::vector<double> times, std::vector<int> events,
-                                Color color = Color::ansi16(2),
+                                Color color = default_color(DefaultColor::Accent),
                                 std::string name = "survival");
 
     void set_options(SurvivalOptions options) { options_ = options; }

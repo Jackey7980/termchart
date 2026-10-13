@@ -29,15 +29,15 @@ Rect content_area(const DrawContext& ctx, const Chart& chart) {
 Color state_color(LightState state) noexcept {
     switch (state) {
         case LightState::Ok:
-            return Color::ansi16(2);     // 绿
+            return default_color(DefaultColor::Accent);     // 绿
         case LightState::Warning:
-            return Color::ansi16(3);     // 黄
+            return default_color(DefaultColor::Amber);     // 黄
         case LightState::Error:
-            return Color::ansi16(1);     // 红
+            return default_color(DefaultColor::Warn);     // 红
         case LightState::Unknown:
             break;
     }
-    return Color::ansi16(8);             // 灰
+    return default_color(DefaultColor::Muted);             // 灰
 }
 
 }  // namespace

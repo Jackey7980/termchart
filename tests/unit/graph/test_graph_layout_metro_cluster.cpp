@@ -148,6 +148,63 @@ TEST_CASE("graph/route_metro: 每段是 45° 或轴对齐且中间格不进任�
     }
 }
 
+TEST_CASE("graph/route_metro: 跨链边靠 Z 形绕行避开节点框（不再走直线兜底）") {
+    // 两条链 {a,b} 与 {c,d}，再加一条跨链边 a→d：它必须跨带，正是历史上
+    // "L 形两端都被挡 → 落到直线兜底 → 穿框"的场景。Z 形绕行（metro.cpp 第 3.5
+    // 步）就是为它加的，这里把"不穿框"这条断言从链内边扩展到跨链边。
+    Graph graph;
+    const NodeId a = graph.add_node("aaa").id();
+    const NodeId b = graph.add_node("bbb").id();
+    const NodeId c = graph.add_node("ccc").id();
+    const NodeId d = graph.add_node("ddd").id();
+    (void)graph.add_edge(a, b);
+    (void)graph.add_edge(c, d);
+    (void)graph.add_edge(a, d);
+
+    MetroOptions layout_opts;
+    layout_opts.layout.min_width = 4.0;
+    layout_opts.layout.min_height = 2.0;
+    (void)layout_metro(graph, layout_opts);
+
+    MetroRouteOptions route_opts;
+    route_opts.route.max_detour = 8;
+    CHECK(route_metro(graph, route_opts) == 3);
+
+    std::vector<Rect> boxes;
+    for (const Node& n : graph.nodes()) {
+        boxes.push_back(n.box());
+    }
+
+    for (const Edge& edge : graph.edges()) {
+        const std::vector<Point>& route = edge.route();
+        REQUIRE(route.size() >= 2);
+
+        // 展开成逐格点列（段必为轴对齐或 45°，与实现同口径）。
+        std::vector<Point> cells;
+        for (std::size_t i = 1; i < route.size(); ++i) {
+            const Point p0 = route[i - 1];
+            const Point p1 = route[i];
+            const double dx = p1.x - p0.x;
+            const double dy = p1.y - p0.y;
+            // 每段仍须是 45° 或轴对齐：Z 形绕行是轴对齐三段，不破坏 metro 的形态约定。
+            CHECK((std::fabs(dx) == std::fabs(dy) || dx == 0.0 || dy == 0.0));
+            const double steps = std::max(std::fabs(dx), std::fabs(dy));
+            for (int s = 0; s <= static_cast<int>(steps); ++s) {
+                const double t = steps < 0.5 ? 0.0 : static_cast<double>(s) / steps;
+                cells.push_back(
+                    Point{std::round(p0.x + dx * t), std::round(p0.y + dy * t)});
+            }
+        }
+        REQUIRE(cells.size() >= 2);
+        // 中间格（跳过落在节点边框上的首末锚点）不得进入任何节点框。
+        for (std::size_t i = 1; i + 1 < cells.size(); ++i) {
+            for (const Rect& box : boxes) {
+                CHECK_FALSE(box.contains(cells[i]));
+            }
+        }
+    }
+}
+
 TEST_CASE("graph/layout_cluster: 连通分量各自成组且组间不重叠") {
     Graph graph;
     const NodeId a = graph.add_node("a").id();

@@ -23,9 +23,9 @@ public:
         bool is_total = false;  // true：累计重置为 value（基线回到 0）
     };
     struct Options {
-        Color increase = Color::ansi16(2);
-        Color decrease = Color::ansi16(1);
-        Color total = Color::ansi16(4);
+        Color increase = default_color(DefaultColor::Accent);
+        Color decrease = default_color(DefaultColor::Warn);
+        Color total = default_color(DefaultColor::Neutral);
         bool show_connectors = true;
     };
 

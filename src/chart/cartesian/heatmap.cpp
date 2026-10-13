@@ -141,7 +141,7 @@ void HeatmapChart::draw(DrawContext ctx) {
     // 网格先画作背景：空格（无数据）上仍能看见网格参照。
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }

@@ -320,7 +320,7 @@ private:
     }
 
     void register_node(const NodeRef& ref) {
-        if (AstNode* existing = const_cast<AstNode*>(ast_.find_node(ref.key))) {
+        if (AstNode* existing = ast_.find_node(ref.key)) {
             if (ref.declared) {
                 existing->label = ref.label;
                 if (!ref.shape.empty()) {

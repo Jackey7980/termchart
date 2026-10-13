@@ -58,7 +58,7 @@ void DrawdownChart::draw(DrawContext ctx) {
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
@@ -84,7 +84,7 @@ void DrawdownChart::draw(DrawContext ctx) {
     // 0 基线（水下图的地平线）。
     if (y_zero >= inner.y && y_zero <= inner.bottom()) {
         ctx.canvas.draw_line(Point{inner.x, y_zero}, Point{inner.right(), y_zero}, U'─',
-                             Style{}.set_fg(Color::ansi16(8)));
+                             Style{}.set_fg(default_color(DefaultColor::Muted)));
     }
 
     if (ctx.draw_title && !title_.empty()) {

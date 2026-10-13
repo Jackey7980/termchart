@@ -48,7 +48,7 @@ void StarRating::draw(DrawContext ctx) {
 
     const Style filled = Style{}.set_fg(options_.star_color).set_attr(Attr::Bold);
     const Style empty_st = options_.dim_empty
-                               ? Style{}.set_fg(Color::ansi16(8))
+                               ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                : Style{}.set_fg(options_.star_color);
 
     const double row = area.y + (area.h - 1.0) / 2.0;

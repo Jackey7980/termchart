@@ -23,7 +23,7 @@ public:
         double end = 0.0;
     };
     struct Options {
-        Color bar = Color::ansi16(4);
+        Color bar = default_color(DefaultColor::Neutral);
         bool show_grid = true;
         bool show_labels = true;
     };

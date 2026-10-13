@@ -76,7 +76,7 @@ void PolarLineChart::draw(DrawContext ctx) {
 
     // 外圈参考环（满量程）：沿角度采样。
     if (ctx.draw_grid) {
-        const Style grid_style = Style{}.set_fg(Color::ansi16(8));
+        const Style grid_style = Style{}.set_fg(default_color(DefaultColor::Muted));
         const int steps =
             std::max(12, static_cast<int>(std::lround(4.0 * (f.rx + f.ry))));
         for (int i = 0; i < steps; ++i) {

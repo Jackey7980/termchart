@@ -13,7 +13,7 @@ namespace termchart::chart {
 
 struct StarRatingOptions {
     int max_stars = 5;                      // 收敛到 [1, 20]
-    Color star_color = Color::ansi16(3);    // 金黄
+    Color star_color = default_color(DefaultColor::Amber);    // 金黄
     bool dim_empty = true;                  // 空星是否用暗色
 };
 

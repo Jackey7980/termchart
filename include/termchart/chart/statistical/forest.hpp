@@ -25,7 +25,7 @@ struct ForestStudy {
 };
 
 struct ForestOptions {
-    Color color = Color::ansi16(4);
+    Color color = default_color(DefaultColor::Neutral);
     bool show_zero_line = true;
 };
 

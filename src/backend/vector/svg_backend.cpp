@@ -5,15 +5,16 @@
 // 累积的折线用"旧状态"刷出，**再**更新状态；非路径图元（Rect/Arc/Text/Image）
 // 用当前状态即时发出。任何"延迟到刷新时采用新状态"的做法都会让
 // `几何 → Stroke` 这类顺序着色错位（那是真 bug）。
+//
+// 这套时序由 scene::StatefulVisitor 统一提供（canvas 侧共用同一份），
+// 本文件只负责"往 SVG 字符串里写什么"。
 #include "termchart/backend/vector/svg_backend.hpp"
 
 #include <cmath>
 #include <string>
-#include <type_traits>
-#include <variant>
 
 #include "termchart/backend/vector/svg_entities.hpp"
-#include "termchart/scene/command.hpp"
+#include "termchart/scene/stateful_visitor.hpp"
 
 namespace termchart::backend::vector {
 
@@ -21,6 +22,155 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 6.28318530717958647692;
+
+// 未显式设色的描边在终端里用"默认前景色"渲染 → SVG 用 currentColor 对应。
+std::string paint_of(const Color& color) {
+    return color.is_none() ? std::string("currentColor") : svg_color(color);
+}
+
+class SvgVisitor final : public scene::StatefulVisitor {
+public:
+    SvgVisitor(std::string& out, const VectorOptions& opts) noexcept
+        : out_(&out), opts_(&opts) {}
+
+protected:
+    // ── 路径 hooks ──
+    void begin_path(const Point& from) override {
+        d_ += "M ";
+        d_ += num(from.x);
+        d_ += ' ';
+        d_ += num(from.y);
+        d_ += ' ';
+    }
+
+    void extend_path(const Point& /*from*/, const Point& to) override {
+        d_ += "L ";
+        d_ += num(to.x);
+        d_ += ' ';
+        d_ += num(to.y);
+        d_ += ' ';
+    }
+
+    void end_path() override {
+        if (d_.empty()) {
+            return;
+        }
+        *out_ += "<path d=\"";
+        *out_ += d_;
+        *out_ += "\" fill=\"none\" stroke=\"";
+        *out_ += paint_of(current_stroke());
+        *out_ += "\" stroke-width=\"";
+        *out_ += num(current_stroke_width());
+        *out_ += "\"/>";
+        d_.clear();
+    }
+
+    // ── 图元 hooks ──
+    void emit_filled_rect(const Rect& rect, const Color& fill) override {
+        *out_ += "<rect x=\"";
+        *out_ += num(rect.x);
+        *out_ += "\" y=\"";
+        *out_ += num(rect.y);
+        *out_ += "\" width=\"";
+        *out_ += num(rect.w);
+        *out_ += "\" height=\"";
+        *out_ += num(rect.h);
+        *out_ += "\" fill=\"";
+        *out_ += svg_color(fill);
+        *out_ += "\" stroke=\"none\"/>";
+    }
+
+    void emit_stroked_rect(const Rect& rect, const Color& stroke, double width) override {
+        *out_ += "<rect x=\"";
+        *out_ += num(rect.x);
+        *out_ += "\" y=\"";
+        *out_ += num(rect.y);
+        *out_ += "\" width=\"";
+        *out_ += num(rect.w);
+        *out_ += "\" height=\"";
+        *out_ += num(rect.h);
+        *out_ += "\" fill=\"none\" stroke=\"";
+        *out_ += paint_of(stroke);
+        *out_ += "\" stroke-width=\"";
+        *out_ += num(width);
+        *out_ += "\"/>";
+    }
+
+    void emit_arc(const scene::ArcOp& arc, const Color& stroke, double width) override {
+        const std::string sp = paint_of(stroke);
+        const double span = arc.end - arc.start;
+        if (span >= kTwoPi - 1e-9) {  // 整圆
+            *out_ += "<circle cx=\"";
+            *out_ += num(arc.center.x);
+            *out_ += "\" cy=\"";
+            *out_ += num(arc.center.y);
+            *out_ += "\" r=\"";
+            *out_ += num(arc.radius);
+            *out_ += "\" fill=\"none\" stroke=\"";
+            *out_ += sp;
+            *out_ += "\" stroke-width=\"";
+            *out_ += num(width);
+            *out_ += "\"/>";
+            return;
+        }
+        const double x0 = arc.center.x + arc.radius * std::cos(arc.start);
+        const double y0 = arc.center.y + arc.radius * std::sin(arc.start);
+        const double x1 = arc.center.x + arc.radius * std::cos(arc.end);
+        const double y1 = arc.center.y + arc.radius * std::sin(arc.end);
+        *out_ += "<path d=\"M ";
+        *out_ += num(x0);
+        *out_ += ' ';
+        *out_ += num(y0);
+        *out_ += " A ";
+        *out_ += num(arc.radius);
+        *out_ += ' ';
+        *out_ += num(arc.radius);
+        *out_ += " 0 ";
+        *out_ += (span > kPi ? '1' : '0');
+        *out_ += " 1 ";
+        *out_ += num(x1);
+        *out_ += ' ';
+        *out_ += num(y1);
+        *out_ += "\" fill=\"none\" stroke=\"";
+        *out_ += sp;
+        *out_ += "\" stroke-width=\"";
+        *out_ += num(width);
+        *out_ += "\"/>";
+    }
+
+    void emit_text(const scene::TextOp& text) override {
+        *out_ += "<text x=\"";
+        *out_ += num(text.at.x);
+        *out_ += "\" y=\"";
+        *out_ += num(text.at.y);
+        *out_ += "\" font-family=\"monospace\" font-size=\"";
+        *out_ += num(opts_->scale);
+        *out_ += "\" dominant-baseline=\"text-before-edge\" fill=\"";
+        *out_ += paint_of(text.style.fg());
+        *out_ += "\">";
+        *out_ += xml_escape(text.text);
+        *out_ += "</text>";
+    }
+
+    void emit_image(const scene::ImageOp& image) override {
+        *out_ += "<rect x=\"";
+        *out_ += num(image.rect.x);
+        *out_ += "\" y=\"";
+        *out_ += num(image.rect.y);
+        *out_ += "\" width=\"";
+        *out_ += num(image.rect.w);
+        *out_ += "\" height=\"";
+        *out_ += num(image.rect.h);
+        *out_ += "\" fill=\"none\" stroke=\"#888888\" data-image-id=\"";
+        *out_ += std::to_string(image.image_id);
+        *out_ += "\"/>";
+    }
+
+private:
+    std::string* out_;
+    const VectorOptions* opts_;
+    std::string d_;  // 待刷出的折线子路径（由 MoveTo/LineTo 累积）
+};
 
 }  // namespace
 
@@ -59,156 +209,8 @@ void SvgBackend::render(const scene::Scene& scene) {
         out_ += ")\">";
     }
 
-    std::string d;        // 待刷出的折线子路径（由 MoveTo/LineTo 累积）
-    Point current{};      // 当前点（MoveTo 设置，LineTo 推进）
-    bool subpath_open = false;
-    Color fill = Color::none();
-    Color stroke = Color::none();
-    double stroke_w = 1.0;
-
-    // 未显式设色的描边在终端里用"默认前景色"渲染 → SVG 用 currentColor 对应。
-    const auto stroke_paint = [&stroke]() {
-        return stroke.is_none() ? std::string("currentColor") : svg_color(stroke);
-    };
-
-    const auto flush = [&]() {
-        if (d.empty()) {
-            return;
-        }
-        out_ += "<path d=\"";
-        out_ += d;
-        out_ += "\" fill=\"none\" stroke=\"";
-        out_ += stroke_paint();
-        out_ += "\" stroke-width=\"";
-        out_ += num(stroke_w);
-        out_ += "\"/>";
-        d.clear();
-    };
-
-    for (const scene::Command& cmd : scene.commands()) {
-        std::visit(
-            [&](const auto& op) {
-                using T = std::decay_t<decltype(op)>;
-                if constexpr (std::is_same_v<T, scene::MoveTo>) {
-                    current = op.to;
-                    subpath_open = false;  // 新子路径；真正开画要等 LineTo
-                } else if constexpr (std::is_same_v<T, scene::LineTo>) {
-                    if (!subpath_open) {
-                        d += "M ";
-                        d += num(current.x);
-                        d += ' ';
-                        d += num(current.y);
-                        d += ' ';
-                        subpath_open = true;
-                    }
-                    d += "L ";
-                    d += num(op.to.x);
-                    d += ' ';
-                    d += num(op.to.y);
-                    d += ' ';
-                    current = op.to;
-                } else if constexpr (std::is_same_v<T, scene::FillOp>) {
-                    flush();  // 先按旧状态收口
-                    fill = op.color;
-                } else if constexpr (std::is_same_v<T, scene::StrokeOp>) {
-                    flush();  // 先按旧状态收口
-                    stroke = op.color;
-                    stroke_w = op.width;
-                } else if constexpr (std::is_same_v<T, scene::RectOp>) {
-                    flush();
-                    out_ += "<rect x=\"";
-                    out_ += num(op.rect.x);
-                    out_ += "\" y=\"";
-                    out_ += num(op.rect.y);
-                    out_ += "\" width=\"";
-                    out_ += num(op.rect.w);
-                    out_ += "\" height=\"";
-                    out_ += num(op.rect.h);
-                    if (!fill.is_none()) {  // 与 canvas 一致：有填充色就填充
-                        out_ += "\" fill=\"";
-                        out_ += svg_color(fill);
-                        out_ += "\" stroke=\"none\"/>";
-                    } else {
-                        out_ += "\" fill=\"none\" stroke=\"";
-                        out_ += stroke_paint();
-                        out_ += "\" stroke-width=\"";
-                        out_ += num(stroke_w);
-                        out_ += "\"/>";
-                    }
-                } else if constexpr (std::is_same_v<T, scene::ArcOp>) {
-                    flush();
-                    const double span = op.end - op.start;
-                    if (span >= kTwoPi - 1e-9) {  // 整圆
-                        out_ += "<circle cx=\"";
-                        out_ += num(op.center.x);
-                        out_ += "\" cy=\"";
-                        out_ += num(op.center.y);
-                        out_ += "\" r=\"";
-                        out_ += num(op.radius);
-                        out_ += "\" fill=\"none\" stroke=\"";
-                        out_ += stroke_paint();
-                        out_ += "\" stroke-width=\"";
-                        out_ += num(stroke_w);
-                        out_ += "\"/>";
-                    } else {
-                        const double x0 = op.center.x + op.radius * std::cos(op.start);
-                        const double y0 = op.center.y + op.radius * std::sin(op.start);
-                        const double x1 = op.center.x + op.radius * std::cos(op.end);
-                        const double y1 = op.center.y + op.radius * std::sin(op.end);
-                        out_ += "<path d=\"M ";
-                        out_ += num(x0);
-                        out_ += ' ';
-                        out_ += num(y0);
-                        out_ += " A ";
-                        out_ += num(op.radius);
-                        out_ += ' ';
-                        out_ += num(op.radius);
-                        out_ += " 0 ";
-                        out_ += (span > kPi ? '1' : '0');
-                        out_ += " 1 ";
-                        out_ += num(x1);
-                        out_ += ' ';
-                        out_ += num(y1);
-                        out_ += "\" fill=\"none\" stroke=\"";
-                        out_ += stroke_paint();
-                        out_ += "\" stroke-width=\"";
-                        out_ += num(stroke_w);
-                        out_ += "\"/>";
-                    }
-                } else if constexpr (std::is_same_v<T, scene::TextOp>) {
-                    flush();
-                    const std::string paint =
-                        op.style.fg().is_none() ? std::string("currentColor")
-                                                : svg_color(op.style.fg());
-                    out_ += "<text x=\"";
-                    out_ += num(op.at.x);
-                    out_ += "\" y=\"";
-                    out_ += num(op.at.y);
-                    out_ += "\" font-family=\"monospace\" font-size=\"";
-                    out_ += num(opts_.scale);
-                    out_ += "\" dominant-baseline=\"text-before-edge\" fill=\"";
-                    out_ += paint;
-                    out_ += "\">";
-                    out_ += xml_escape(op.text);
-                    out_ += "</text>";
-                } else if constexpr (std::is_same_v<T, scene::ImageOp>) {
-                    flush();
-                    out_ += "<rect x=\"";
-                    out_ += num(op.rect.x);
-                    out_ += "\" y=\"";
-                    out_ += num(op.rect.y);
-                    out_ += "\" width=\"";
-                    out_ += num(op.rect.w);
-                    out_ += "\" height=\"";
-                    out_ += num(op.rect.h);
-                    out_ += "\" fill=\"none\" stroke=\"#888888\" data-image-id=\"";
-                    out_ += std::to_string(op.image_id);
-                    out_ += "\"/>";
-                }
-            },
-            cmd);
-    }
-    flush();
+    SvgVisitor visitor{out_, opts_};
+    visitor.run(scene);
 
     if (use_transform) {
         out_ += "</g>";

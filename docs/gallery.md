@@ -35,7 +35,30 @@
 | `30_legend_toggle` | 图例点击切换（规格示例，阶段 5 出口条件之一） | [文本快照](gallery/30_legend_toggle.txt) |
 | `32_quick_one_liner` | 零配置一行出图 | [文本快照](gallery/32_quick_one_liner.txt) |
 | `33_mermaid_flowchart` | Mermaid 文本 → 流程图（阶段 5 出口条件之一） | [文本快照](gallery/33_mermaid_flowchart.txt) |
+| `42_single_header_usage` | 单头产物自包含验证（阶段 7） | [文本快照](gallery/42_single_header_usage.txt) |
+| `23_multi_chart_dashboard` | 多图联动仪表盘：多个面板共享同一个 Viewport | [文本快照](gallery/23_multi_chart_dashboard.txt) |
+| `24_theme_switching` | 运行时切主题：同一图表用两张主题色板各渲一帧 | [文本快照](gallery/24_theme_switching.txt) |
+| `25_animation` | 动画与缓动：注入时钟扫描帧序列（输出逐字节可复现） | [文本快照](gallery/25_animation.txt) |
+| `26_realtime_stream` | 实时数据流：主循环驱动滚动窗口折线（注入时钟） | [文本快照](gallery/26_realtime_stream.txt) |
+| `27_background_thread` | 后台线程投递：生产线程 post，主线程 join 后消费 | [文本快照](gallery/27_background_thread.txt) |
+| `31_plugin_custom_chart` | 注册自定义图表：自定义 Chart 子类注册进注册表 | [文本快照](gallery/31_plugin_custom_chart.txt) |
+| `39_headless_render` | CI 无终端渲染：全程不碰 stdout，收尾一次性输出 | [文本快照](gallery/39_headless_render.txt) |
+| `40_immediate_mode` | 即时模式组件：无状态绘制 + 返回"意图"驱动调用方状态 | [文本快照](gallery/40_immediate_mode.txt) |
+| `41_reactive_dashboard` | 响应式仪表盘：Observable 值变更驱动面板刷新 | [文本快照](gallery/41_reactive_dashboard.txt) |
+| `43_contour` | 等高线：标量场 → marching squares（规格示例） | [文本快照](gallery/43_contour.txt) |
+| `44_violin` | 小提琴图：核密度轮廓（规格示例） | [文本快照](gallery/44_violin.txt) |
+| `45_ridgeline` | 山脊图：多组分布按行堆叠、后行遮前行（规格示例） | [文本快照](gallery/45_ridgeline.txt) |
+| `46_parallel` | 平行坐标：每维一条竖轴，观测跨轴连折线（规格示例） | [文本快照](gallery/46_parallel.txt) |
+| `47_gantt` | 甘特图：任务时间条 + 行标签（规格示例） | [文本快照](gallery/47_gantt.txt) |
+| `48_forest` | 森林图：各研究点估计 + CI 横线 + 合计菱形（规格示例） | [文本快照](gallery/48_forest.txt) |
+| `49_ecdf` | 经验分布函数：逐级跳台阶（规格示例） | [文本快照](gallery/49_ecdf.txt) |
+| `50_qq` | QQ 图：样本分位数对正态理论分位数（规格示例） | [文本快照](gallery/50_qq.txt) |
+| `51_hexbin` | 六边形分箱：偏移网格近似铺排 + 计数分级着色（规格示例） | [文本快照](gallery/51_hexbin.txt) |
+| `52_chord` | 和弦图：实体环形排布 + 弧带连接（规格示例） | [文本快照](gallery/52_chord.txt) |
+| `53_er_diagram` | ER 图：实体表框 + 鸭掌记号基数 + 关系名标签（规格示例） | [文本快照](gallery/53_er_diagram.txt) |
+| `54_dag` | DAG：无环走分层+正交路由；带环输入走退化路径（规格示例） | [文本快照](gallery/54_dag.txt) |
 | `34_export_svg` | 矢量导出：Scene → SVG（写 stdout） | [文本快照](gallery/34_export_svg.txt) |
+| `37_export_latex` | 导出 LaTeX TikZ（规格示例） | [文本快照](gallery/37_export_latex.txt) |
 | `35_export_html` | 结构化导出：Document → HTML（写 stdout） | [文本快照](gallery/35_export_html.txt) |
 | `36_export_json` | 快照导出：Canvas → CellBuffer → JSON（写 stdout） | [文本快照](gallery/36_export_json.txt) |
 | `38_image_sixel` | 终端内显示图片（按能力选择 kitty / iterm2 / sixel / 半块） | [文本快照](gallery/38_image_sixel.txt) |

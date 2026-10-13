@@ -38,6 +38,7 @@ add_executable(termchart_tests
     # ── scene ──
     unit/scene/test_scene.cpp
     unit/scene/test_scene_bounds.cpp
+    unit/scene/test_stateful_visitor.cpp
 
     # ── canvas ──
     unit/canvas/test_canvas.cpp
@@ -131,6 +132,8 @@ add_executable(termchart_tests
     unit/graph/test_diagrams_orgchart.cpp
     unit/graph/test_graph_layout_metro_cluster.cpp
     unit/graph/test_graph_route_obstacle_bundling.cpp
+    unit/graph/test_graph_route_obstacle_fix.cpp
+    unit/graph/test_graph_kamada_kawai.cpp
     unit/graph/test_diagrams_dag.cpp
     unit/graph/test_diagrams_uml.cpp
     unit/graph/test_diagrams_network.cpp
@@ -140,6 +143,7 @@ add_executable(termchart_tests
     unit/backend/test_backend_snapshot.cpp
     unit/backend/test_backend_vector.cpp
     unit/backend/test_backend_structured.cpp
+    unit/backend/test_backend_extra.cpp
 
     # ── dsl ──
     unit/dsl/test_dsl_mermaid.cpp
@@ -161,6 +165,7 @@ add_executable(termchart_tests
 
     # ── 结构不变量 ──
     unit/test_layering.cpp
+    unit/test_fixtures.cpp
 
     # ── golden ──
     golden/golden_runner.cpp

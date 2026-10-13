@@ -32,15 +32,15 @@ Rect content_area(const DrawContext& ctx, const Chart& chart) {
 // 液色随填充比例分档：青 → 绿 → 黄 → 红。
 Color level_color(double fraction01) noexcept {
     if (fraction01 < 0.25) {
-        return Color::ansi16(6);
+        return default_color(DefaultColor::Cyan);
     }
     if (fraction01 < 0.5) {
-        return Color::ansi16(2);
+        return default_color(DefaultColor::Accent);
     }
     if (fraction01 < 0.75) {
-        return Color::ansi16(3);
+        return default_color(DefaultColor::Amber);
     }
-    return Color::ansi16(1);
+    return default_color(DefaultColor::Warn);
 }
 
 }  // namespace

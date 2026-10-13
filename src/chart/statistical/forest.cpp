@@ -80,7 +80,7 @@ void ForestChart::draw(DrawContext ctx) {
     const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, {}, grid_style);
     }
@@ -92,7 +92,7 @@ void ForestChart::draw(DrawContext ctx) {
         const double x0 = area_.x_scale().forward(0.0);
         const Rect inner = area_.inner_rect();
         ctx.canvas.draw_line(Point{x0, inner.y}, Point{x0, inner.bottom()}, U'\u00B7',
-                             Style{}.set_fg(Color::ansi16(8)));
+                             Style{}.set_fg(default_color(DefaultColor::Muted)));
     }
 
     const Style st = Style{}.set_fg(options_.color);
@@ -133,7 +133,7 @@ void ForestChart::draw(DrawContext ctx) {
             if (!s.label.empty()) {
                 const double y = area_.y_scale().forward(static_cast<double>(label_row));
                 ctx.canvas.draw_text(Point{0.0, y}, clip_utf8(s.label, max_chars),
-                                     Style{}.set_fg(Color::ansi16(7)));
+                                     Style{}.set_fg(default_color(DefaultColor::Series)));
             }
             ++label_row;
         }

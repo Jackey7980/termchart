@@ -20,7 +20,7 @@
 namespace termchart::chart {
 
 struct BlandAltmanOptions {
-    Color color = Color::ansi16(4);
+    Color color = default_color(DefaultColor::Neutral);
     bool show_limits = true;  // ±1.96·SD 界限
 };
 
@@ -28,7 +28,7 @@ class BlandAltmanChart final : public Chart {
 public:
     TERMCHART_API void set_pairs(std::vector<double> method_a,
                                  std::vector<double> method_b,
-                                 Color color = Color::ansi16(4),
+                                 Color color = default_color(DefaultColor::Neutral),
                                  std::string name = "diff");
 
     void set_options(BlandAltmanOptions options) { options_ = options; }

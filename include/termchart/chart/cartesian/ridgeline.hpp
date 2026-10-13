@@ -18,7 +18,7 @@ public:
     struct Group {
         std::string name;
         std::vector<double> values;
-        Color color = Color::ansi16(7);
+        Color color = default_color(DefaultColor::Series);
     };
 
     struct Options {

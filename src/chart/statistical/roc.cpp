@@ -108,7 +108,7 @@ void RocChart::draw(DrawContext ctx) {
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
@@ -120,13 +120,13 @@ void RocChart::draw(DrawContext ctx) {
                             pr ? "precision" : "tpr", ctx.axis_style);
     }
 
-    const Style st = Style{}.set_fg(Color::ansi16(4));
+    const Style st = Style{}.set_fg(default_color(DefaultColor::Neutral));
     const Rect inner = area_.inner_rect();
     if (options_.mode == RocMode::Roc && options_.show_diagonal) {
         // 随机分类器基线：(0,0) → (1,1)。
         ctx.canvas.draw_line(Point{inner.x, inner.bottom()},
                              Point{inner.right(), inner.y}, U'\u00B7',
-                             Style{}.set_fg(Color::ansi16(8)));
+                             Style{}.set_fg(default_color(DefaultColor::Muted)));
     }
     for (std::size_t i = 0; i < curve.size(); ++i) {
         const Point cell = area_.cell_of(curve[i].x, curve[i].y);
@@ -141,10 +141,10 @@ void RocChart::draw(DrawContext ctx) {
         std::vector<layout::LegendEntry> entries;
         if (options_.mode == RocMode::Roc) {
             entries.push_back(layout::LegendEntry{
-                name_ + " (AUC=" + layout::format_tick(auc_roc_) + ")", Color::ansi16(4)});
+                name_ + " (AUC=" + layout::format_tick(auc_roc_) + ")", default_color(DefaultColor::Neutral)});
         } else {
             entries.push_back(layout::LegendEntry{
-                name_ + " (AUC=" + layout::format_tick(auc_pr_) + ")", Color::ansi16(4)});
+                name_ + " (AUC=" + layout::format_tick(auc_pr_) + ")", default_color(DefaultColor::Neutral)});
         }
         const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
         layout::draw_legend(ctx.canvas, entries, legend_rect, layout::HAlign::Left);

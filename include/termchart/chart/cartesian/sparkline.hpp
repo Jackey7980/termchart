@@ -15,7 +15,7 @@ namespace termchart::chart {
 class SparklineChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(2);
+        Color color = default_color(DefaultColor::Accent);
         bool show_last_marker = true;
     };
 

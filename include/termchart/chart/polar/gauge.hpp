@@ -34,7 +34,7 @@ public:
 
 private:
     double value_ = 0.0;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     GaugeOptions options_{};
 };
 

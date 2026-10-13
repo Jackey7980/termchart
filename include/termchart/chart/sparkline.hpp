@@ -35,7 +35,7 @@ public:
 
 private:
     std::vector<double> values_;
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     bool marker_ = true;
     bool zero_baseline_ = false;
 };

@@ -235,8 +235,6 @@ Rect Path::bounds() const {
 std::size_t Path::stroke(Canvas& canvas, char32_t pen, const Style& style,
                          double tolerance) const {
     std::size_t written = 0;
-    const auto width = canvas.width();
-    const auto height = canvas.height();
     for (const std::vector<Point>& polyline : flatten(tolerance)) {
         for (std::size_t i = 1; i < polyline.size(); ++i) {
             const std::vector<Point> points = line_points(polyline[i - 1], polyline[i]);
@@ -246,11 +244,11 @@ std::size_t Path::stroke(Canvas& canvas, char32_t pen, const Style& style,
                     continue;  // 展平/取整会产出重复点，别把它算两次
                 }
                 previous = p;
-                if (p.x >= 0.0 && p.y >= 0.0 && p.x < static_cast<double>(width) &&
-                    p.y < static_cast<double>(height)) {
+                // put 返回"是否真的落格"：越界由 Canvas 裁剪，这里顺势记账，
+                // 不必再手写一遍边界判断（两边判据不一致才是真正的坑）。
+                if (canvas.put(p, pen, style)) {
                     ++written;
                 }
-                canvas.put(p, pen, style);  // 越界由 Canvas 静默丢弃
             }
         }
     }

@@ -21,6 +21,10 @@ public:
     };
 
     TERMCHART_API void add_series(Series series);
+    // 替换语义（与 add_* 成对提供，见 line_chart.hpp 的同名注释）。
+    TERMCHART_API void set_series(std::vector<Series> layers);
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return layers_; }
+
     void set_options(const Options& options) { options_ = options; }
     [[nodiscard]] const Options& options() const noexcept { return options_; }
 

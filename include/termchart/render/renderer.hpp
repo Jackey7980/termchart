@@ -8,6 +8,7 @@
 #ifndef TERMCHART_RENDER_RENDERER_HPP
 #define TERMCHART_RENDER_RENDERER_HPP
 
+#include <memory>
 #include <string>
 
 #include "termchart/core/buffer.hpp"
@@ -25,6 +26,12 @@ public:
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
+
+    // 可移动：否则"按值返回 Renderer"或放进容器都得绕道（历史上删了拷贝却漏了移动，
+    // 配合裸 Impl* 更是误加拷贝就 double-free）。
+    // 移出后的对象只剩"可析构 / 可被重新赋值"两个合法操作，与标准库的约定一致。
+    TERMCHART_API Renderer(Renderer&&) noexcept;
+    TERMCHART_API Renderer& operator=(Renderer&&) noexcept;
 
     TERMCHART_API void set_depth(ColorDepth depth) noexcept;
     [[nodiscard]] TERMCHART_API ColorDepth depth() const noexcept { return depth_; }
@@ -44,7 +51,9 @@ public:
 
 private:
     class Impl;
-    Impl* impl_ = nullptr;
+    // unique_ptr 而非裸指针：所有权由类型表达，误加拷贝会在编译期被拦住，
+    // 而不是运行期 double-free。析构与移动因此在 .cpp 里定义（那里 Impl 才完整）。
+    std::unique_ptr<Impl> impl_;
     ColorDepth depth_ = ColorDepth::TrueColor;
 };
 

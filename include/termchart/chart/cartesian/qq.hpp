@@ -16,7 +16,7 @@ class QQChart final : public Chart {
 public:
     struct Options {
         bool show_line = true;  // y = μ + σ·x 参考线
-        Color point_color = Color::ansi16(4);
+        Color point_color = default_color(DefaultColor::Neutral);
     };
 
     TERMCHART_API void set_sample(std::vector<double> sample);

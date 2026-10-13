@@ -1,0 +1,66 @@
+
+== idle: pointer off-controls ==
+                                        
+                                        
+                                        
+        OK                              
+                                        
+                                        
+                                        
+  [ ] auto refresh                      
+                                        
+                                        
+  clicks=0  checked=no                  
+                                        
+== hover button ==
+                                        
+                                        
+                                        
+        OK                              
+                                        
+                                        
+                                        
+  [ ] auto refresh                      
+                                        
+                                        
+  clicks=0  checked=no                  
+                                        
+== press button (click intent reported) ==
+                                        
+                                        
+                                        
+        OK                              
+                                        
+                                        
+                                        
+  [ ] auto refresh                      
+                                        
+                                        
+  clicks=1  checked=no                  
+                                        
+== press checkbox (toggle intent reported) ==
+                                        
+                                        
+                                        
+        OK                              
+                                        
+                                        
+                                        
+  [ ] auto refresh                      
+                                        
+                                        
+  clicks=1  checked=yes                 
+                                        
+== release: state kept by the caller ==
+                                        
+                                        
+                                        
+        OK                              
+                                        
+                                        
+                                        
+  [x] auto refresh                      
+                                        
+                                        
+  clicks=1  checked=yes                 
+                                        

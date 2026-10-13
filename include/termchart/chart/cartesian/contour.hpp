@@ -18,7 +18,7 @@ namespace termchart::chart {
 class ContourChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(6);
+        Color color = default_color(DefaultColor::Cyan);
         // 显式等值线级；非有限值剔除。为空时按 level_count 自动均分。
         std::vector<double> levels;
         int level_count = 4;  // 自动模式的级数，clamp 到 [1, 16]

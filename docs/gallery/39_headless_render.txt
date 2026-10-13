@@ -1,0 +1,20 @@
+
+== frame 1: render_once ==
+headless render: render_once                            
+                                                        
+   ••         •          •          •         ••        
+  •••        •••        • •        •••        •••       
+ ••  •      ••  •      •   •      •  ••      •   •      
+ •   ••     •   ••     •   •     ••   •      •   •      
+ •    •    •     •    •     •    •     •    •    •      
+       •   •     •    •     •    •     •   •      •     
+       •  •       •  •       •  •       •  •      ••    
+       ••••       ••••       ••••       ••••       ••   
+        ••          •         ••         ••         ••  
+                                                        
+                                                        
+                                                        
+[frame sizes] full=1720  delta=823  unchanged=0 (empty as contracted)
+
+== frame 2 bytes (delta against frame 1) ==
+2 (increment)••••••••••••••••••••••• •••• ••• •••••  •••  ••• •  •••   •••   •••   ••   •••   •• •  •••  •••  •••••• ••• •••• •••• •••• ••••••••••••

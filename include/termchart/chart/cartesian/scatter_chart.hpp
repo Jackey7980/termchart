@@ -20,6 +20,10 @@ public:
     TERMCHART_API void add_series(Series series);
     // 气泡系列：weights 与 series.points 按下标对应，缺的按 0 处理。
     TERMCHART_API void add_bubble_series(Series series, std::vector<double> weights);
+    // 替换语义（与 add_* 成对提供，见 line_chart.hpp 的同名注释）。
+    // 注意：替换系列会一并清掉气泡权重——两者按下标一一对应，留下半套会错位。
+    TERMCHART_API void set_series(std::vector<Series> series);
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return series_; }
 
     void set_auto_domain(bool on, bool include_zero = false) {
         auto_domain_ = on;

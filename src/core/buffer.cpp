@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "termchart/core/span_utils.hpp"
+#include "termchart/util/assert.hpp"
 
 namespace termchart {
 
@@ -22,11 +23,27 @@ void CellBuffer::clear() {
 }
 
 Cell& CellBuffer::at(std::uint32_t x, std::uint32_t y) noexcept {
+    TERMCHART_DEBUG_ASSERT_MSG(contains(x, y), "CellBuffer::at 越界（调用方须先 contains()）");
     return cells_[index_of(x, y)];
 }
 
 const Cell& CellBuffer::at(std::uint32_t x, std::uint32_t y) const noexcept {
+    TERMCHART_DEBUG_ASSERT_MSG(contains(x, y), "CellBuffer::at 越界（调用方须先 contains()）");
     return cells_[index_of(x, y)];
+}
+
+Cell* CellBuffer::try_at(std::uint32_t x, std::uint32_t y) noexcept {
+    if (!contains(x, y)) {
+        return nullptr;
+    }
+    return &cells_[index_of(x, y)];
+}
+
+const Cell* CellBuffer::try_at(std::uint32_t x, std::uint32_t y) const noexcept {
+    if (!contains(x, y)) {
+        return nullptr;
+    }
+    return &cells_[index_of(x, y)];
 }
 
 std::span<Cell> CellBuffer::row(std::uint32_t y) noexcept {
@@ -56,9 +73,9 @@ const CellBuffer::SideBearingList* CellBuffer::sides(std::size_t index) const no
     return it == sides_.end() ? nullptr : &it->second;
 }
 
-void CellBuffer::set_sides(std::size_t index, const char32_t* data, std::size_t count) {
-    if (index >= cells_.size() || count == 0) {
-        return;
+bool CellBuffer::set_sides(std::size_t index, const char32_t* data, std::size_t count) {
+    if (index >= cells_.size() || count == 0 || data == nullptr) {
+        return false;
     }
     SideBearingList& list = sides_[index];
     const std::size_t n = count < list.size() ? count : list.size();
@@ -66,6 +83,7 @@ void CellBuffer::set_sides(std::size_t index, const char32_t* data, std::size_t 
     for (std::size_t i = n; i < list.size(); ++i) {
         list[i] = U'\0';
     }
+    return true;
 }
 
 void CellBuffer::clear_sides(std::size_t index) { sides_.erase(index); }

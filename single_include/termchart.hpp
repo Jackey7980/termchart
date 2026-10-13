@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 307 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 312 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -122,7 +122,10 @@ class Renderer;
 
 // ── api ────────────────────────────────────────────────────────────────
 namespace api {
-class Opts;
+// 全库约定是 `XxxOptions`（graph/layout/diagram 全都如此），api 侧旧名 `Opts`
+// 是唯一例外，已收敛为 `ApiOptions`；`Opts` 保留为兼容别名。
+class ApiOptions;
+using Opts = ApiOptions;
 }  // namespace api
 
 }  // namespace termchart
@@ -3070,8 +3073,15 @@ public:
         return x < width_ && y < height_;
     }
 
+    // 越界即 UB（Debug 下断言，Release 下不付代价）。调用方该先问 contains()。
     TERMCHART_API Cell& at(std::uint32_t x, std::uint32_t y) noexcept;
     TERMCHART_API const Cell& at(std::uint32_t x, std::uint32_t y) const noexcept;
+
+    // 可失败的取值：越界返回 nullptr，而不是 UB。热路径上先 contains() 再 at()，
+    // 冷路径（导后端的边界扫描等）用这个。
+    [[nodiscard]] TERMCHART_API Cell* try_at(std::uint32_t x, std::uint32_t y) noexcept;
+    [[nodiscard]] TERMCHART_API const Cell* try_at(std::uint32_t x,
+                                                   std::uint32_t y) const noexcept;
 
     // 线性索引版本：热路径避免乘法。（索引 = y * width + x）
     [[nodiscard]] constexpr std::size_t index_of(std::uint32_t x,
@@ -3090,7 +3100,9 @@ public:
     [[nodiscard]] TERMCHART_API bool has_sides(std::size_t index) const noexcept;
     [[nodiscard]] TERMCHART_API const SideBearingList* sides(std::size_t index) const noexcept;
     // count 为实际有效项数（≤ kMaxSideBearings）；超出部分被截尾。
-    TERMCHART_API void set_sides(std::size_t index, const char32_t* data, std::size_t count);
+    // 返回是否写入：index 越界或 count == 0 时不写入并返回 false
+    // （旧版静默丢弃，调用方无从分辨"写成功了"与"被丢了"）。
+    TERMCHART_API bool set_sides(std::size_t index, const char32_t* data, std::size_t count);
     TERMCHART_API void clear_sides(std::size_t index);
     [[nodiscard]] TERMCHART_API std::size_t side_entry_count() const noexcept;
 
@@ -3156,8 +3168,12 @@ inline void assertion_failed(const char* expr, const char* file, int line,
 #define TERMCHART_DEBUG_ASSERT(expr) \
     do {                             \
     } while (false)
+#define TERMCHART_DEBUG_ASSERT_MSG(expr, msg) \
+    do {                                      \
+    } while (false)
 #else
 #define TERMCHART_DEBUG_ASSERT(expr) TERMCHART_ASSERT(expr)
+#define TERMCHART_DEBUG_ASSERT_MSG(expr, msg) TERMCHART_ASSERT_MSG(expr, msg)
 #endif
 
 // 逻辑上不可达，但编译器不知道（例如 switch 全覆盖）。
@@ -3992,8 +4008,13 @@ TERMCHART_API Rgb contrasting_text_color(Rgb background) noexcept;
 // 表按名字升序存放，查询走二分——**因此顺序与内容是契约**：新增必须保持有序
 // （重新生成见 tools/gen_colormap.py 的同名策略）。
 //
-// 当前为常用子集（68 个），完整 148 色 CSS 列表在阶段 7 补齐；
+// 当前为 **CSS Color 命名色全集 148 色**（含 gray/grey 两套拼法与 rebeccapurple，
+// 即 CSS Color Module Level 4 的完整列表，不含 `transparent`/`currentcolor`
+// 这两个关键字——它们不是颜色值，由 Color 侧单独处理）。
 // 查不到的名字由 Color 侧回落到 "不是颜色名" 而非魔数。
+//
+// 契约由 `tests/unit/color/test_color.cpp` 守住：表必须严格升序、无重复、
+// 数量等于 kNamedColorCount、抽查若干色值与 CSS 规范一致。
 
 
 
@@ -4004,42 +4025,159 @@ struct NamedColorEntry {
     Rgb value;
 };
 
+// CSS 命名色全集的大小（148）。二分查找的上界与容量都取自它，不要让二者各写一份数字。
+inline constexpr std::size_t kNamedColorCount = 148;
+
 // clang-format off
-inline constexpr std::array<NamedColorEntry, 68> kNamedColors{{
-    {"aliceblue", Rgb{240, 248, 255}},    {"antiquewhite", Rgb{250, 235, 215}},
-    {"aqua", Rgb{0, 255, 255}},           {"aquamarine", Rgb{127, 255, 212}},
-    {"azure", Rgb{240, 255, 255}},        {"beige", Rgb{245, 245, 220}},
-    {"black", Rgb{0, 0, 0}},              {"blanchedalmond", Rgb{255, 235, 205}},
-    {"blue", Rgb{0, 0, 255}},             {"blueviolet", Rgb{138, 43, 226}},
-    {"brown", Rgb{165, 42, 42}},          {"burlywood", Rgb{222, 184, 135}},
-    {"cadetblue", Rgb{95, 158, 160}},     {"chartreuse", Rgb{127, 255, 0}},
-    {"coral", Rgb{255, 127, 80}},         {"cornflowerblue", Rgb{100, 149, 237}},
-    {"crimson", Rgb{220, 20, 60}},        {"cyan", Rgb{0, 255, 255}},
-    {"darkcyan", Rgb{0, 139, 139}},       {"darkgray", Rgb{169, 169, 169}},
-    {"darkgreen", Rgb{0, 100, 0}},        {"darkorange", Rgb{255, 140, 0}},
-    {"darkred", Rgb{139, 0, 0}},          {"darkslategray", Rgb{47, 79, 79}},
-    {"deepskyblue", Rgb{0, 191, 255}},    {"dodgerblue", Rgb{30, 144, 255}},
-    {"firebrick", Rgb{178, 34, 34}},      {"forestgreen", Rgb{34, 139, 34}},
-    {"gold", Rgb{255, 215, 0}},           {"goldenrod", Rgb{218, 165, 32}},
-    {"gray", Rgb{128, 128, 128}},         {"green", Rgb{0, 128, 0}},
-    {"greenyellow", Rgb{173, 255, 47}},   {"hotpink", Rgb{255, 105, 180}},
-    {"indigo", Rgb{75, 0, 130}},          {"khaki", Rgb{240, 230, 140}},
-    {"lavender", Rgb{230, 230, 250}},     {"lightblue", Rgb{173, 216, 230}},
-    {"lightgray", Rgb{211, 211, 211}},    {"lime", Rgb{0, 255, 0}},
-    {"magenta", Rgb{255, 0, 255}},        {"maroon", Rgb{128, 0, 0}},
-    {"navy", Rgb{0, 0, 128}},             {"olive", Rgb{128, 128, 0}},
-    {"orange", Rgb{255, 165, 0}},         {"orangered", Rgb{255, 69, 0}},
-    {"orchid", Rgb{218, 112, 214}},       {"salmon", Rgb{250, 128, 114}},
-    {"sandybrown", Rgb{244, 164, 96}},    {"seagreen", Rgb{46, 139, 87}},
-    {"silver", Rgb{192, 192, 192}},       {"skyblue", Rgb{135, 206, 235}},
-    {"slateblue", Rgb{106, 90, 205}},     {"slategray", Rgb{112, 128, 144}},
-    {"snow", Rgb{255, 250, 250}},         {"springgreen", Rgb{0, 255, 127}},
-    {"steelblue", Rgb{70, 130, 180}},     {"tan", Rgb{210, 180, 140}},
-    {"teal", Rgb{0, 128, 128}},           {"thistle", Rgb{216, 191, 216}},
-    {"tomato", Rgb{255, 99, 71}},         {"turquoise", Rgb{64, 224, 208}},
-    {"violet", Rgb{238, 130, 238}},       {"wheat", Rgb{245, 222, 179}},
-    {"white", Rgb{255, 255, 255}},        {"whitesmoke", Rgb{245, 245, 245}},
-    {"yellow", Rgb{255, 255, 0}},         {"yellowgreen", Rgb{154, 205, 50}},
+inline constexpr std::array<NamedColorEntry, kNamedColorCount> kNamedColors{{
+    {"aliceblue", Rgb{240, 248, 255}},
+    {"antiquewhite", Rgb{250, 235, 215}},
+    {"aqua", Rgb{0, 255, 255}},
+    {"aquamarine", Rgb{127, 255, 212}},
+    {"azure", Rgb{240, 255, 255}},
+    {"beige", Rgb{245, 245, 220}},
+    {"bisque", Rgb{255, 228, 196}},
+    {"black", Rgb{0, 0, 0}},
+    {"blanchedalmond", Rgb{255, 235, 205}},
+    {"blue", Rgb{0, 0, 255}},
+    {"blueviolet", Rgb{138, 43, 226}},
+    {"brown", Rgb{165, 42, 42}},
+    {"burlywood", Rgb{222, 184, 135}},
+    {"cadetblue", Rgb{95, 158, 160}},
+    {"chartreuse", Rgb{127, 255, 0}},
+    {"chocolate", Rgb{210, 105, 30}},
+    {"coral", Rgb{255, 127, 80}},
+    {"cornflowerblue", Rgb{100, 149, 237}},
+    {"cornsilk", Rgb{255, 248, 220}},
+    {"crimson", Rgb{220, 20, 60}},
+    {"cyan", Rgb{0, 255, 255}},
+    {"darkblue", Rgb{0, 0, 139}},
+    {"darkcyan", Rgb{0, 139, 139}},
+    {"darkgoldenrod", Rgb{184, 134, 11}},
+    {"darkgray", Rgb{169, 169, 169}},
+    {"darkgreen", Rgb{0, 100, 0}},
+    {"darkgrey", Rgb{169, 169, 169}},
+    {"darkkhaki", Rgb{189, 183, 107}},
+    {"darkmagenta", Rgb{139, 0, 139}},
+    {"darkolivegreen", Rgb{85, 107, 47}},
+    {"darkorange", Rgb{255, 140, 0}},
+    {"darkorchid", Rgb{153, 50, 204}},
+    {"darkred", Rgb{139, 0, 0}},
+    {"darksalmon", Rgb{233, 150, 122}},
+    {"darkseagreen", Rgb{143, 188, 143}},
+    {"darkslateblue", Rgb{72, 61, 139}},
+    {"darkslategray", Rgb{47, 79, 79}},
+    {"darkslategrey", Rgb{47, 79, 79}},
+    {"darkturquoise", Rgb{0, 206, 209}},
+    {"darkviolet", Rgb{148, 0, 211}},
+    {"deeppink", Rgb{255, 20, 147}},
+    {"deepskyblue", Rgb{0, 191, 255}},
+    {"dimgray", Rgb{105, 105, 105}},
+    {"dimgrey", Rgb{105, 105, 105}},
+    {"dodgerblue", Rgb{30, 144, 255}},
+    {"firebrick", Rgb{178, 34, 34}},
+    {"floralwhite", Rgb{255, 250, 240}},
+    {"forestgreen", Rgb{34, 139, 34}},
+    {"fuchsia", Rgb{255, 0, 255}},
+    {"gainsboro", Rgb{220, 220, 220}},
+    {"ghostwhite", Rgb{248, 248, 255}},
+    {"gold", Rgb{255, 215, 0}},
+    {"goldenrod", Rgb{218, 165, 32}},
+    {"gray", Rgb{128, 128, 128}},
+    {"green", Rgb{0, 128, 0}},
+    {"greenyellow", Rgb{173, 255, 47}},
+    {"grey", Rgb{128, 128, 128}},
+    {"honeydew", Rgb{240, 255, 240}},
+    {"hotpink", Rgb{255, 105, 180}},
+    {"indianred", Rgb{205, 92, 92}},
+    {"indigo", Rgb{75, 0, 130}},
+    {"ivory", Rgb{255, 255, 240}},
+    {"khaki", Rgb{240, 230, 140}},
+    {"lavender", Rgb{230, 230, 250}},
+    {"lavenderblush", Rgb{255, 240, 245}},
+    {"lawngreen", Rgb{124, 252, 0}},
+    {"lemonchiffon", Rgb{255, 250, 205}},
+    {"lightblue", Rgb{173, 216, 230}},
+    {"lightcoral", Rgb{240, 128, 128}},
+    {"lightcyan", Rgb{224, 255, 255}},
+    {"lightgoldenrodyellow", Rgb{250, 250, 210}},
+    {"lightgray", Rgb{211, 211, 211}},
+    {"lightgreen", Rgb{144, 238, 144}},
+    {"lightgrey", Rgb{211, 211, 211}},
+    {"lightpink", Rgb{255, 182, 193}},
+    {"lightsalmon", Rgb{255, 160, 122}},
+    {"lightseagreen", Rgb{32, 178, 170}},
+    {"lightskyblue", Rgb{135, 206, 250}},
+    {"lightslategray", Rgb{119, 136, 153}},
+    {"lightslategrey", Rgb{119, 136, 153}},
+    {"lightsteelblue", Rgb{176, 196, 222}},
+    {"lightyellow", Rgb{255, 255, 224}},
+    {"lime", Rgb{0, 255, 0}},
+    {"limegreen", Rgb{50, 205, 50}},
+    {"linen", Rgb{250, 240, 230}},
+    {"magenta", Rgb{255, 0, 255}},
+    {"maroon", Rgb{128, 0, 0}},
+    {"mediumaquamarine", Rgb{102, 205, 170}},
+    {"mediumblue", Rgb{0, 0, 205}},
+    {"mediumorchid", Rgb{186, 85, 211}},
+    {"mediumpurple", Rgb{147, 112, 219}},
+    {"mediumseagreen", Rgb{60, 179, 113}},
+    {"mediumslateblue", Rgb{123, 104, 238}},
+    {"mediumspringgreen", Rgb{0, 250, 154}},
+    {"mediumturquoise", Rgb{72, 209, 204}},
+    {"mediumvioletred", Rgb{199, 21, 133}},
+    {"midnightblue", Rgb{25, 25, 112}},
+    {"mintcream", Rgb{245, 255, 250}},
+    {"mistyrose", Rgb{255, 228, 225}},
+    {"moccasin", Rgb{255, 228, 181}},
+    {"navajowhite", Rgb{255, 222, 173}},
+    {"navy", Rgb{0, 0, 128}},
+    {"oldlace", Rgb{253, 245, 230}},
+    {"olive", Rgb{128, 128, 0}},
+    {"olivedrab", Rgb{107, 142, 35}},
+    {"orange", Rgb{255, 165, 0}},
+    {"orangered", Rgb{255, 69, 0}},
+    {"orchid", Rgb{218, 112, 214}},
+    {"palegoldenrod", Rgb{238, 232, 170}},
+    {"palegreen", Rgb{152, 251, 152}},
+    {"paleturquoise", Rgb{175, 238, 238}},
+    {"palevioletred", Rgb{219, 112, 147}},
+    {"papayawhip", Rgb{255, 239, 213}},
+    {"peachpuff", Rgb{255, 218, 185}},
+    {"peru", Rgb{205, 133, 63}},
+    {"pink", Rgb{255, 192, 203}},
+    {"plum", Rgb{221, 160, 221}},
+    {"powderblue", Rgb{176, 224, 230}},
+    {"purple", Rgb{128, 0, 128}},
+    {"rebeccapurple", Rgb{102, 51, 153}},
+    {"red", Rgb{255, 0, 0}},
+    {"rosybrown", Rgb{188, 143, 143}},
+    {"royalblue", Rgb{65, 105, 225}},
+    {"saddlebrown", Rgb{139, 69, 19}},
+    {"salmon", Rgb{250, 128, 114}},
+    {"sandybrown", Rgb{244, 164, 96}},
+    {"seagreen", Rgb{46, 139, 87}},
+    {"seashell", Rgb{255, 245, 238}},
+    {"sienna", Rgb{160, 82, 45}},
+    {"silver", Rgb{192, 192, 192}},
+    {"skyblue", Rgb{135, 206, 235}},
+    {"slateblue", Rgb{106, 90, 205}},
+    {"slategray", Rgb{112, 128, 144}},
+    {"slategrey", Rgb{112, 128, 144}},
+    {"snow", Rgb{255, 250, 250}},
+    {"springgreen", Rgb{0, 255, 127}},
+    {"steelblue", Rgb{70, 130, 180}},
+    {"tan", Rgb{210, 180, 140}},
+    {"teal", Rgb{0, 128, 128}},
+    {"thistle", Rgb{216, 191, 216}},
+    {"tomato", Rgb{255, 99, 71}},
+    {"turquoise", Rgb{64, 224, 208}},
+    {"violet", Rgb{238, 130, 238}},
+    {"wheat", Rgb{245, 222, 179}},
+    {"white", Rgb{255, 255, 255}},
+    {"whitesmoke", Rgb{245, 245, 245}},
+    {"yellow", Rgb{255, 255, 0}},
+    {"yellowgreen", Rgb{154, 205, 50}},
 }};
 // clang-format on
 
@@ -4703,6 +4841,80 @@ public:
 
 TERMCHART_API void accept(const Command& command, CommandVisitor& visitor);
 TERMCHART_API void accept_all(const Scene& scene, CommandVisitor& visitor);
+
+}  // namespace termchart::scene
+
+// ===== include/termchart/scene/stateful_visitor.hpp =====
+// stateful_visitor.hpp —— 有状态 Scene 消费者基类
+//
+// 把"Fill/Stroke 是状态指令、路径需累积、Rect 有填充/描边分支"这套时序
+// 收在一处。派生类只实现"往哪画"，不管"什么时候画"。
+//
+// 为什么需要它：canvas 的 ScenePainter 与 backend/vector 的 SVG 后端各自
+// 写了一遍同一套状态机（MoveTo/LineTo 累积、遇到状态指令先按旧状态收口、
+// Rect 按有无填充色分两支）。两处独立演化就会出现"同一份 Scene、两种画法"
+// 的偏差；这里是那个偏差的唯一收敛点。
+//
+// 时序约定（与 svg_backend / scene_renderer 原行为一致）：
+//   * MoveTo     —— 更新 current_，不 flush（允许多子路径合成一条 <path>）；
+//   * LineTo     —— 首个 LineTo 触发 begin_path，其余 extend_path；
+//   * Fill/Stroke—— 先 end_path() 收口旧状态，再更新；重置 path_open_；
+//   * Rect/Arc/Text/Image —— 先 end_path() 收口，再 emit，并重置 path_open_；
+//   * run() 结束 —— 收尾一次。
+//
+// 两条容易写错的约束（写错就是静默错图，不是编译错误）：
+//   1. end_path() 必须**无条件**调用，不能在基类里加 `if (path_open_)` 守卫：
+//      MoveTo 会把 path_open_ 置 false，但派生类累积的几何可能已经 dirty，
+//      一守卫就漏掉这次收口。判空交给实现自己（d_.empty() / dirty 标志）。
+//   2. end_path() 里读到的 fill_/stroke_ 是**旧值**——因为 FillOp/StrokeOp
+//      的处理顺序是「先收口、后赋值」。这正是想要的：几何按它出现时的状态着色。
+
+
+namespace termchart::scene {
+
+class StatefulVisitor : public CommandVisitor {
+public:
+    void visit(const MoveTo& command) override;
+    void visit(const LineTo& command) override;
+    void visit(const RectOp& command) override;
+    void visit(const ArcOp& command) override;
+    void visit(const FillOp& command) override;
+    void visit(const StrokeOp& command) override;
+    void visit(const TextOp& command) override;
+    void visit(const ImageOp& command) override;
+
+    // 遍历 + 收尾。调用方不应再自己调 end_path。
+    void run(const Scene& scene);
+
+protected:
+    // ── 派生类实现的"往哪画" ──
+    // begin_path/extend_path/end_path 三条是路径的三段式：begin 发起点、
+    // extend 追加一段、end 收口。SVG 需要 begin（要发 M），终端不需要
+    // （extend_path 自带两端），因此派生类把它实现成 no-op 即可。
+    virtual void begin_path(const Point& from) = 0;
+    virtual void extend_path(const Point& from, const Point& to) = 0;
+    virtual void end_path() = 0;
+
+    virtual void emit_filled_rect(const Rect& rect, const Color& fill) = 0;
+    virtual void emit_stroked_rect(const Rect& rect, const Color& stroke, double width) = 0;
+    virtual void emit_arc(const ArcOp& arc, const Color& stroke, double width) = 0;
+    virtual void emit_text(const TextOp& text) = 0;
+    virtual void emit_image(const ImageOp& image) = 0;
+
+    // ── 当前状态只读视图（end_path 里读的是"旧值"，见文件头第 2 条）──
+    [[nodiscard]] const Color& current_fill() const noexcept { return fill_; }
+    [[nodiscard]] const Color& current_stroke() const noexcept { return stroke_; }
+    [[nodiscard]] double current_stroke_width() const noexcept { return stroke_width_; }
+
+private:
+    void finish_path();  // end_path + 重置 path_open_
+
+    Color fill_ = Color::none();
+    Color stroke_ = Color::none();
+    double stroke_width_ = 1.0;
+    Point current_{};
+    bool path_open_ = false;
+};
 
 }  // namespace termchart::scene
 
@@ -6243,9 +6455,11 @@ public:
     [[nodiscard]] std::uint32_t width() const noexcept { return buffer_.width(); }
     [[nodiscard]] std::uint32_t height() const noexcept { return buffer_.height(); }
 
-    // 浮点坐标 → 格：向下取整（与 core/rect 的半开区间约定一致）。越界静默丢弃。
-    TERMCHART_API void put(Point p, char32_t cp, const Style& style = Style{}) noexcept;
-    TERMCHART_API void put(std::uint32_t x, std::uint32_t y, char32_t cp,
+    // 浮点坐标 → 格：向下取整（与 core/rect 的半开区间约定一致）。
+    // 越界一律**裁剪**（丢弃），不折回边缘、不报错；返回值告诉你到底落没落格——
+    // 调用方要统计"实际画了多少格"时不必自己再判一次边界。
+    TERMCHART_API bool put(Point p, char32_t cp, const Style& style = Style{}) noexcept;
+    TERMCHART_API bool put(std::uint32_t x, std::uint32_t y, char32_t cp,
                            const Style& style = Style{}) noexcept;
 
     TERMCHART_API void fill_rect(Rect rect, char32_t cp, const Style& style = Style{}) noexcept;
@@ -7071,14 +7285,50 @@ private:
 
 // ===== include/termchart/chart/series.hpp =====
 // series.hpp —— 数据系列（值类型，header-only）
+//
+// 顺带放**默认配色的唯一真源**：它在本文件而不是 chart.hpp，是因为 chart.hpp
+// include 了本文件，反过来会成环。
 
 
 
 namespace termchart::chart {
 
+// 历史上每个图种各自硬编码 `Color::ansi16(7/2/1/4/8/6/3)`：同一件事七处写法，
+// 将来配色表（palette）落地时要改得动，必须先收敛到一处。
+// **色号本身没变**（逐个映射的结果与原来逐字相同），这一步只做"命名"。
+enum class DefaultColor {
+    Series,   // 7：中性前景，数据与系列默认
+    Accent,   // 2：绿，正向 / 主强调
+    Warn,     // 1：红，负向 / 告警
+    Neutral,  // 4：蓝，统计类默认
+    Muted,    // 8：暗灰，次要元素（轨道、连线）
+    Cyan,     // 6：青，金融 / 极坐标类
+    Amber,    // 3：黄，星标等点缀
+};
+
+inline Color default_color(DefaultColor which = DefaultColor::Series) noexcept {
+    switch (which) {
+        case DefaultColor::Accent:
+            return Color::ansi16(2);
+        case DefaultColor::Warn:
+            return Color::ansi16(1);
+        case DefaultColor::Neutral:
+            return Color::ansi16(4);
+        case DefaultColor::Muted:
+            return Color::ansi16(8);
+        case DefaultColor::Cyan:
+            return Color::ansi16(6);
+        case DefaultColor::Amber:
+            return Color::ansi16(3);
+        case DefaultColor::Series:
+            break;
+    }
+    return Color::ansi16(7);
+}
+
 struct Series {
     std::string name;
-    Color color = Color::ansi16(7);
+    Color color = default_color(DefaultColor::Series);
     std::vector<Point> points;  // 数据坐标 (x, y)
 };
 
@@ -7099,6 +7349,9 @@ namespace termchart::chart {
 inline constexpr char32_t kLineChar = U'\u2022';     // • 连线
 inline constexpr char32_t kMarkerChar = U'\u25CF';   // ● 数据点
 inline constexpr char32_t kBarChar = U'\u2588';      // █ 柱
+
+// 默认配色的唯一真源在 `chart/series.hpp`（`DefaultColor` / `default_color()`）——
+// 放在那里是因为 chart.hpp 自己 include series.hpp，反过来不行。
 
 void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax,
                   double& ymin, double& ymax);
@@ -7154,7 +7407,7 @@ namespace termchart::chart {
 class AreaChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<Point> points,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
 
     // 填充基线（数据坐标）。默认 0：最常见的"从零起"面积图。改它会同时改
@@ -7171,7 +7424,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     double baseline_ = 0.0;
     char32_t fill_char_ = U'\u00B7';
@@ -7195,7 +7448,7 @@ class BarChart final : public Chart {
 public:
     // 柱用单系列即可；values 为每个类别的值，categories 为对应名称。
     void set_values(std::vector<double> values, std::vector<std::string> categories,
-                    Color color = Color::ansi16(2), std::string name = "series");
+                    Color color = default_color(DefaultColor::Accent), std::string name = "series");
     void set_show_legend(bool on) { show_legend_ = on; }
 
     void draw(DrawContext ctx) override;
@@ -7205,7 +7458,7 @@ public:
 private:
     std::vector<double> values_;
     std::vector<std::string> categories_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     bool show_legend_ = true;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
@@ -7236,7 +7489,7 @@ public:
         std::vector<double> outliers;  // 须外单点
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         bool show_outliers = true;
     };
 
@@ -7273,7 +7526,7 @@ public:
         double r = 0.0;  // 第三维：非负半径语义，负值/非有限按 0 处理
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         std::string name = "bubble";
         bool show_legend = true;
     };
@@ -7315,7 +7568,7 @@ public:
 
     struct Options {
         char32_t target_char = U'\u2502';    // │
-        Color bar_color = Color::ansi16(4);
+        Color bar_color = default_color(DefaultColor::Neutral);
         bool show_legend = false;
     };
 
@@ -7355,8 +7608,8 @@ public:
         double close = 0.0;
     };
     struct Options {
-        Color up = Color::ansi16(2);
-        Color down = Color::ansi16(1);
+        Color up = default_color(DefaultColor::Accent);
+        Color down = default_color(DefaultColor::Warn);
         bool show_wicks = true;
     };
 
@@ -7389,7 +7642,7 @@ namespace termchart::chart {
 class ContourChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(6);
+        Color color = default_color(DefaultColor::Cyan);
         // 显式等值线级；非有限值剔除。为空时按 level_count 自动均分。
         std::vector<double> levels;
         int level_count = 4;  // 自动模式的级数，clamp 到 [1, 16]
@@ -7429,8 +7682,8 @@ public:
     };
 
     struct Options {
-        Color line_color = Color::ansi16(8);  // 连线颜色（暗灰，突出端点）
-        Color dot_color = Color::ansi16(4);
+        Color line_color = default_color(DefaultColor::Muted);  // 连线颜色（暗灰，突出端点）
+        Color dot_color = default_color(DefaultColor::Neutral);
         bool show_legend = false;  // 单系列图例意义不大，默认关
     };
 
@@ -7471,7 +7724,7 @@ public:
         double x_hi = 0.0;
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         bool show_caps = true;  // 误差端帽
     };
 
@@ -7509,7 +7762,7 @@ public:
         double end = 0.0;
     };
     struct Options {
-        Color bar = Color::ansi16(4);
+        Color bar = default_color(DefaultColor::Neutral);
         bool show_grid = true;
         bool show_labels = true;
     };
@@ -7587,7 +7840,7 @@ class HistChart final : public Chart {
 public:
     // values 为原始样本（未分箱）。color/name 默认值沿用柱状图，便于并排绘制。
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
 
     // 覆盖自动分箱的箱数；返回前会 clamp 到 [1, 64]。传 <=0 恢复自动（Sturges）。
@@ -7616,7 +7869,7 @@ private:
     void rebin();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     int bins_ = 0;  // 0（或负）：自动（Sturges）
     bool show_legend_ = true;
@@ -7639,7 +7892,12 @@ namespace termchart::chart {
 
 class LineChart final : public Chart {
 public:
+    // 追加一条系列（append 语义）。
     void add_series(Series s) { series_.push_back(std::move(s)); }
+    // 替换全部系列（replace 语义）。**两个动词成对提供**：全库约定 `add_*` 是追加、
+    // `set_*` 是替换，只给一半会逼调用方自己 clear()，而 clear() 并不总是对外可见。
+    void set_series(std::vector<Series> series) { series_ = std::move(series); }
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return series_; }
 
     void set_auto_domain(bool on, bool include_zero = false) {
         auto_domain_ = on;
@@ -7749,7 +8007,7 @@ class QQChart final : public Chart {
 public:
     struct Options {
         bool show_line = true;  // y = μ + σ·x 参考线
-        Color point_color = Color::ansi16(4);
+        Color point_color = default_color(DefaultColor::Neutral);
     };
 
     TERMCHART_API void set_sample(std::vector<double> sample);
@@ -7783,7 +8041,7 @@ public:
     struct Group {
         std::string name;
         std::vector<double> values;
-        Color color = Color::ansi16(7);
+        Color color = default_color(DefaultColor::Series);
     };
 
     struct Options {
@@ -7824,6 +8082,10 @@ public:
     TERMCHART_API void add_series(Series series);
     // 气泡系列：weights 与 series.points 按下标对应，缺的按 0 处理。
     TERMCHART_API void add_bubble_series(Series series, std::vector<double> weights);
+    // 替换语义（与 add_* 成对提供，见 line_chart.hpp 的同名注释）。
+    // 注意：替换系列会一并清掉气泡权重——两者按下标一一对应，留下半套会错位。
+    TERMCHART_API void set_series(std::vector<Series> series);
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return series_; }
 
     void set_auto_domain(bool on, bool include_zero = false) {
         auto_domain_ = on;
@@ -7859,7 +8121,7 @@ namespace termchart::chart {
 class SparklineChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(2);
+        Color color = default_color(DefaultColor::Accent);
         bool show_last_marker = true;
     };
 
@@ -7896,7 +8158,7 @@ public:
     enum class Where { Pre, Post, Mid };
 
     TERMCHART_API void set_values(std::vector<Point> points,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
     void set_where(Where where) { where_ = where; }
     void set_show_legend(bool on) { show_legend_ = on; }
@@ -7908,7 +8170,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     Where where_ = Where::Post;
     bool show_legend_ = true;
@@ -7936,6 +8198,10 @@ public:
     };
 
     TERMCHART_API void add_series(Series series);
+    // 替换语义（与 add_* 成对提供，见 line_chart.hpp 的同名注释）。
+    TERMCHART_API void set_series(std::vector<Series> layers);
+    [[nodiscard]] const std::vector<Series>& series() const noexcept { return layers_; }
+
     void set_options(const Options& options) { options_ = options; }
     [[nodiscard]] const Options& options() const noexcept { return options_; }
 
@@ -7965,7 +8231,7 @@ namespace termchart::chart {
 class ViolinChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         int bands = 0;  // 密度带数；0（或负）= 自动（随绘图区高度，clamp 到 [4, 64]）
         bool show_median = true;
     };
@@ -8007,9 +8273,9 @@ public:
         bool is_total = false;  // true：累计重置为 value（基线回到 0）
     };
     struct Options {
-        Color increase = Color::ansi16(2);
-        Color decrease = Color::ansi16(1);
-        Color total = Color::ansi16(4);
+        Color increase = default_color(DefaultColor::Accent);
+        Color decrease = default_color(DefaultColor::Warn);
+        Color total = default_color(DefaultColor::Neutral);
         bool show_connectors = true;
     };
 
@@ -8060,10 +8326,10 @@ public:
     TERMCHART_API void add(Series series);
     // 便捷：只有 y 值时 x 取 0..n-1（最常用的调用形态）。
     TERMCHART_API void add(std::string name, std::vector<double> values,
-                           Color color = Color::ansi16(7));
+                           Color color = default_color(DefaultColor::Series));
     // 便捷：x 与 y 等长，长度不等时按较短者截断（不抛异常）。
     TERMCHART_API void add(std::string name, std::vector<double> xs,
-                           std::vector<double> ys, Color color = Color::ansi16(7));
+                           std::vector<double> ys, Color color = default_color(DefaultColor::Series));
 
     [[nodiscard]] TERMCHART_API bool empty() const noexcept;
     [[nodiscard]] TERMCHART_API std::size_t size() const noexcept;   // 系列数
@@ -8101,8 +8367,8 @@ private:
 namespace termchart::chart {
 
 struct DepthOptions {
-    Color bid = Color::ansi16(2);  // 买盘（绿）
-    Color ask = Color::ansi16(1);  // 卖盘（红）
+    Color bid = default_color(DefaultColor::Accent);  // 买盘（绿）
+    Color ask = default_color(DefaultColor::Warn);  // 卖盘（红）
 };
 
 class DepthChart final : public Chart {
@@ -8135,14 +8401,14 @@ private:
 namespace termchart::chart {
 
 struct DrawdownOptions {
-    Color color = Color::ansi16(1);  // 水下红
+    Color color = default_color(DefaultColor::Warn);  // 水下红
     bool fill = true;                // 0 基线以下铺 '░'
 };
 
 class DrawdownChart final : public Chart {
 public:
     void set_prices(std::vector<double> prices,
-                    Color color = Color::ansi16(1));
+                    Color color = default_color(DefaultColor::Warn));
 
     void set_options(DrawdownOptions options) { options_ = options; }
 
@@ -8155,7 +8421,7 @@ public:
 
 private:
     std::vector<double> dd_;
-    Color color_ = Color::ansi16(1);
+    Color color_ = default_color(DefaultColor::Warn);
     DrawdownOptions options_{};
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
@@ -8175,8 +8441,8 @@ namespace termchart::chart {
 
 struct KagiOptions {
     double reversal = 0.0;  // <=0 → 自动 = 全距 * 5%
-    Color yang = Color::ansi16(2);
-    Color yin = Color::ansi16(1);
+    Color yang = default_color(DefaultColor::Accent);
+    Color yin = default_color(DefaultColor::Warn);
 };
 
 class KagiChart final : public Chart {
@@ -8212,8 +8478,8 @@ namespace termchart::chart {
 struct PointFigureOptions {
     double box_size = 0.0;  // ≤0 → 自动 = 全距/10
     int reversal = 3;       // 反转所需格数（≥1）
-    Color up = Color::ansi16(2);
-    Color down = Color::ansi16(1);
+    Color up = default_color(DefaultColor::Accent);
+    Color down = default_color(DefaultColor::Warn);
 };
 
 struct PfColumn {
@@ -8253,8 +8519,8 @@ namespace termchart::chart {
 
 struct RenkoOptions {
     double brick_size = 0.0;  // <=0 → 自动 = (max-min)/10
-    Color up = Color::ansi16(2);
-    Color down = Color::ansi16(1);
+    Color up = default_color(DefaultColor::Accent);
+    Color down = default_color(DefaultColor::Warn);
 };
 
 class RenkoChart final : public Chart {
@@ -8285,9 +8551,9 @@ private:
 namespace termchart::chart {
 
 struct VolumeOptions {
-    Color up = Color::ansi16(2);    // 价涨柱
-    Color down = Color::ansi16(1);  // 价跌柱
-    Color neutral = Color::ansi16(8);
+    Color up = default_color(DefaultColor::Accent);    // 价涨柱
+    Color down = default_color(DefaultColor::Warn);  // 价跌柱
+    Color neutral = default_color(DefaultColor::Muted);
 };
 
 class VolumeChart final : public Chart {
@@ -8327,7 +8593,7 @@ class YieldCurveChart final : public Chart {
 public:
     TERMCHART_API void set_curve(std::vector<double> maturities,
                                  std::vector<double> yields,
-                                 Color color = Color::ansi16(6),
+                                 Color color = default_color(DefaultColor::Cyan),
                                  std::string name = "yield");
 
     void set_options(YieldCurveOptions options) { options_ = options; }
@@ -8340,7 +8606,7 @@ public:
 
 private:
     std::vector<Point> points_;  // (期限, 收益率)，按期限升序
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     std::string name_ = "yield";
     YieldCurveOptions options_{};
     bool show_legend_ = true;
@@ -8373,12 +8639,17 @@ class FunnelChart final : public Chart {
 public:
     void set_stages(std::vector<FunnelStage> stages);
 
-    void draw(DrawContext ctx) override;
+    // 选项走 set_options()/options()，与其余图种一致（**不再**是裸 public 成员）：
+    // 裸成员让"改了选项但没重画"成为合法的沉默错误，也让将来加不变量（例如
+    // show_values 与 stage 数目的约束）无处可放。
+    void set_options(const FunnelOptions& options) { options_ = options; }
+    [[nodiscard]] const FunnelOptions& options() const noexcept { return options_; }
 
-    FunnelOptions options;
+    void draw(DrawContext ctx) override;
 
 private:
     std::vector<FunnelStage> stages_;
+    FunnelOptions options_{};
 };
 
 }  // namespace termchart::chart
@@ -8467,7 +8738,7 @@ struct DotDensityRegion {
     std::string name;
     std::vector<Point> cells;   // 字符格坐标（画布格）
     double value = 0.0;
-    Color color = Color::ansi16(2);
+    Color color = default_color(DefaultColor::Accent);
 };
 
 struct DotDensityOptions {
@@ -8783,7 +9054,7 @@ namespace termchart::chart {
 
 struct ProgressRingOptions {
     bool show_percent = true;
-    Color track_color = Color::ansi16(8);   // 未完成轨道
+    Color track_color = default_color(DefaultColor::Muted);   // 未完成轨道
 };
 
 class ProgressRing final : public Chart {
@@ -8797,7 +9068,7 @@ public:
 
 private:
     double fraction_ = 0.0;
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     ProgressRingOptions options_;
 };
 
@@ -8814,7 +9085,7 @@ namespace termchart::chart {
 
 struct StarRatingOptions {
     int max_stars = 5;                      // 收敛到 [1, 20]
-    Color star_color = Color::ansi16(3);    // 金黄
+    Color star_color = default_color(DefaultColor::Amber);    // 金黄
     bool dim_empty = true;                  // 空星是否用暗色
 };
 
@@ -8961,7 +9232,7 @@ public:
 
 private:
     double value_ = 0.0;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     GaugeOptions options_{};
 };
 
@@ -9106,7 +9377,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     PolarLineOptions options_{};
 };
 
@@ -9145,7 +9416,7 @@ private:
     std::vector<double> values_;
     std::vector<std::string> labels_;
     std::string name_ = "series";
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     RadarOptions options_{};
 };
 
@@ -9245,7 +9516,7 @@ public:
 
 private:
     std::vector<double> values_;
-    Color color_ = Color::ansi16(6);
+    Color color_ = default_color(DefaultColor::Cyan);
     bool marker_ = true;
     bool zero_baseline_ = false;
 };
@@ -9272,7 +9543,7 @@ struct AutocorrOptions {
 class AutocorrChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(4));
+                                  Color color = default_color(DefaultColor::Neutral));
 
     void set_options(AutocorrOptions options) { options_ = options; }
 
@@ -9286,7 +9557,7 @@ public:
 
 private:
     std::vector<double> values_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     AutocorrOptions options_{};
     std::vector<double> acf_;
     double conf_ = 0.0;
@@ -9308,7 +9579,7 @@ private:
 namespace termchart::chart {
 
 struct BlandAltmanOptions {
-    Color color = Color::ansi16(4);
+    Color color = default_color(DefaultColor::Neutral);
     bool show_limits = true;  // ±1.96·SD 界限
 };
 
@@ -9316,7 +9587,7 @@ class BlandAltmanChart final : public Chart {
 public:
     TERMCHART_API void set_pairs(std::vector<double> method_a,
                                  std::vector<double> method_b,
-                                 Color color = Color::ansi16(4),
+                                 Color color = default_color(DefaultColor::Neutral),
                                  std::string name = "diff");
 
     void set_options(BlandAltmanOptions options) { options_ = options; }
@@ -9411,7 +9682,7 @@ struct DistributionOptions {
 class DistributionChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "density");
 
     void set_options(DistributionOptions options) {
@@ -9432,7 +9703,7 @@ private:
     void evaluate();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "density";
     DistributionOptions options_{};
     bool show_legend_ = true;
@@ -9462,7 +9733,7 @@ struct EcdfOptions {
 class EcdfChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(4),
+                                  Color color = default_color(DefaultColor::Neutral),
                                   std::string name = "ECDF");
 
     void set_options(EcdfOptions options) { options_ = options; }
@@ -9477,7 +9748,7 @@ public:
 private:
     std::vector<double> values_;
     std::vector<double> sorted_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     std::string name_ = "ECDF";
     EcdfOptions options_{};
     bool show_legend_ = true;
@@ -9505,7 +9776,7 @@ struct ForestStudy {
 };
 
 struct ForestOptions {
-    Color color = Color::ansi16(4);
+    Color color = default_color(DefaultColor::Neutral);
     bool show_zero_line = true;
 };
 
@@ -9572,7 +9843,7 @@ private:
     PcaOptions options_{};
     std::vector<Point> projected_;
     std::vector<double> ratio_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
@@ -9597,7 +9868,7 @@ struct RegressionOptions {
 class RegressionChart final : public Chart {
 public:
     TERMCHART_API void set_points(std::vector<Point> points,
-                                  Color color = Color::ansi16(4),
+                                  Color color = default_color(DefaultColor::Neutral),
                                   std::string name = "y");
 
     void set_options(RegressionOptions options) { options_ = options; }
@@ -9613,7 +9884,7 @@ public:
 
 private:
     std::vector<Point> points_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     std::string name_ = "y";
     RegressionOptions options_{};
     bool show_legend_ = true;
@@ -9701,7 +9972,7 @@ struct SeasonalOptions {
 class SeasonalChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(4));
+                                  Color color = default_color(DefaultColor::Neutral));
 
     void set_options(SeasonalOptions options) { options_ = options; }
 
@@ -9717,7 +9988,7 @@ private:
     void decompose();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     SeasonalOptions options_{};
     std::vector<double> trend_;
     std::vector<double> seasonal_;
@@ -9740,7 +10011,7 @@ private:
 namespace termchart::chart {
 
 struct SurvivalOptions {
-    Color color = Color::ansi16(2);
+    Color color = default_color(DefaultColor::Accent);
     bool show_censored = true;  // 删失 '+' 刻度
 };
 
@@ -9748,7 +10019,7 @@ class SurvivalChart final : public Chart {
 public:
     // times[i] 为观测时长，events[i] != 0 表示事件发生、0 表示删失。
     TERMCHART_API void set_data(std::vector<double> times, std::vector<int> events,
-                                Color color = Color::ansi16(2),
+                                Color color = default_color(DefaultColor::Accent),
                                 std::string name = "survival");
 
     void set_options(SurvivalOptions options) { options_ = options; }
@@ -9792,7 +10063,7 @@ struct ProgressOptions {
 
 class Progress final : public Chart {
 public:
-    void add_bar(std::string label, double fraction, Color color = Color::ansi16(2));
+    void add_bar(std::string label, double fraction, Color color = default_color(DefaultColor::Accent));
     void set_options(const ProgressOptions& options) { options_ = options; }
 
     [[nodiscard]] std::size_t bar_count() const noexcept { return bars_.size(); }
@@ -10386,8 +10657,15 @@ public:
     // 删除节点及其全部关联边；不存在返回 false。
     bool remove_node(NodeId id);
 
-    // 端点必须已存在；否则返回 nullptr 且不添加。
+    // 端点必须已存在；否则返回 nullptr 且不添加。**返回指针**（而 add_node 返回引用）
+    // 是因为加边真的可能失败；需要长期持有请取 `Edge::id()` 再 `find_edge()`。
     Edge* add_edge(NodeId from, NodeId to, std::string label = {});
+
+    // 按端点找回第一条匹配边：与节点的 find(NodeId) 对称（此前只有节点能按 id
+    // 找回，边只能靠"当时拿到的指针"——而指针在容器重排后会失效）。
+    // 边本身没有 id（from/to 才是它的身份），所以这里按 (from, to) 查。
+    [[nodiscard]] Edge* find_edge(NodeId from, NodeId to) noexcept;
+    [[nodiscard]] const Edge* find_edge(NodeId from, NodeId to) const noexcept;
     // 删除 from→to 的第一条边；不存在返回 false。
     bool remove_edge(NodeId from, NodeId to);
 
@@ -10564,6 +10842,34 @@ struct ForceOptions {
 // 力导向布局：就地写入 Node::set_box，返回所有节点外框的并集。
 [[nodiscard]] TERMCHART_API Rect layout_force(Graph& graph,
                                               const ForceOptions& opts = {});
+
+}  // namespace termchart::graph
+
+// ===== include/termchart/graph/layout/kamada_kawai.hpp =====
+// kamada_kawai.hpp —— KK 全局能量布局（弹簧模型）
+//
+// 以图的最短路径（跳数）为目标距离做弹簧能量最小化：每轮选能量残差最大的节点
+// 对，对其一端做 Newton 迭代解局部能量极小，直到所有残差低于 tolerance 或迭代
+// 耗尽。初始摆放固定为圆环（不用随机数），同一张图两次布局结果完全一致。
+//
+// 退化口径：N=0 返回空矩形；N=1 只落一个节点框；N=2 直接按目标距离水平对放，
+// 不进迭代；非连通图按连通分量各自独立布局后从左到右并排摆放（分量间无弹簧
+// 约束，最短路径距离不存在）。
+
+
+
+namespace termchart::graph {
+
+struct KamadaKawaiOptions {
+    LayoutOptions layout{};              // 节点尺寸与边距
+    double edge_length = 12.0;           // 单位跳数的目标距离（格）
+    std::uint32_t max_iterations = 200;  // 主循环（选对 + 移动）上限
+    double tolerance = 1e-3;             // 最大残差（相对目标距离）低于此值提前收敛
+};
+
+// KK 全局能量布局：就地写入 Node::set_box，返回所有节点外框的并集。
+[[nodiscard]] TERMCHART_API Rect layout_kamada_kawai(
+    Graph& graph, const KamadaKawaiOptions& opts = {});
 
 }  // namespace termchart::graph
 
@@ -11705,6 +12011,12 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
+    // 可移动：否则"按值返回 Renderer"或放进容器都得绕道（历史上删了拷贝却漏了移动，
+    // 配合裸 Impl* 更是误加拷贝就 double-free）。
+    // 移出后的对象只剩"可析构 / 可被重新赋值"两个合法操作，与标准库的约定一致。
+    TERMCHART_API Renderer(Renderer&&) noexcept;
+    TERMCHART_API Renderer& operator=(Renderer&&) noexcept;
+
     TERMCHART_API void set_depth(ColorDepth depth) noexcept;
     [[nodiscard]] TERMCHART_API ColorDepth depth() const noexcept { return depth_; }
 
@@ -11723,7 +12035,9 @@ public:
 
 private:
     class Impl;
-    Impl* impl_ = nullptr;
+    // unique_ptr 而非裸指针：所有权由类型表达，误加拷贝会在编译期被拦住，
+    // 而不是运行期 double-free。析构与移动因此在 .cpp 里定义（那里 Impl 才完整）。
+    std::unique_ptr<Impl> impl_;
     ColorDepth depth_ = ColorDepth::TrueColor;
 };
 
@@ -12879,6 +13193,42 @@ public:
 
 }  // namespace termchart::backend::snapshot
 
+// ===== include/termchart/backend/snapshot/png_screenshot.hpp =====
+// backend/snapshot/png_screenshot.hpp —— CellBuffer → PNG 截图
+//
+// 复用 image/png_encode 的 encode_png（零依赖 stored deflate），不重复实现
+// PNG 编码。每个字符格映射为 cell_w×cell_h 的像素块：整块先填背景色
+// （Style 未设色用 ResolveOptions 的默认背景），非空格再整块覆盖前景色。
+// 前景是"块状示意"而非字形光栅化——逐字形渲染需要字体栅格化器，超出
+// 本后端职责（要带字形请走 protocol/ 的 sixel/kitty 路径）。
+//
+// 注：继承 SnapshotOptions 里的 depth / trim_trailing_blank 对 PNG 无意义，
+// 保留只是为了共用快照物种的生命周期与 render_snapshot 便捷入口。
+
+
+
+namespace termchart::backend::snapshot {
+
+class PngScreenshotBackend final : public SnapshotBackend {
+public:
+    // 每格像素尺寸；0 按 1 处理（0×0 只由空 buffer 的退化路径产生）。
+    void set_cell_size(std::uint32_t w, std::uint32_t h) noexcept;
+    [[nodiscard]] std::uint32_t cell_width() const noexcept { return cell_w_; }
+    [[nodiscard]] std::uint32_t cell_height() const noexcept { return cell_h_; }
+
+    void render(const CellBuffer& buffer) override;
+
+private:
+    std::uint32_t cell_w_ = 8;
+    std::uint32_t cell_h_ = 16;
+};
+
+// 便捷入口：默认 8×16 每格，返回 PNG 字节串；空 buffer 返回空串。
+[[nodiscard]] TERMCHART_API std::string render_png_screenshot(
+    const CellBuffer& buffer, std::uint32_t cell_w = 8, std::uint32_t cell_h = 16);
+
+}  // namespace termchart::backend::snapshot
+
 // ===== include/termchart/backend/snapshot/text_backend.hpp =====
 // backend/snapshot/text_backend.hpp —— CellBuffer → 纯文本（无 SGR）
 
@@ -12998,6 +13348,62 @@ protected:
 
 [[nodiscard]] TERMCHART_API std::string render_vector(VectorBackend& backend,
                                                       const scene::Scene& scene);
+
+}  // namespace termchart::backend::vector
+
+// ===== include/termchart/backend/vector/latex_backend.hpp =====
+// backend/vector/latex_backend.hpp —— CellBuffer → LaTeX（TikZ）
+//
+// 与 svg_backend 同款接口形态：Options 结构 + render 入口 + bytes()/str() 返回
+// 字符串 + 便捷函数 render_latex（对齐 render_vector / render_snapshot）。
+// 差异只在输入物种：按 backend/backend.hpp 的铁律"不做跨渲染模型转换"，
+// 快照导出的输入恒为 CellBuffer，因此这里不继承 VectorBackend（它的 render
+// 把输入钉死在 Scene），而是直接实现 Backend 生命周期。
+//
+// 映射口径：
+//   * 坐标：格 (x, y) → TikZ (x, -y)；单位由 tikzpicture 的 x/y 选项定成
+//     scale pt，y 翻转让第一行落在最上方（TikZ 坐标向上为正）。
+//   * 非空格（空白格与宽字符续接格不输出）→ \node，文字经 LaTeX 转义。
+//   * 横向连续的 U+2500（─）→ \draw 直线段（格中心连线）；
+//     U+2588（█）→ \fill 实心矩形（左右各扩半格，视觉上无缝）。
+//   * 颜色：Style 前景色经 color::resolve 解析成 RGB，用 xcolor 的
+//     {rgb,255:red,R;green,G;blue,B} 模型内联；None 不发色键，沿用默认黑。
+
+
+
+namespace termchart::backend::vector {
+
+struct LatexOptions {
+    double scale = 12.0;             // 1 格 → 多少 pt（tikzpicture 的 x/y 单位）
+    bool standalone = true;          // 包 documentclass/document 还是裸 tikzpicture
+    bool trim_trailing_blank = true; // 行尾"空白且无样式"的格不输出
+};
+
+class LatexBackend final : public Backend {
+public:
+    void set_options(const LatexOptions& options) noexcept { opts_ = options; }
+    [[nodiscard]] const LatexOptions& options() const noexcept { return opts_; }
+
+    void begin() override { out_.clear(); }
+    void end() override {}
+    [[nodiscard]] std::string_view bytes() const override { return out_; }
+    [[nodiscard]] const std::string& str() const noexcept { return out_; }
+
+    // 快照物种的输入恒为 CellBuffer。
+    void render(const CellBuffer& buffer);
+
+private:
+    // 该行有效宽度：trim 时裁掉行尾"空白且无样式"的格（语义同 SnapshotBackend）。
+    [[nodiscard]] std::uint32_t row_width(const CellBuffer& buffer,
+                                          std::uint32_t y) const noexcept;
+
+    LatexOptions opts_;
+    std::string out_;
+};
+
+// 便捷：begin + render + end，返回字节流拷贝。
+[[nodiscard]] TERMCHART_API std::string render_latex(LatexBackend& backend,
+                                                     const CellBuffer& buffer);
 
 }  // namespace termchart::backend::vector
 
@@ -13155,7 +13561,11 @@ struct AstGraph {
     std::vector<AstNode> nodes;
     std::vector<AstEdge> edges;
 
+    // 两份重载（const / 非 const）：解析器要在找到的节点上继续填字段，
+    // 历史上只能 `const_cast<AstNode*>(find_node(...))`，散在 8 处方言文件里。
+    // 现在非 const 版本是第一等公民，const_cast 只保留在实现内部那一处。
     [[nodiscard]] TERMCHART_API const AstNode* find_node(std::string_view key) const noexcept;
+    [[nodiscard]] TERMCHART_API AstNode* find_node(std::string_view key) noexcept;
     [[nodiscard]] TERMCHART_API bool has_node(std::string_view key) const noexcept;
     // 找不到就创建（解析期的常见动作：边端点可能先于声明出现）。
     TERMCHART_API AstNode& ensure_node(std::string_view key);
@@ -13750,8 +14160,12 @@ struct AstSequence {
     std::vector<SequenceNote> notes;
     std::vector<AstAttribute> attributes;   // 未识别但已登记的元信息
 
+    // 两份重载（const / 非 const）：理由同 AstGraph::find_node——非 const 版本是
+    // 第一等公民，解析器要改的时候不必在各处 const_cast。
     [[nodiscard]] TERMCHART_API const SequenceParticipant* find_participant(
         std::string_view key) const noexcept;
+    [[nodiscard]] TERMCHART_API SequenceParticipant* find_participant(
+        std::string_view key) noexcept;
     [[nodiscard]] TERMCHART_API bool has_participant(std::string_view key) const noexcept;
     TERMCHART_API SequenceParticipant& ensure_participant(std::string_view key);
 };
@@ -14884,41 +15298,45 @@ private:
 }  // namespace termchart::app
 
 // ===== include/termchart/api/opts.hpp =====
-// opts.hpp —— Opts 链式配置
+// opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）
 //
 // 面向"一行出图"的入口：所有可选参数都在这一处，且**每个都有默认值**，
 // 于是 tc::quick::hello() 之类的调用可以完全零配置。
 // 语义：未设置的项（std::optional 为空）表示"由库自行决定"。
+//
+// 命名：全库其余位置一律 `XxxOptions`（MetroOptions / SankeyOptions / …），
+// 这里原名 `Opts` 是唯一的例外；为"同一语义同一命名"收敛成 `ApiOptions`，
+// 旧名以别名保留，因此**不破坏**任何既有调用点。
 
 
 
 namespace termchart::api {
 
-class Opts {
+class ApiOptions {
 public:
     // ── 尺寸 ──────────────────────────────────────────────────────────
-    TERMCHART_API Opts& width(std::uint16_t value) noexcept;
-    TERMCHART_API Opts& height(std::uint16_t value) noexcept;
+    TERMCHART_API ApiOptions& width(std::uint16_t value) noexcept;
+    TERMCHART_API ApiOptions& height(std::uint16_t value) noexcept;
     [[nodiscard]] TERMCHART_API std::optional<std::uint16_t> width() const noexcept;
     [[nodiscard]] TERMCHART_API std::optional<std::uint16_t> height() const noexcept;
 
     // ── 颜色 ──────────────────────────────────────────────────────────
-    TERMCHART_API Opts& color_depth(ColorDepth value) noexcept;
+    TERMCHART_API ApiOptions& color_depth(ColorDepth value) noexcept;
     [[nodiscard]] TERMCHART_API std::optional<ColorDepth> color_depth() const noexcept;
 
     // ── 文本模式 ──────────────────────────────────────────────────────
     // unicode == false 时一切绘制退化到 ASCII（制表符 → '+'、块字符 → '#'）。
-    TERMCHART_API Opts& unicode(bool value) noexcept;
-    TERMCHART_API Opts& ascii_only() noexcept;
+    TERMCHART_API ApiOptions& unicode(bool value) noexcept;
+    TERMCHART_API ApiOptions& ascii_only() noexcept;
     [[nodiscard]] TERMCHART_API bool unicode() const noexcept;
 
     // ── 输出 ──────────────────────────────────────────────────────────
     // newline：是否在输出末尾补一个换行（默认补）。
-    TERMCHART_API Opts& newline(bool value) noexcept;
+    TERMCHART_API ApiOptions& newline(bool value) noexcept;
     [[nodiscard]] TERMCHART_API bool newline() const noexcept;
 
     // reset：帧尾是否复位 SGR（默认复位，避免污染后续输出）。
-    TERMCHART_API Opts& reset_at_end(bool value) noexcept;
+    TERMCHART_API ApiOptions& reset_at_end(bool value) noexcept;
     [[nodiscard]] TERMCHART_API bool reset_at_end() const noexcept;
 
 private:
@@ -14929,6 +15347,39 @@ private:
     bool newline_ = true;
     bool reset_ = true;
 };
+
+// 兼容别名：老代码写 `api::Opts` 仍然成立（全库只有这一处叫 Opts）。
+using Opts = ApiOptions;
+
+}  // namespace termchart::api
+
+// ===== include/termchart/api/chart.hpp =====
+// chart.hpp —— 一行出图（chart 侧的 api 门面）
+//
+// 为什么要有它：examples/03 的"标准姿势"有五步（建 Canvas → 建 Chart → 喂 Series
+// → chart.draw({canvas}) → Renderer::render_full → 写 stdout），其中四步是纯样板，
+// 且**每一步都能写错**（忘了 render_full 会拿到空帧、忘了 flush 会丢半屏）。
+// `render_chart` 把它们收成一次调用：你只负责数据与图表类型。
+//
+// 与 `quick::render`（CellBuffer → 字节）的分工：quick 面向"我已经有一块 buffer"，
+// 这里面向"我只有一个图表"。
+//
+// 尺寸规则是**刻板**的（见 cpp 里的实现注释）：不自动探测终端。理由——
+// 自动探测会让同一段代码在 CI/headless 与真终端里产出不同尺寸，测试和文档都没法
+// 复现；要自适应请显式传 `opts.width(height_of_terminal)`（另见 CODEBUDDY.md 坑 11：
+// 画布大于可视区会折行 + 滚动，图像错位）。
+
+
+
+namespace termchart::api {
+
+// 任意 Chart（折线 / 柱 / 散点 / 迷你线…）→ 一次成帧的字节流（全量，不含差分）。
+// 尺寸：opts.width()/height() 有值就用（显式 0 是 InvalidArgument），否则 80×24。
+[[nodiscard]] TERMCHART_API Result<std::string> render_chart(chart::Chart& chart,
+                                                             const Opts& opts = {}) noexcept;
+
+// = render_chart + 写 stdout + flush。返回 stdout 的写入状态（渲染失败时返回该错误）。
+TERMCHART_API Status print_chart(chart::Chart& chart, const Opts& opts = {}) noexcept;
 
 }  // namespace termchart::api
 

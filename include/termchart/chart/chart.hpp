@@ -22,6 +22,9 @@ inline constexpr char32_t kLineChar = U'\u2022';     // • 连线
 inline constexpr char32_t kMarkerChar = U'\u25CF';   // ● 数据点
 inline constexpr char32_t kBarChar = U'\u2588';      // █ 柱
 
+// 默认配色的唯一真源在 `chart/series.hpp`（`DefaultColor` / `default_color()`）——
+// 放在那里是因为 chart.hpp 自己 include series.hpp，反过来不行。
+
 void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax,
                   double& ymin, double& ymax);
 layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin,

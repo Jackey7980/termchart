@@ -21,7 +21,7 @@ class HistChart final : public Chart {
 public:
     // values 为原始样本（未分箱）。color/name 默认值沿用柱状图，便于并排绘制。
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "series");
 
     // 覆盖自动分箱的箱数；返回前会 clamp 到 [1, 64]。传 <=0 恢复自动（Sturges）。
@@ -50,7 +50,7 @@ private:
     void rebin();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     int bins_ = 0;  // 0（或负）：自动（Sturges）
     bool show_legend_ = true;

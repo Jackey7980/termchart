@@ -5,8 +5,8 @@
 
 namespace termchart::dsl {
 
-const AstNode* AstGraph::find_node(std::string_view key) const noexcept {
-    for (const AstNode& node : nodes) {
+AstNode* AstGraph::find_node(std::string_view key) noexcept {
+    for (AstNode& node : nodes) {
         if (node.key == key) {
             return &node;
         }
@@ -14,10 +14,16 @@ const AstNode* AstGraph::find_node(std::string_view key) const noexcept {
     return nullptr;
 }
 
+// const 版本复用非 const 版本：只在**这一处**去掉 const（节点本身并未被改），
+// 而不是让每个调用点各写一遍 const_cast。
+const AstNode* AstGraph::find_node(std::string_view key) const noexcept {
+    return const_cast<AstGraph*>(this)->find_node(key);
+}
+
 bool AstGraph::has_node(std::string_view key) const noexcept { return find_node(key) != nullptr; }
 
 AstNode& AstGraph::ensure_node(std::string_view key) {
-    if (AstNode* existing = const_cast<AstNode*>(find_node(key))) {
+    if (AstNode* existing = find_node(key)) {
         return *existing;
     }
     AstNode node;

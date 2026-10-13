@@ -32,9 +32,9 @@ Rect content_area(const DrawContext& ctx, const Chart& chart) {
 
 // 词色分档：排名越靠前越醒目。
 Color color_for_rank(std::size_t rank) noexcept {
-    static constexpr Color kPalette[] = {
-        Color::ansi16(6), Color::ansi16(2), Color::ansi16(3),
-        Color::ansi16(5), Color::ansi16(4), Color::ansi16(7),
+    static const Color kPalette[] = {
+        default_color(DefaultColor::Cyan), default_color(DefaultColor::Accent), default_color(DefaultColor::Amber),
+        Color::ansi16(5), default_color(DefaultColor::Neutral), default_color(DefaultColor::Series),
     };
     return kPalette[rank % (sizeof(kPalette) / sizeof(kPalette[0]))];
 }

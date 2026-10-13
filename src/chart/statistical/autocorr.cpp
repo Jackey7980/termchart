@@ -77,7 +77,7 @@ void AutocorrChart::draw(DrawContext ctx) {
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
@@ -90,7 +90,7 @@ void AutocorrChart::draw(DrawContext ctx) {
     const Rect inner = area_.inner_rect();
     const double y0 = area_.y_scale().forward(0.0);
     if (options_.show_band && conf_ > 0.0) {
-        const Style band = Style{}.set_fg(Color::ansi16(8));
+        const Style band = Style{}.set_fg(default_color(DefaultColor::Muted));
         for (double level : {-conf_, conf_}) {
             const double y = area_.y_scale().forward(level);
             ctx.canvas.draw_line(Point{inner.x, y}, Point{inner.right(), y},

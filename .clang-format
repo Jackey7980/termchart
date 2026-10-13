@@ -1,0 +1,59 @@
+# .clang-format —— termchart 代码风格（clang-format 14+）
+#
+# 定位：**编辑器与增量改动用**，不是 CI 强制项。
+# 理由：仓库已有 310 个头文件 / 267 个实现，全量 `clang-format -i` 会产出上万行
+# 与功能无关的 diff，淹没真正的功能改动。因此约定：
+#   * 新写的文件/函数按本配置排；
+#   * 改到某个文件时可以顺手格式化，但**必须单独一个 commit**，不与功能改动混在一起；
+#   * `tools/gen_*.py` 生成的产物不参与（它们自己负责排版）。
+#
+# 对齐对象：现有代码的通行写法（4 空格、100 列、Attach 花括号、命名空间内缩进）。
+
+Language: Cpp
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+NamespaceIndentation: All
+FixNamespaceComments: true
+
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+
+IndentCaseLabels: true
+IndentPPDirectives: None
+SpaceAfterTemplateKeyword: false
+AlwaysBreakTemplateDeclarations: MultiLine
+
+PointerAlignment: Left
+DerivePointerAlignment: false
+ReferenceAlignment: Left
+
+SortIncludes: true
+IncludeBlocks: Preserve
+IncludeCategories:
+  # 主头（与 .cpp 同名的那个）永远在最前
+  - Regex: '^"termchart/.*(/$|.*)'
+    Priority: 3
+  - Regex: '^<.*>$'
+    Priority: 2
+  - Regex: '^".*"$'
+    Priority: 1
+
+BinPackArguments: true
+BinPackParameters: true
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+
+# 仓内大量 `// xxx.hpp —— 说明` 的文件头注释，不要在注释里重排
+ReflowComments: false
+CommentPragmas: '^ IWYU pragma:|^ NOLINT'

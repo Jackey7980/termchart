@@ -74,7 +74,7 @@ void RadarChart::draw(DrawContext ctx) {
     const double start_rad = util::deg_to_rad(options_.start_angle);
     const double slot = kTwoPi / static_cast<double>(n);
 
-    const Style web_style = Style{}.set_fg(Color::ansi16(8));
+    const Style web_style = Style{}.set_fg(default_color(DefaultColor::Muted));
     const Style data_style = Style{}.set_fg(color_);
 
     // 蛛网：3 层环（1/3、2/3、1 半径处的多边形）+ 每根轴的射线。

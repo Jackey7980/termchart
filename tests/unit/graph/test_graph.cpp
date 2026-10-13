@@ -72,6 +72,13 @@ TEST_CASE("graph: 边要求端点存在，度数正确") {
     CHECK(graph.in_degree(b) == 1);
     CHECK(graph.edges_of(a).size() == 1);
     CHECK(graph.edges_of(b).size() == 1);
+
+    // 边没有 id（from/to 才是身份），所以按端点找回——与节点的 find(NodeId) 对称。
+    CHECK(graph.find_edge(a, b) == e);
+    CHECK(graph.find_edge(b, a) == nullptr);  // 有向：反向不是同一条
+    CHECK(graph.find_edge(a, 99) == nullptr);
+    const Graph& const_view = graph;
+    CHECK(const_view.find_edge(a, b) == e);
 }
 
 TEST_CASE("graph: 删节点连带删边、删边") {

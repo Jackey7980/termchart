@@ -18,7 +18,7 @@ namespace termchart::chart {
 class ViolinChart final : public Chart {
 public:
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         int bands = 0;  // 密度带数；0（或负）= 自动（随绘图区高度，clamp 到 [4, 64]）
         bool show_median = true;
     };

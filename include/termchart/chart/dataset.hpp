@@ -31,10 +31,10 @@ public:
     TERMCHART_API void add(Series series);
     // 便捷：只有 y 值时 x 取 0..n-1（最常用的调用形态）。
     TERMCHART_API void add(std::string name, std::vector<double> values,
-                           Color color = Color::ansi16(7));
+                           Color color = default_color(DefaultColor::Series));
     // 便捷：x 与 y 等长，长度不等时按较短者截断（不抛异常）。
     TERMCHART_API void add(std::string name, std::vector<double> xs,
-                           std::vector<double> ys, Color color = Color::ansi16(7));
+                           std::vector<double> ys, Color color = default_color(DefaultColor::Series));
 
     [[nodiscard]] TERMCHART_API bool empty() const noexcept;
     [[nodiscard]] TERMCHART_API std::size_t size() const noexcept;   // 系列数

@@ -66,7 +66,7 @@ void GanttChart::draw(DrawContext ctx) {
     const Style axis_style = ctx.axis_style;
     if (ctx.draw_grid) {
         const Style grid_style = ctx.grid_style.fg().is_none()
-                                     ? Style{}.set_fg(Color::ansi16(8))
+                                     ? Style{}.set_fg(default_color(DefaultColor::Muted))
                                      : ctx.grid_style;
         // 只画垂直时间网格线（空 y 刻度 = 无横线）。
         layout::draw_grid(ctx.canvas, area_, xticks, {}, grid_style);

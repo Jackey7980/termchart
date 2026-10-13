@@ -12,6 +12,7 @@
 #include "termchart/render/diff.hpp"
 #include "termchart/render/sgr.hpp"
 #include "termchart/term/ansi.hpp"
+#include "termchart/util/assert.hpp"
 #include "termchart/util/utf8.hpp"
 
 namespace termchart::render {
@@ -154,17 +155,25 @@ public:
     }
 };
 
-Renderer::Renderer(ColorDepth depth) noexcept : impl_(new Impl(depth)), depth_(depth) {}
+// 析构、移动都必须在 Impl 完整的地方定义：unique_ptr<不完整类型> 的默认析构
+// 需要完整类型，否则 static_assert 直接失败。
+Renderer::Renderer(ColorDepth depth) noexcept
+    : impl_(std::make_unique<Impl>(depth)), depth_(depth) {}
 
-Renderer::~Renderer() { delete impl_; }
+Renderer::~Renderer() = default;
+
+Renderer::Renderer(Renderer&&) noexcept = default;
+Renderer& Renderer::operator=(Renderer&&) noexcept = default;
 
 void Renderer::set_depth(ColorDepth depth) noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
     depth_ = depth;
     impl_->depth = depth;
     reset();  // 深度变化后必须全量重绘，否则旧 prev 与新输出不一致
 }
 
 std::string Renderer::render(const CellBuffer& current) noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
     if (!impl_->has_previous || impl_->previous.width() != current.width() ||
         impl_->previous.height() != current.height()) {
         return render_full(current);
@@ -173,10 +182,12 @@ std::string Renderer::render(const CellBuffer& current) noexcept {
 }
 
 std::string Renderer::render_full(const CellBuffer& current) noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
     return impl_->render_full(current);
 }
 
 void Renderer::reset() noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
     impl_->has_previous = false;
     impl_->previous = CellBuffer{};
     impl_->damage.clear();
@@ -185,11 +196,18 @@ void Renderer::reset() noexcept {
 }
 
 const CellBuffer* Renderer::previous() const noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
     return impl_->has_previous ? &impl_->previous : nullptr;
 }
 
-const DamageTracker& Renderer::damage() const noexcept { return impl_->damage; }
+const DamageTracker& Renderer::damage() const noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
+    return impl_->damage;
+}
 
-DamageTracker& Renderer::damage() noexcept { return impl_->damage; }
+DamageTracker& Renderer::damage() noexcept {
+    TERMCHART_ASSERT_MSG(impl_ != nullptr, "Renderer 已被移出，只剩析构/重赋值可用");
+    return impl_->damage;
+}
 
 }  // namespace termchart::render

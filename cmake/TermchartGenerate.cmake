@@ -29,6 +29,8 @@ _termchart_add_py_target(generate_grapheme_tables gen_grapheme_tables.py)
 _termchart_add_py_target(generate_braille_table gen_braille_table.py)
 _termchart_add_py_target(generate_turbo_table gen_turbo_table.py)
 _termchart_add_py_target(generate_dsl_samples gen_dsl_samples.py)
+# 夹具（sample_data / sample_graph / sample_grapheme）：同样是"生成器 + 产物 + --check"
+_termchart_add_py_target(generate_fixtures gen_fixtures.py)
 _termchart_add_py_target(generate_module_graph gen_module_graph.py)
 _termchart_add_py_target(generate_api_docs gen_api_docs.py)
 # 阶段 7：单头产物（拓扑排序 + 去重 + 自包含），纯头拼接，--check 可进护栏。
@@ -40,7 +42,7 @@ _termchart_add_py_target(generate_gallery gen_gallery.py --build-dir "${CMAKE_BI
 add_custom_target(generate_all
     COMMENT "生成全部产物（数据表 / 附一 / 附四 / module_matrix）")
 foreach(_t generate_unicode_tables generate_grapheme_tables generate_braille_table
-        generate_turbo_table generate_dsl_samples generate_module_graph
+        generate_turbo_table generate_dsl_samples generate_fixtures generate_module_graph
         generate_api_docs generate_gallery generate_single_header)
     if(TARGET ${_t})
         add_dependencies(generate_all ${_t})
@@ -67,6 +69,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_braille_table.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_turbo_table.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_dsl_samples.py" --check
+        COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_fixtures.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_module_graph.py" --check
         COMMAND ${Python3_EXECUTABLE} "${_gen_dir}/gen_single_header.py" --check
         # api_docs 纯头扫描，任何时刻可校验；gallery 依赖已构建示例，不进 check

@@ -23,7 +23,7 @@ struct EcdfOptions {
 class EcdfChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(4),
+                                  Color color = default_color(DefaultColor::Neutral),
                                   std::string name = "ECDF");
 
     void set_options(EcdfOptions options) { options_ = options; }
@@ -38,7 +38,7 @@ public:
 private:
     std::vector<double> values_;
     std::vector<double> sorted_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     std::string name_ = "ECDF";
     EcdfOptions options_{};
     bool show_legend_ = true;

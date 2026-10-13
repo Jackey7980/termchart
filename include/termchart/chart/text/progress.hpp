@@ -26,7 +26,7 @@ struct ProgressOptions {
 
 class Progress final : public Chart {
 public:
-    void add_bar(std::string label, double fraction, Color color = Color::ansi16(2));
+    void add_bar(std::string label, double fraction, Color color = default_color(DefaultColor::Accent));
     void set_options(const ProgressOptions& options) { options_ = options; }
 
     [[nodiscard]] std::size_t bar_count() const noexcept { return bars_.size(); }

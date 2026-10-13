@@ -27,12 +27,17 @@ class FunnelChart final : public Chart {
 public:
     void set_stages(std::vector<FunnelStage> stages);
 
-    void draw(DrawContext ctx) override;
+    // 选项走 set_options()/options()，与其余图种一致（**不再**是裸 public 成员）：
+    // 裸成员让"改了选项但没重画"成为合法的沉默错误，也让将来加不变量（例如
+    // show_values 与 stage 数目的约束）无处可放。
+    void set_options(const FunnelOptions& options) { options_ = options; }
+    [[nodiscard]] const FunnelOptions& options() const noexcept { return options_; }
 
-    FunnelOptions options;
+    void draw(DrawContext ctx) override;
 
 private:
     std::vector<FunnelStage> stages_;
+    FunnelOptions options_{};
 };
 
 }  // namespace termchart::chart

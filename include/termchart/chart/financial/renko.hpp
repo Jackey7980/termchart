@@ -15,8 +15,8 @@ namespace termchart::chart {
 
 struct RenkoOptions {
     double brick_size = 0.0;  // <=0 → 自动 = (max-min)/10
-    Color up = Color::ansi16(2);
-    Color down = Color::ansi16(1);
+    Color up = default_color(DefaultColor::Accent);
+    Color down = default_color(DefaultColor::Warn);
 };
 
 class RenkoChart final : public Chart {

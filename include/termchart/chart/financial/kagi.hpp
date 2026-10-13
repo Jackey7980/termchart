@@ -16,8 +16,8 @@ namespace termchart::chart {
 
 struct KagiOptions {
     double reversal = 0.0;  // <=0 → 自动 = 全距 * 5%
-    Color yang = Color::ansi16(2);
-    Color yin = Color::ansi16(1);
+    Color yang = default_color(DefaultColor::Accent);
+    Color yin = default_color(DefaultColor::Warn);
 };
 
 class KagiChart final : public Chart {

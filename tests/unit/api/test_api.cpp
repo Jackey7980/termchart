@@ -11,10 +11,14 @@
 #include <optional>
 #include <string>
 
+#include "termchart/api/chart.hpp"
 #include "termchart/api/opts.hpp"
 #include "termchart/api/print.hpp"
 #include "termchart/api/quick.hpp"
+#include "termchart/chart/cartesian/line_chart.hpp"
+#include "termchart/chart/series.hpp"
 #include "termchart/core/error.hpp"
+#include "termchart/core/point.hpp"
 #include "termchart/core/style.hpp"
 
 namespace {
@@ -81,6 +85,49 @@ TEST_CASE("api: 深度降级由 render/sgr 统一接管") {
     CHECK(out->find("38;2;200") == std::string::npos);  // 真彩参数不得出现
     CHECK(out->find("\x1b[") != std::string::npos);
     CHECK(out->find("m") != std::string::npos);
+}
+
+TEST_CASE("api: 一行出图 render_chart（Chart → 字节）") {
+    chart::LineChart chart;
+    chart.set_title("one-liner");
+    chart::Series series;
+    series.name = "y = x";
+    for (int i = 0; i < 10; ++i) {
+        series.points.push_back(Point{static_cast<double>(i), static_cast<double>(i)});
+    }
+    chart.add_series(std::move(series));
+
+    Opts opts;
+    opts.width(60).height(16);
+    const Result<std::string> out = render_chart(chart, opts);
+    REQUIRE(out.has_value());
+    CHECK_FALSE(out->empty());
+    CHECK(out->find("\x1b[") != std::string::npos);  // 有 SGR（轴/网格有颜色）
+
+    // 零配置也要能出图（默认 80×24），不依赖任何外部状态。
+    const Result<std::string> zero = render_chart(chart);
+    REQUIRE(zero.has_value());
+    CHECK_FALSE(zero->empty());
+}
+
+TEST_CASE("api: render_chart 显式尺寸 0 是参数错误") {
+    chart::LineChart chart;
+    chart::Series series;
+    series.points.push_back(Point{0.0, 0.0});
+    series.points.push_back(Point{1.0, 1.0});
+    chart.add_series(std::move(series));
+
+    Opts zero_w;
+    zero_w.width(0);
+    const Result<std::string> bad_w = render_chart(chart, zero_w);
+    REQUIRE_FALSE(bad_w.has_value());
+    CHECK(bad_w.error() == ErrorCode::InvalidArgument);
+
+    Opts zero_h;
+    zero_h.height(0);
+    const Result<std::string> bad_h = render_chart(chart, zero_h);
+    REQUIRE_FALSE(bad_h.has_value());
+    CHECK(bad_h.error() == ErrorCode::InvalidArgument);
 }
 
 TEST_CASE("api: None 档位仍产出纯文本") {

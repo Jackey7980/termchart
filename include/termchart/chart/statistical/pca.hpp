@@ -46,7 +46,7 @@ private:
     PcaOptions options_{};
     std::vector<Point> projected_;
     std::vector<double> ratio_;
-    Color color_ = Color::ansi16(4);
+    Color color_ = default_color(DefaultColor::Neutral);
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 

@@ -137,6 +137,47 @@ TEST_CASE("color: 命名色查表") {
     CHECK(lookup_named_color("black").has_value());
     CHECK_FALSE(lookup_named_color("not-a-color").has_value());
     CHECK_FALSE(lookup_named_color("White").has_value());  // 区分大小写
+
+    // gray/grey 两套拼法都在（CSS 全集），且色值相同。
+    const auto gray = lookup_named_color("gray");
+    const auto grey = lookup_named_color("grey");
+    REQUIRE(gray.has_value());
+    REQUIRE(grey.has_value());
+    CHECK(*gray == Rgb{128, 128, 128});
+    CHECK(*grey == *gray);
+}
+
+// 表是二分查找的，所以"升序且无重复"是硬契约：排序错一位，半个表就查不到。
+TEST_CASE("color: 命名色表的结构不变量") {
+    CHECK(kNamedColors.size() == kNamedColorCount);
+    CHECK(kNamedColorCount == 148u);  // CSS Color 命名色全集
+
+    bool sorted = true;
+    bool unique = true;
+    for (std::size_t i = 1; i < kNamedColors.size(); ++i) {
+        if (!(kNamedColors[i - 1].name < kNamedColors[i].name)) {
+            sorted = false;
+            unique = false;
+            break;
+        }
+    }
+    REQUIRE(sorted);   // 严格升序
+    REQUIRE(unique);   // 无重复键
+
+    // 表里每一个名字都必须能被二分查到（排序契约的端到端验证）。
+    for (const auto& entry : kNamedColors) {
+        const auto got = lookup_named_color(entry.name);
+        REQUIRE(got.has_value());
+        CHECK(*got == entry.value);
+    }
+
+    // 抽查与 CSS 规范一致的色值（含新补齐的那一批）。
+    CHECK(*lookup_named_color("rebeccapurple") == Rgb{102, 51, 153});
+    CHECK(*lookup_named_color("goldenrod") == Rgb{218, 165, 32});
+    CHECK(*lookup_named_color("mediumseagreen") == Rgb{60, 179, 113});
+    CHECK(*lookup_named_color("navajowhite") == Rgb{255, 222, 173});
+    CHECK(*lookup_named_color("lightgoldenrodyellow") == Rgb{250, 250, 210});
+    CHECK_FALSE(lookup_named_color("transparent").has_value());  // 关键字不是颜色值
 }
 
 }  // namespace

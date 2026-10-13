@@ -27,7 +27,7 @@ public:
         std::vector<double> outliers;  // 须外单点
     };
     struct Options {
-        Color color = Color::ansi16(4);
+        Color color = default_color(DefaultColor::Neutral);
         bool show_outliers = true;
     };
 

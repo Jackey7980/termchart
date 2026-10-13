@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **307 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **312 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -16,7 +16,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | util | L1 | 15 |
 | color | L2 | 6 |
 | scale | L3 | 7 |
-| scene | L4 | 5 |
+| scene | L4 | 6 |
 | image | L5 | 6 |
 | raster | L6 | 8 |
 | term | L7 | 13 |
@@ -25,15 +25,15 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | canvas | L10 | 8 |
 | layout | L11 | 11 |
 | chart | L12 | 78 |
-| graph | L13 | 44 |
+| graph | L13 | 45 |
 | render | L14 | 4 |
 | interaction | L15 | 18 |
-| backend | L16 | 12 |
+| backend | L16 | 14 |
 | dsl | L17 | 14 |
 | widget | L18 | 6 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
-| api | L21 | 3 |
+| api | L21 | 4 |
 
 ## （顶层头）
 
@@ -89,7 +89,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class Waker`
 - `class DamageTracker`
 - `class Renderer`
-- `class Opts`
+- `class ApiOptions`
 
 ### `termchart.hpp`
 
@@ -599,8 +599,13 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 表按名字升序存放，查询走二分——**因此顺序与内容是契约**：新增必须保持有序
 > （重新生成见 tools/gen_colormap.py 的同名策略）。
 >
-> 当前为常用子集（68 个），完整 148 色 CSS 列表在阶段 7 补齐；
+> 当前为 **CSS Color 命名色全集 148 色**（含 gray/grey 两套拼法与 rebeccapurple，
+> 即 CSS Color Module Level 4 的完整列表，不含 `transparent`/`currentcolor`
+> 这两个关键字——它们不是颜色值，由 Color 侧单独处理）。
 > 查不到的名字由 Color 侧回落到 "不是颜色名" 而非魔数。
+>
+> 契约由 `tests/unit/color/test_color.cpp` 守住：表必须严格升序、无重复、
+> 数量等于 kNamedColorCount、抽查若干色值与 CSS 规范一致。
 
 - `struct NamedColorEntry`
 
@@ -793,6 +798,34 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > roundtrip 测试都依赖后者）。它不理解颜色、不做裁剪、不算布局。
 
 - `class Scene`
+
+### `scene/stateful_visitor.hpp`
+
+> stateful_visitor.hpp —— 有状态 Scene 消费者基类
+>
+> 把"Fill/Stroke 是状态指令、路径需累积、Rect 有填充/描边分支"这套时序
+> 收在一处。派生类只实现"往哪画"，不管"什么时候画"。
+>
+> 为什么需要它：canvas 的 ScenePainter 与 backend/vector 的 SVG 后端各自
+> 写了一遍同一套状态机（MoveTo/LineTo 累积、遇到状态指令先按旧状态收口、
+> Rect 按有无填充色分两支）。两处独立演化就会出现"同一份 Scene、两种画法"
+> 的偏差；这里是那个偏差的唯一收敛点。
+>
+> 时序约定（与 svg_backend / scene_renderer 原行为一致）：
+> * MoveTo     —— 更新 current_，不 flush（允许多子路径合成一条 <path>）；
+> * LineTo     —— 首个 LineTo 触发 begin_path，其余 extend_path；
+> * Fill/Stroke—— 先 end_path() 收口旧状态，再更新；重置 path_open_；
+> * Rect/Arc/Text/Image —— 先 end_path() 收口，再 emit，并重置 path_open_；
+> * run() 结束 —— 收尾一次。
+>
+> 两条容易写错的约束（写错就是静默错图，不是编译错误）：
+> 1. end_path() 必须**无条件**调用，不能在基类里加 `if (path_open_)` 守卫：
+> MoveTo 会把 path_open_ 置 false，但派生类累积的几何可能已经 dirty，
+> 一守卫就漏掉这次收口。判空交给实现自己（d_.empty() / dirty 标志）。
+> 2. end_path() 里读到的 fill_/stroke_ 是**旧值**——因为 FillOp/StrokeOp
+> 的处理顺序是「先收口、后赋值」。这正是想要的：几何按它出现时的状态着色。
+
+- `class StatefulVisitor : public CommandVisitor`
 
 ### `scene/visitor.hpp`
 
@@ -2213,7 +2246,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 ### `chart/series.hpp`
 
 > series.hpp —— 数据系列（值类型，header-only）
+>
+> 顺带放**默认配色的唯一真源**：它在本文件而不是 chart.hpp，是因为 chart.hpp
+> include 了本文件，反过来会成环。
 
+- `enum class DefaultColor`
 - `struct Series`
 
 ### `chart/sparkline.hpp`
@@ -2801,6 +2838,20 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 张图两次布局结果完全一致——这样布局才能进 golden 与回归测试。
 
 - `struct ForceOptions`
+
+### `graph/layout/kamada_kawai.hpp`
+
+> kamada_kawai.hpp —— KK 全局能量布局（弹簧模型）
+>
+> 以图的最短路径（跳数）为目标距离做弹簧能量最小化：每轮选能量残差最大的节点
+> 对，对其一端做 Newton 迭代解局部能量极小，直到所有残差低于 tolerance 或迭代
+> 耗尽。初始摆放固定为圆环（不用随机数），同一张图两次布局结果完全一致。
+>
+> 退化口径：N=0 返回空矩形；N=1 只落一个节点框；N=2 直接按目标距离水平对放，
+> 不进迭代；非连通图按连通分量各自独立布局后从左到右并排摆放（分量间无弹簧
+> 约束，最短路径距离不存在）。
+
+- `struct KamadaKawaiOptions`
 
 ### `graph/layout/layout.hpp`
 
@@ -3456,6 +3507,21 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class JsonBackend final : public SnapshotBackend`
 
+### `backend/snapshot/png_screenshot.hpp`
+
+> backend/snapshot/png_screenshot.hpp —— CellBuffer → PNG 截图
+>
+> 复用 image/png_encode 的 encode_png（零依赖 stored deflate），不重复实现
+> PNG 编码。每个字符格映射为 cell_w×cell_h 的像素块：整块先填背景色
+> （Style 未设色用 ResolveOptions 的默认背景），非空格再整块覆盖前景色。
+> 前景是"块状示意"而非字形光栅化——逐字形渲染需要字体栅格化器，超出
+> 本后端职责（要带字形请走 protocol/ 的 sixel/kitty 路径）。
+>
+> 注：继承 SnapshotOptions 里的 depth / trim_trailing_blank 对 PNG 无意义，
+> 保留只是为了共用快照物种的生命周期与 render_snapshot 便捷入口。
+
+- `class PngScreenshotBackend final : public SnapshotBackend`
+
 ### `backend/snapshot/text_backend.hpp`
 
 > backend/snapshot/text_backend.hpp —— CellBuffer → 纯文本（无 SGR）
@@ -3494,6 +3560,28 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct VectorOptions`
 - `class VectorBackend : public Backend`
+
+### `backend/vector/latex_backend.hpp`
+
+> backend/vector/latex_backend.hpp —— CellBuffer → LaTeX（TikZ）
+>
+> 与 svg_backend 同款接口形态：Options 结构 + render 入口 + bytes()/str() 返回
+> 字符串 + 便捷函数 render_latex（对齐 render_vector / render_snapshot）。
+> 差异只在输入物种：按 backend/backend.hpp 的铁律"不做跨渲染模型转换"，
+> 快照导出的输入恒为 CellBuffer，因此这里不继承 VectorBackend（它的 render
+> 把输入钉死在 Scene），而是直接实现 Backend 生命周期。
+>
+> 映射口径：
+> * 坐标：格 (x, y) → TikZ (x, -y)；单位由 tikzpicture 的 x/y 选项定成
+> scale pt，y 翻转让第一行落在最上方（TikZ 坐标向上为正）。
+> * 非空格（空白格与宽字符续接格不输出）→ \node，文字经 LaTeX 转义。
+> * 横向连续的 U+2500（─）→ \draw 直线段（格中心连线）；
+> U+2588（█）→ \fill 实心矩形（左右各扩半格，视觉上无缝）。
+> * 颜色：Style 前景色经 color::resolve 解析成 RGB，用 xcolor 的
+> {rgb,255:red,R;green,G;blue,B} 模型内联；None 不发色键，沿用默认黑。
+
+- `struct LatexOptions`
+- `class LatexBackend final : public Backend`
 
 ### `backend/vector/svg_backend.hpp`
 
@@ -4099,15 +4187,38 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ## api（L21）
 
+### `api/chart.hpp`
+
+> chart.hpp —— 一行出图（chart 侧的 api 门面）
+>
+> 为什么要有它：examples/03 的"标准姿势"有五步（建 Canvas → 建 Chart → 喂 Series
+> → chart.draw({canvas}) → Renderer::render_full → 写 stdout），其中四步是纯样板，
+> 且**每一步都能写错**（忘了 render_full 会拿到空帧、忘了 flush 会丢半屏）。
+> `render_chart` 把它们收成一次调用：你只负责数据与图表类型。
+>
+> 与 `quick::render`（CellBuffer → 字节）的分工：quick 面向"我已经有一块 buffer"，
+> 这里面向"我只有一个图表"。
+>
+> 尺寸规则是**刻板**的（见 cpp 里的实现注释）：不自动探测终端。理由——
+> 自动探测会让同一段代码在 CI/headless 与真终端里产出不同尺寸，测试和文档都没法
+> 复现；要自适应请显式传 `opts.width(height_of_terminal)`（另见 CODEBUDDY.md 坑 11：
+> 画布大于可视区会折行 + 滚动，图像错位）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
 ### `api/opts.hpp`
 
-> opts.hpp —— Opts 链式配置
+> opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）
 >
 > 面向"一行出图"的入口：所有可选参数都在这一处，且**每个都有默认值**，
 > 于是 tc::quick::hello() 之类的调用可以完全零配置。
 > 语义：未设置的项（std::optional 为空）表示"由库自行决定"。
+>
+> 命名：全库其余位置一律 `XxxOptions`（MetroOptions / SankeyOptions / …），
+> 这里原名 `Opts` 是唯一的例外；为"同一语义同一命名"收敛成 `ApiOptions`，
+> 旧名以别名保留，因此**不破坏**任何既有调用点。
 
-- `class Opts`
+- `class ApiOptions`
 
 ### `api/print.hpp`
 

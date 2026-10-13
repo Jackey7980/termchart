@@ -1,4 +1,6 @@
-# CMake / 构建产物（绝不入库：build/ 可达 ~125 MB）
+# CMake / 构建产物（绝不入库）
+# 体积实测：19 个 build 目录合计 3.96 GB（单目录 250–650 MB，含 asan/cov 插桩产物），
+# 而整个源码树只有 8.3 MB。2026-10-13 已全清一次。
 build/
 build-*/
 cmake-build-*/
@@ -47,3 +49,17 @@ Testing/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 文档站点产物（mkdocs.yml → site/）
+site/
+docs/_build/
+
+# 合并/补丁残留
+*.orig
+*.rej
+*.bak
+
+# 编辑器本地覆盖
+.clangd
+.clang-tidy-local
+CMakeUserPresets.local.json

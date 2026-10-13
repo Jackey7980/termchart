@@ -36,7 +36,7 @@ private:
     std::vector<double> values_;
     std::vector<std::string> labels_;
     std::string name_ = "series";
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     RadarOptions options_{};
 };
 

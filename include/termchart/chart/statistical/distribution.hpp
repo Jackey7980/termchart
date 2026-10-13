@@ -26,7 +26,7 @@ struct DistributionOptions {
 class DistributionChart final : public Chart {
 public:
     TERMCHART_API void set_values(std::vector<double> values,
-                                  Color color = Color::ansi16(2),
+                                  Color color = default_color(DefaultColor::Accent),
                                   std::string name = "density");
 
     void set_options(DistributionOptions options) {
@@ -47,7 +47,7 @@ private:
     void evaluate();
 
     std::vector<double> values_;
-    Color color_ = Color::ansi16(2);
+    Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "density";
     DistributionOptions options_{};
     bool show_legend_ = true;

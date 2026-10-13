@@ -66,7 +66,11 @@ struct AstGraph {
     std::vector<AstNode> nodes;
     std::vector<AstEdge> edges;
 
+    // 两份重载（const / 非 const）：解析器要在找到的节点上继续填字段，
+    // 历史上只能 `const_cast<AstNode*>(find_node(...))`，散在 8 处方言文件里。
+    // 现在非 const 版本是第一等公民，const_cast 只保留在实现内部那一处。
     [[nodiscard]] TERMCHART_API const AstNode* find_node(std::string_view key) const noexcept;
+    [[nodiscard]] TERMCHART_API AstNode* find_node(std::string_view key) noexcept;
     [[nodiscard]] TERMCHART_API bool has_node(std::string_view key) const noexcept;
     // 找不到就创建（解析期的常见动作：边端点可能先于声明出现）。
     TERMCHART_API AstNode& ensure_node(std::string_view key);

@@ -49,8 +49,12 @@ inline void assertion_failed(const char* expr, const char* file, int line,
 #define TERMCHART_DEBUG_ASSERT(expr) \
     do {                             \
     } while (false)
+#define TERMCHART_DEBUG_ASSERT_MSG(expr, msg) \
+    do {                                      \
+    } while (false)
 #else
 #define TERMCHART_DEBUG_ASSERT(expr) TERMCHART_ASSERT(expr)
+#define TERMCHART_DEBUG_ASSERT_MSG(expr, msg) TERMCHART_ASSERT_MSG(expr, msg)
 #endif
 
 // 逻辑上不可达，但编译器不知道（例如 switch 全覆盖）。

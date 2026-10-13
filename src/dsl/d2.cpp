@@ -307,12 +307,17 @@ private:
     }
 
     AstNode& ensure(const std::string& key) {
-        if (AstNode* existing = const_cast<AstNode*>(ast_.find_node(key))) {
+        if (AstNode* existing = ast_.find_node(key)) {
             return *existing;
         }
         if (ast_.nodes.size() >= options_.max_nodes) {
+            // 超限只报错，**不再**造节点：历史上这里报错之后仍然 ensure_node()，
+            // 于是"超限时到底建没建"成了薛定谔状态——run() 最后固然因 failed() 丢弃
+            // 结果，但过程中的 nodes.size() 已经越过上限，任何边界断言都形同虚设。
             report(ErrorCode::OutOfRange, "节点数超过 max_nodes");
-            return ast_.ensure_node(key);
+            overflow_node_ = AstNode{};
+            overflow_node_.key.assign(key);
+            return overflow_node_;  // 调用方拿到的是"黑洞"，不进 ast_.nodes
         }
         AstNode& node = ast_.ensure_node(key);
         if (!owners_.empty()) {
@@ -323,6 +328,8 @@ private:
 
     D2ParseOptions options_{};
     AstGraph ast_;
+    // 超限后的返回值落点：不属于 ast_.nodes，仅供调用方继续走完语法（结果会被丢弃）。
+    AstNode overflow_node_;
     std::string last_key_;
     std::vector<std::string> owners_;
 };

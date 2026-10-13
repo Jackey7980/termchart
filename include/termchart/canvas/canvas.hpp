@@ -35,9 +35,11 @@ public:
     [[nodiscard]] std::uint32_t width() const noexcept { return buffer_.width(); }
     [[nodiscard]] std::uint32_t height() const noexcept { return buffer_.height(); }
 
-    // 浮点坐标 → 格：向下取整（与 core/rect 的半开区间约定一致）。越界静默丢弃。
-    TERMCHART_API void put(Point p, char32_t cp, const Style& style = Style{}) noexcept;
-    TERMCHART_API void put(std::uint32_t x, std::uint32_t y, char32_t cp,
+    // 浮点坐标 → 格：向下取整（与 core/rect 的半开区间约定一致）。
+    // 越界一律**裁剪**（丢弃），不折回边缘、不报错；返回值告诉你到底落没落格——
+    // 调用方要统计"实际画了多少格"时不必自己再判一次边界。
+    TERMCHART_API bool put(Point p, char32_t cp, const Style& style = Style{}) noexcept;
+    TERMCHART_API bool put(std::uint32_t x, std::uint32_t y, char32_t cp,
                            const Style& style = Style{}) noexcept;
 
     TERMCHART_API void fill_rect(Rect rect, char32_t cp, const Style& style = Style{}) noexcept;

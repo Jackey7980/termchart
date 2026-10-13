@@ -79,8 +79,12 @@ struct AstSequence {
     std::vector<SequenceNote> notes;
     std::vector<AstAttribute> attributes;   // 未识别但已登记的元信息
 
+    // 两份重载（const / 非 const）：理由同 AstGraph::find_node——非 const 版本是
+    // 第一等公民，解析器要改的时候不必在各处 const_cast。
     [[nodiscard]] TERMCHART_API const SequenceParticipant* find_participant(
         std::string_view key) const noexcept;
+    [[nodiscard]] TERMCHART_API SequenceParticipant* find_participant(
+        std::string_view key) noexcept;
     [[nodiscard]] TERMCHART_API bool has_participant(std::string_view key) const noexcept;
     TERMCHART_API SequenceParticipant& ensure_participant(std::string_view key);
 };

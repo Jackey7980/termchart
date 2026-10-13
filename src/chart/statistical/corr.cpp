@@ -33,9 +33,9 @@ char32_t level_char(double r) noexcept {
 Color sign_color(double r) noexcept {
     const double a = r < 0.0 ? -r : r;
     if (a < 0.15) {
-        return Color::ansi16(8);
+        return default_color(DefaultColor::Muted);
     }
-    return r > 0.0 ? Color::ansi16(6) : Color::ansi16(1);
+    return r > 0.0 ? default_color(DefaultColor::Cyan) : default_color(DefaultColor::Warn);
 }
 
 // 按码点截断（UTF-8）；残缺序列直接丢弃，避免画出非法字节。
@@ -140,7 +140,7 @@ void CorrMatrixChart::draw(DrawContext ctx) {
                 }
                 ctx.canvas.draw_text(
                     Point{0.0, inner.y + static_cast<double>(i) * ch},
-                    clip_utf8(names_[i], max_chars), Style{}.set_fg(Color::ansi16(7)));
+                    clip_utf8(names_[i], max_chars), Style{}.set_fg(default_color(DefaultColor::Series)));
             }
         }
     }
