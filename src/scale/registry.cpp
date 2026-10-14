@@ -9,6 +9,9 @@
 
 #include "termchart/scale/linear.hpp"
 #include "termchart/scale/log.hpp"
+#include "termchart/scale/time.hpp"
+#include "termchart/scale/category.hpp"
+#include "termchart/scale/band.hpp"
 
 namespace termchart::scale {
 
@@ -17,6 +20,9 @@ namespace {
 // 内置名字：与 register_scale 的登记项一起参与 supports()/names()。
 constexpr std::string_view kBuiltinLinear = "linear";
 constexpr std::string_view kBuiltinLog = "log";
+constexpr std::string_view kBuiltinTime = "time";
+constexpr std::string_view kBuiltinCategory = "category";
+constexpr std::string_view kBuiltinBand = "band";
 
 }  // namespace
 
@@ -40,12 +46,22 @@ std::unique_ptr<Scale> ScaleRegistry::create(std::string_view name) const {
     if (name == kBuiltinLog) {
         return std::make_unique<LogScale>();
     }
+    if (name == kBuiltinTime) {
+        return std::make_unique<TimeScale>();
+    }
+    if (name == kBuiltinCategory) {
+        return std::make_unique<CategoryScale>();
+    }
+    if (name == kBuiltinBand) {
+        return std::make_unique<BandScale>();
+    }
     return nullptr;
 }
 
 bool ScaleRegistry::supports(std::string_view name) const {
     return factories_.find(name) != factories_.end() || name == kBuiltinLinear ||
-           name == kBuiltinLog;
+           name == kBuiltinLog || name == kBuiltinTime ||
+           name == kBuiltinCategory || name == kBuiltinBand;
 }
 
 std::vector<std::string> ScaleRegistry::names() const {
@@ -53,6 +69,9 @@ std::vector<std::string> ScaleRegistry::names() const {
     out.reserve(factories_.size() + 2);
     out.emplace_back(kBuiltinLinear);
     out.emplace_back(kBuiltinLog);
+    out.emplace_back(kBuiltinTime);
+    out.emplace_back(kBuiltinCategory);
+    out.emplace_back(kBuiltinBand);
     for (const auto& [name, factory] : factories_) {
         (void)factory;
         out.push_back(name);
