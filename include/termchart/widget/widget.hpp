@@ -87,6 +87,11 @@ public:
     // 是否沿用旗标判定。
     [[nodiscard]] virtual bool hit_test(Point p) const noexcept;
 
+    // 整树重排钩子：默认空实现（叶子控件无需重排）。容器覆写为"先排自己、
+    // 再递归子容器"，从而一次 relayout() 拍平整棵控件树。Widget 基类不定义
+    // layout（那是容器的事），所以这里只提供安全的递归落点。
+    virtual void relayout() noexcept {}
+
 private:
     std::string id_;
     Rect bounds_{};

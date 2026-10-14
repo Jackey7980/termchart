@@ -16,11 +16,22 @@
 #include "termchart/core/cell.hpp"
 #include "termchart/core/point.hpp"
 #include "termchart/core/rect.hpp"
+#include "termchart/widget/border.hpp"
+#include "termchart/widget/container.hpp"
+#include "termchart/widget/dock.hpp"
+#include "termchart/widget/grid_layout.hpp"
+#include "termchart/widget/hbox.hpp"
 #include "termchart/widget/immediate_widget.hpp"
+#include "termchart/widget/panel.hpp"
 #include "termchart/widget/reactive.hpp"
+#include "termchart/widget/scroll.hpp"
+#include "termchart/widget/style_sheet.hpp"
+#include "termchart/widget/styles.hpp"
+#include "termchart/widget/theme.hpp"
 #include "termchart/widget/theme_dark.hpp"
 #include "termchart/widget/theme_light.hpp"
 #include "termchart/widget/theme_mono.hpp"
+#include "termchart/widget/vbox.hpp"
 #include "termchart/widget/widget.hpp"
 
 namespace {
@@ -361,4 +372,211 @@ TEST_CASE("widget/reactive: 多监听者按订阅顺序收到通知") {
     REQUIRE(order.size() == 2);
     CHECK(order[0] == 70);   // 订阅顺序
     CHECK(order[1] == 700);
+}
+
+// ---------------------------------------------------------------------------
+// 容器 / 布局
+// ---------------------------------------------------------------------------
+
+TEST_CASE("widget/container: add/remove/children + 去重") {
+    VBox box("box");
+    Widget a("a");
+    Widget b("b");
+    box.add(a);
+    box.add(b);
+    box.add(b);  // 重复添加被忽略
+    REQUIRE(box.children().size() == 2);
+
+    CHECK(box.remove(b));
+    CHECK_FALSE(box.remove(b));  // 已移除：no-op
+    CHECK(box.children().size() == 1);
+
+    box.clear();
+    CHECK(box.children().empty());
+}
+
+TEST_CASE("widget/container: 递归命中穿透多级容器") {
+    VBox outer("outer");
+    outer.set_bounds(Rect{0, 0, 5, 5});
+    VBox inner("inner");
+    inner.set_bounds(Rect{4, 4, 3, 3});  // 延伸到 outer 边界之外
+    Widget leaf("leaf");
+    leaf.set_bounds(Rect{5, 5, 1, 1});
+    inner.add(leaf);
+    outer.add(inner);
+
+    // (5.5,5.5) 落在 outer 之外、leaf 之内：只有递归命中能做到（自身 bounds 不含）。
+    CHECK(outer.hit_test(Point{5.5, 5.5}));
+    CHECK_FALSE(outer.hit_test(Point{50, 50}));  // 整树之外
+}
+
+TEST_CASE("widget/container/vbox: 堆叠 + spacing + Stretch 填满宽") {
+    VBox box("box");
+    box.set_bounds(Rect{0, 0, 10, 20});
+    box.set_padding(1);
+    box.set_spacing(2);
+    box.set_alignment(Alignment::Stretch);
+    Widget a("a");
+    a.set_bounds(Rect{0, 0, 0, 3});
+    Widget b("b");
+    b.set_bounds(Rect{0, 0, 0, 4});
+    box.add(a);
+    box.add(b);
+    box.layout();
+
+    CHECK(a.bounds() == Rect{1, 1, 8, 3});   // 内容宽 = 10-2*1 = 8
+    CHECK(b.bounds() == Rect{1, 6, 8, 4});   // y = 1 + 3 + 2
+}
+
+TEST_CASE("widget/container/hbox: 水平堆叠镜像于 vbox") {
+    HBox box("box");
+    box.set_bounds(Rect{0, 0, 20, 10});
+    box.set_padding(1);
+    box.set_spacing(2);
+    box.set_alignment(Alignment::Stretch);
+    Widget a("a");
+    a.set_bounds(Rect{0, 0, 3, 0});
+    Widget b("b");
+    b.set_bounds(Rect{0, 0, 4, 0});
+    box.add(a);
+    box.add(b);
+    box.layout();
+
+    CHECK(a.bounds() == Rect{1, 1, 3, 8});   // 内容高 = 10-2 = 8
+    CHECK(b.bounds() == Rect{6, 1, 4, 8});   // x = 1 + 3 + 2
+}
+
+TEST_CASE("widget/container/grid: 2x2 居中等分") {
+    GridLayout g("g");
+    g.set_bounds(Rect{0, 0, 10, 10});
+    g.set_columns(2);
+    g.set_spacing(0);
+    g.set_padding(0);
+    Widget a("a"), b("b"), c("c"), d("d");
+    a.set_bounds(Rect{0, 0, 1, 1});
+    b.set_bounds(Rect{0, 0, 1, 1});
+    c.set_bounds(Rect{0, 0, 1, 1});
+    d.set_bounds(Rect{0, 0, 1, 1});
+    g.add(a);
+    g.add(b);
+    g.add(c);
+    g.add(d);
+    g.layout();
+
+    CHECK(a.bounds() == Rect{2, 2, 1, 1});    // cell(0,0) 居中于 5x5
+    CHECK(b.bounds() == Rect{7, 2, 1, 1});    // cell(1,0)
+    CHECK(c.bounds() == Rect{2, 7, 1, 1});    // cell(0,1)
+    CHECK(d.bounds() == Rect{7, 7, 1, 1});    // cell(1,1)
+}
+
+TEST_CASE("widget/container/dock: 五区切分顺序 Top→Bottom→Left→Right→Center") {
+    Dock d("d");
+    d.set_bounds(Rect{0, 0, 20, 20});
+    Widget top("top"), bot("bot"), left("left"), right("right"), center("center");
+    top.set_bounds(Rect{0, 0, 0, 2});
+    bot.set_bounds(Rect{0, 0, 0, 3});
+    left.set_bounds(Rect{0, 0, 4, 0});
+    right.set_bounds(Rect{0, 0, 5, 0});
+    center.set_bounds(Rect{0, 0, 1, 1});
+    d.add(DockRegion::Top, top);
+    d.add(DockRegion::Bottom, bot);
+    d.add(DockRegion::Left, left);
+    d.add(DockRegion::Right, right);
+    d.add(DockRegion::Center, center);
+    d.layout();
+
+    CHECK(top.bounds() == Rect{0, 0, 20, 2});
+    CHECK(bot.bounds() == Rect{0, 17, 20, 3});
+    CHECK(left.bounds() == Rect{0, 2, 4, 15});
+    CHECK(right.bounds() == Rect{15, 2, 5, 15});
+    CHECK(center.bounds() == Rect{4, 2, 11, 15});
+}
+
+TEST_CASE("widget/container/panel: content_rect 减边框 + 子铺进内容区") {
+    Panel p("p");
+    p.set_bounds(Rect{0, 0, 10, 10});
+    p.set_border_style(BorderStyle::Single);
+    CHECK(p.content_rect() == Rect{1, 1, 8, 8});
+    p.set_border_style(BorderStyle::Double);
+    CHECK(p.content_rect() == Rect{2, 2, 6, 6});
+    p.set_border_style(BorderStyle::Single);
+
+    VBox inner("inner");
+    p.add(inner);
+    p.layout();
+    CHECK(inner.bounds() == Rect{1, 1, 8, 8});
+}
+
+TEST_CASE("widget/container/scroll: offset 夹取 + 子按 offset 平移") {
+    ScrollArea s("s");
+    s.set_bounds(Rect{0, 0, 10, 10});
+    s.set_content_size(30, 30);
+    s.set_offset(100, 100);  // 超出 → 夹到 (20,20)
+    CHECK(s.offset().first == 20.0);
+    CHECK(s.offset().second == 20.0);
+    s.set_offset(-5, -5);  // 负 → 夹到 (0,0)
+    CHECK(s.offset().first == 0.0);
+    CHECK(s.offset().second == 0.0);
+
+    // 内容小于视口时不滚动
+    s.set_content_size(5, 5);
+    s.set_offset(2, 2);
+    CHECK(s.offset().first == 0.0);
+    CHECK(s.offset().second == 0.0);
+
+    s.set_content_size(30, 30);
+    Widget child("child");
+    child.set_bounds(Rect{5, 5, 2, 2});
+    s.add(child);
+    s.set_offset(3, 4);
+    s.layout();
+    CHECK(child.bounds() == Rect{2, 1, 2, 2});  // 坐标减 offset
+}
+
+TEST_CASE("widget/container: relayout 递归拍平整树") {
+    Panel p("p");
+    p.set_bounds(Rect{0, 0, 20, 20});
+    VBox inner("inner");
+    inner.set_padding(0);
+    inner.set_spacing(0);
+    inner.set_alignment(Alignment::Stretch);
+    Widget a("a");
+    a.set_bounds(Rect{0, 0, 0, 5});
+    inner.add(a);
+    p.add(inner);
+
+    p.relayout();  // Panel::layout 把 inner 铺进内容区，再递归 inner.layout
+    CHECK(inner.bounds() == Rect{1, 1, 18, 18});
+    CHECK(a.bounds() == Rect{1, 1, 18, 5});
+}
+
+// ---------------------------------------------------------------------------
+// 主题聚合 / 样式
+// ---------------------------------------------------------------------------
+
+TEST_CASE("widget/theme_agg: theme_by_name 取表，未知名回落 dark") {
+    CHECK(theme_by_name("dark").name == "dark");
+    CHECK(theme_by_name("light").palette == kLightTheme);
+    CHECK(theme_by_name("mono").palette == kMonoTheme);
+    CHECK(theme_by_name("nope").name == "dark");
+}
+
+TEST_CASE("widget/styles: 五态构造 + 按状态取样式") {
+    const WidgetStyle s = button_style(kDarkTheme);
+    CHECK(style_for(s, WidgetState::Normal).bg() == Color::rgb(kDarkTheme.background));
+    CHECK(style_for(s, WidgetState::Active).bg() == Color::rgb(kDarkTheme.accent));
+    CHECK(style_for(s, WidgetState::Disabled).fg() == Color::rgb(kDarkTheme.text_dim));
+    CHECK(style_for(s, WidgetState::Hover).bg() == Color::rgb(kDarkTheme.highlight_bg));
+}
+
+TEST_CASE("widget/style_sheet: 类查表、覆盖与回落") {
+    StyleSheet ss;
+    ss.add_class("primary", button_style(kDarkTheme));
+    REQUIRE(ss.find("primary") != nullptr);
+    CHECK(ss.style_of("missing", label_style(kLightTheme)).normal.fg() ==
+          Color::rgb(kLightTheme.foreground));
+    CHECK_FALSE(ss.empty());
+
+    ss.add_class("primary", label_style(kLightTheme));  // 覆盖
+    CHECK(ss.style_of("primary").normal.fg() == Color::rgb(kLightTheme.foreground));
 }
