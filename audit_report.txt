@@ -1,0 +1,55 @@
+########## A. 目录级文件数对比（结构.md ###### dir/(N) 标记）##########
+  cartesian      规划 23 实际 23  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\cartesian
+  charts         规划 10 实际  0  缺10   (目录未找到)
+  contrib        规划  5 实际  0  缺5   (目录未找到)
+  design         规划 18 实际  0  缺18   (目录未找到)
+  diagrams       规划 21 实际 21  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\graph\diagrams
+  financial      规划  7 实际  7  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\financial
+  flow           规划  2 实际  2  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\flow
+  geo            规划  4 实际  4  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\geo
+  graph          规划  8 实际  9  多1   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\graph
+  guide          规划 18 实际  0  缺18   (目录未找到)
+  hierarchical   规划  6 实际  7  多1   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\hierarchical
+  indicator      规划  5 实际  5  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\indicator
+  integration    规划 10 实际  0  缺10   (目录未找到)
+  layout         规划 10 实际  9  缺1   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\graph\layout
+  polar          规划  8 实际  8  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\polar
+  reference      规划 10 实际  0  缺10   (目录未找到)
+  route          规划  7 实际  6  缺1   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\graph\route
+  shape          规划  8 实际  1  缺7   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\graph\shape
+  statistical    规划 11 实际 11  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\statistical
+  text           规划  4 实际  4  OK   c:/Users/琳琳/Desktop/刘梓祺/作品/termchart\include\termchart\chart\text
+
+########## B. 库头文件缺失（结构.md 规划但 include/termchart 无同名，已排除 examples/tests/bench/fuzz 等）##########
+bar.hpp
+constraint.hpp
+cylinder.hpp
+diamond.hpp
+ellipse.hpp
+flex.hpp
+gui.hpp
+hexagon.hpp
+icon.hpp
+invalidate.hpp
+line.hpp
+mount.hpp
+orthogonal.hpp
+png_native.hpp
+quick_bar.hpp
+quick_line.hpp
+quick_spark.hpp
+quick_table.hpp
+reconcile.hpp
+scatter.hpp
+stadium.hpp
+straight.hpp
+style_map.hpp
+tk_canvas.hpp
+tk_event_map.hpp
+tk_window.hpp
+
+########## C. GUI 平行栈（include/termchart_gui）##########
+  目录存在: True  -> 已开工
+
+########## D. 极短库头（<15 行，可能是虚表锚点/聚合，需人工确认非真空壳）##########
+(无)

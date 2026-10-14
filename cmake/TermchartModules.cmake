@@ -40,6 +40,7 @@ set(TERMCHART_MODULE_LAYERS
     "plugin=19"
     "app=20"
     "api=21"
+    "gui=22"
 )
 
 # 收窄规则：把模块级允许收窄为文件级白名单。
@@ -54,6 +55,9 @@ set(TERMCHART_FORBIDDEN_EDGES
     "backend>chart"       # backend 走 Document，不碰 chart 类型（层号 16 ≥ 12 管不住）
     "chart>render"        # chart 不碰渲染管线，保住 to_document()（层号已覆盖，显式记录）
     "render>interaction"  # 故意反向：interaction 要能 include render（层号已覆盖，显式记录）
+    "gui>canvas"          # GUI 平行栈不得碰终端呈现：字符格/CellBuffer 是终端专属（gui_stack.md）
+    "gui>term"            # 同上：SGR/tty 是终端专属
+    "gui>app"             # GUI 的事件循环自己写（native_loop），不借终端 loop
 )
 
 # 设计意图（由上面两个集合机器执行，本段仅供人读）

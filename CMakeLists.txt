@@ -68,6 +68,15 @@ if(TERMCHART_HAVE_UTF8PROC)
     target_compile_definitions(termchart PRIVATE TERMCHART_HAVE_UTF8PROC=1)
 endif()
 
+# ── GUI 平行栈库（header-only，链接 termchart；复用 scene/color/image）──
+# 平行栈（widget_tree / native_loop / layout / backend_tk）与终端栈共享到
+# scene(L4) 为止，见 docs/design/gui_stack.md。渲染核心先期落地在 termchart::gui。
+add_library(termchart_gui INTERFACE)
+add_library(termchart::termchart_gui ALIAS termchart_gui)
+target_include_directories(termchart_gui INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(termchart_gui INTERFACE termchart::termchart)
+
 # ── 测试与示例 ────────────────────────────────────────────────────────────
 if(TERMCHART_BUILD_TESTS)
     enable_testing()

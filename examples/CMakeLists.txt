@@ -55,6 +55,8 @@ foreach(example
         52_chord
         53_er_diagram
         54_dag
+        55_gui_scene_png
+        56_sugiyama
         34_export_svg
         37_export_latex
         35_export_html
@@ -67,6 +69,14 @@ foreach(example
     set_target_properties(${example} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 endforeach()
+
+# 57 演示平行栈 termchart_gui：链接 termchart_gui（其再链接 termchart），
+# 走 HeadlessBackend + Mount 整帧绘制 → 快照 → encode_png 导出。
+add_executable(57_gui_app 57_gui_app.cpp)
+target_link_libraries(57_gui_app PRIVATE termchart_gui)
+termchart_set_warnings(57_gui_app)
+set_target_properties(57_gui_app PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 
 # 42 只 include 单头产物（single_include/），证明其自包含——正常 include 路径之外
 # 额外挂 single_include/；注意它仍链接 termchart 库（单头管声明与内联，实现走链接）。
@@ -93,6 +103,7 @@ if(TERMCHART_BUILD_TESTS)
                     39_headless_render 40_immediate_mode 41_reactive_dashboard
                     43_contour 44_violin 45_ridgeline 46_parallel 47_gantt 48_forest
                     49_ecdf 50_qq 51_hexbin 52_chord 53_er_diagram 54_dag
+                    55_gui_scene_png 56_sugiyama 57_gui_app
                     34_export_svg 35_export_html 36_export_json 37_export_latex 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})

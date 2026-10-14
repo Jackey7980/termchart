@@ -40,6 +40,11 @@ add_executable(termchart_tests
     unit/scene/test_scene_bounds.cpp
     unit/scene/test_stateful_visitor.cpp
 
+    # ── gui ──（平行栈渲染核心）
+    unit/gui/test_gui_font.cpp
+    unit/gui/test_gui_scene_renderer.cpp
+    unit/gui/test_gui_stack.cpp
+
     # ── canvas ──
     unit/canvas/test_canvas.cpp
     unit/canvas/test_canvas_geometry.cpp
@@ -183,7 +188,7 @@ add_executable(termchart_tests
     integration/replace_raster_custom.cpp
 )
 
-target_link_libraries(termchart_tests PRIVATE termchart)
+target_link_libraries(termchart_tests PRIVATE termchart termchart_gui)
 
 # 测试要覆盖 Trace 级日志：编译期开关默认只到 Info（见 util/logging.hpp）。
 # TERMCHART_GOLDEN_DEFAULT_DIR：快照目录的编译期默认值，让用例与 cwd 无关。

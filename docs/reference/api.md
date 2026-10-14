@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **312 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **314 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -34,6 +34,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 4 |
+| gui | L22 | 2 |
 
 ## （顶层头）
 
@@ -4247,4 +4248,51 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > CellBuffer → Renderer → stdout 链路。
 
 - `TERMCHART_API void init_core() noexcept`
+
+## gui（L22）
+
+### `gui/font.hpp`
+
+> font.hpp —— GUI 位图字体的唯一文本出口
+>
+> 为什么自带点阵字体、而不是接系统字体（TTF / fontconfig / DirectWrite）？
+> 1. 零外部依赖是本仓库的硬约束：接系统字体意味着每个平台一套枚举、加载与
+> 回退代码，还要为"字体缺失"设计错误路径——与全库"零强制依赖、缺失只
+> 降级不失败"的约定直接冲突。
+> 2. 终端图表的文本是**等宽语义**：列数由 util 的显示宽度决定（CJK 占 2 列），
+> 每格 advance 恒等于 cell_w。点阵字形天然等宽步进，量宽是纯乘法，不需要
+> shaping / hinting，也不存在字距把布局挤歪的问题。
+> 3. Scene 不建模排版（没有字体、字形、行盒的概念），TextOp 只带一段 UTF-8
+> 与一个锚点；把排版塞进 Scene 属于层次污染。这里把"一格一字符"渲染成
+> 像素点阵，是与该模型自洽的最简文本出口。
+>
+> 字形是 5×7 列位点阵（数据与位序约定见 font.cpp 的 kFont5x7），渲染时映射进
+> cell_w×cell_h 的整数格：字形画在前 5/6 格宽、前 7/8 格高（末列/末行留作
+> 字距），保证 advance == cell_w 整数对齐。缺字码点画"虚线占位框"而不是
+> 留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
+
+- `struct TextMetrics`
+
+### `gui/scene_renderer.hpp`
+
+> scene_renderer.hpp —— Scene → Bitmap（GUI 平行栈的第一块落地）
+>
+> 定位（docs/design/gui_stack.md）：GUI 与终端是平行栈，共享到 `scene`（L4）
+> 为止。本文件是 GUI 侧的 `render/scene_renderer`——消费与终端/SVG **同一份**
+> Scene 指令集、**同一份** StatefulVisitor 时序；区别只在"往哪画"：
+> 终端往字符格画，这里往 image::Bitmap 画。
+>
+> 渲染质量决策（为什么这样画）：
+> * 几何（线/弧/矩形）走 **S×S 超采样 + 盒式降采样**得到抗锯齿——实现小、
+> 质量对得起"生产级"，且不需要解析覆盖率这类容易写错的数学；
+> * 文本**不参与超采样**：gui/font 是位图点阵字体，超采样只会把它糊掉，
+> 所以文本在下采样后按最终分辨率直绘，且**永远在几何之上**
+> （图表标签/图例压在网格线上是生产惯例）；
+> * 线宽语义与 SVG 同构：StrokeOp.width 是 Scene 单位，随 autofit 缩放。
+>
+> 不做的事（边界）：不解析 ImageOp 的像素（Scene 不持有位图，画占位棋盘格）；
+> 不做渐变/裁剪/图层（Scene 刻意不是完备 IR，见 scene/command.hpp）。
+
+- `struct RenderOptions`
+- `class SceneRenderer final : private scene::StatefulVisitor`
 

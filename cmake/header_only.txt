@@ -23,6 +23,9 @@ util/base64
 scene/command.hpp
 scale/linear
 scale/log
+scale/time
+scale/category
+scale/band
 image/field
 image/bitmap
 image/convert
@@ -41,3 +44,7 @@ graph/route/junction
 widget/theme_dark
 widget/theme_light
 widget/theme_mono
+widget/border
+widget/styles
+widget/style_sheet
+widget/theme
