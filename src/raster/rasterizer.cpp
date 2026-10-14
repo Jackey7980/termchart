@@ -5,6 +5,7 @@
 #include "termchart/raster/braille.hpp"
 #include "termchart/raster/halfblock.hpp"
 #include "termchart/raster/quadrant.hpp"
+#include "termchart/raster/sextant.hpp"
 
 namespace termchart::raster {
 
@@ -23,6 +24,8 @@ CellBuffer rasterize(const image::FloatField& field, RasterKind kind,
             return AsciiRasterizer{}.rasterize(field, opts);
         case RasterKind::Block:
             return BlockRasterizer{}.rasterize(field, opts);
+        case RasterKind::Sextant:
+            return SextantRasterizer{}.rasterize(field, opts);
     }
     return CellBuffer{};
 }
@@ -39,6 +42,8 @@ const char* raster_name(RasterKind kind) noexcept {
             return "ascii";
         case RasterKind::Block:
             return "block";
+        case RasterKind::Sextant:
+            return "sextant";
     }
     return "unknown";
 }

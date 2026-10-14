@@ -9,6 +9,7 @@
 #include "termchart/raster/braille.hpp"
 #include "termchart/raster/halfblock.hpp"
 #include "termchart/raster/quadrant.hpp"
+#include "termchart/raster/sextant.hpp"
 
 namespace termchart::raster {
 
@@ -26,7 +27,7 @@ bool RasterRegistry::supports_name(std::string_view name) const {
         return true;
     }
     return name == "braille" || name == "halfblock" || name == "quadrant" ||
-           name == "ascii" || name == "block";
+           name == "ascii" || name == "block" || name == "sextant";
 }
 
 std::unique_ptr<Rasterizer> RasterRegistry::create(RasterKind kind) const {
@@ -41,6 +42,8 @@ std::unique_ptr<Rasterizer> RasterRegistry::create(RasterKind kind) const {
             return std::make_unique<AsciiRasterizer>();
         case RasterKind::Block:
             return std::make_unique<BlockRasterizer>();
+        case RasterKind::Sextant:
+            return std::make_unique<SextantRasterizer>();
     }
     return nullptr;
 }
@@ -65,6 +68,9 @@ std::unique_ptr<Rasterizer> RasterRegistry::create(std::string_view name) const 
     if (name == "block") {
         return create(RasterKind::Block);
     }
+    if (name == "sextant") {
+        return create(RasterKind::Sextant);
+    }
     return nullptr;
 }
 
@@ -75,6 +81,7 @@ bool RasterRegistry::supports(RasterKind kind) const noexcept {
         case RasterKind::Quadrant:
         case RasterKind::Ascii:
         case RasterKind::Block:
+        case RasterKind::Sextant:
             return true;
     }
     return false;

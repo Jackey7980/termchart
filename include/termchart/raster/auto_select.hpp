@@ -17,6 +17,7 @@ struct RasterCaps {
     bool quadrant = false;
     bool block = false;
     bool ascii = false;
+    bool sextant = false;  // 六分仪字符（Unicode 1FB00），默认关闭，调用方按需开启
     bool sixel = false;  // 预留：真彩色图像协议，光栅器层不管
 };
 

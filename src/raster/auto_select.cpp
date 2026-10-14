@@ -16,6 +16,8 @@ bool supported(const RasterCaps& caps, RasterKind kind) noexcept {
             return caps.block;
         case RasterKind::Ascii:
             return caps.ascii;
+        case RasterKind::Sextant:
+            return caps.sextant;
     }
     return false;
 }
@@ -23,6 +25,7 @@ bool supported(const RasterCaps& caps, RasterKind kind) noexcept {
 // 保真度降序：分辨率从高到低。
 constexpr RasterKind kFallbackOrder[] = {
     RasterKind::Braille,
+    RasterKind::Sextant,
     RasterKind::Quadrant,
     RasterKind::HalfBlock,
     RasterKind::Block,

@@ -27,6 +27,7 @@ enum class RasterKind {
     Quadrant,   // 2×2，单色
     Ascii,      // 1×1，密度字符，最朴素
     Block,      // 1×1，八级竖条，单色
+    Sextant,    // 2×3，六分仪字符（Unicode 1FB00 区）
 };
 
 struct RasterOptions {
