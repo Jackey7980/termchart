@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 
+#include "termchart/gui/font.hpp"
 #include "termchart/image/bitmap.hpp"
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"
@@ -68,23 +69,15 @@ public:
     }
 
     void draw_text(double x, double y, std::string_view text, Rgb color) override {
-        // 无头占位：每个字符画一个像素点（真实后端用 termchart::gui 点阵字体）。
-        int px = floor_to_int(x);
-        const int py = floor_to_int(y);
-        for (char ch : text) {
-            (void)ch;
-            if (px >= 0 && py >= 0 && bmp_.contains(static_cast<std::uint32_t>(px),
-                                                    static_cast<std::uint32_t>(py))) {
-                bmp_.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 0,
-                         color.r);
-                bmp_.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 1,
-                         color.g);
-                bmp_.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 2,
-                         color.b);
-            }
-            px += 6;
-        }
+        // 复用已落地的 GUI 位图字体（5×7 点阵，advance=cell_w=6，格高=8）：
+        // 平行栈不重复造字体，直接调 termchart::gui 的文本出口。
+        (void)termchart::gui::draw_text(bmp_, text, Point{x, y}, color, kCellW, kCellH);
     }
+
+    // 文本格尺寸：与 termchart::gui 点阵字体的 advance/格高约定一致（5×7 字形
+    // 画在前 5/6 宽、7/8 高，末列/末行留作字距），供控件排版居中/量宽。
+    static constexpr double kCellW = 6.0;
+    static constexpr double kCellH = 8.0;
 
     [[nodiscard]] Bitmap snapshot() const override { return bmp_; }
 

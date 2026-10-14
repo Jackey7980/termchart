@@ -6,9 +6,17 @@
 // 那些分别在 render/sgr.hpp 与 term/ 里。
 #include "termchart/api/quick.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
+#include <vector>
 
+#include "termchart/canvas/canvas.hpp"
+#include "termchart/chart/cartesian/bar_chart.hpp"
+#include "termchart/chart/cartesian/line_chart.hpp"
+#include "termchart/chart/cartesian/scatter_chart.hpp"
+#include "termchart/chart/series.hpp"
 #include "termchart/core/buffer.hpp"
 #include "termchart/core/cell.hpp"
 #include "termchart/render/renderer.hpp"
@@ -128,6 +136,101 @@ Status hello(const Opts& opts) noexcept {
     hint.set_fg(Color::rgb(143, 165, 190));
     const Status second = print_line("v0.1 — 终端上色闭环已打通", hint, opts);
     return second != ErrorCode::Ok ? second : flush_stdout();
+}
+
+namespace {
+
+// (x[i], y[i]) → Series 数据点；长度取两者较小者。
+std::vector<Point> to_points(const std::vector<double>& x, const std::vector<double>& y) {
+    const std::size_t n = std::min(x.size(), y.size());
+    std::vector<Point> pts;
+    pts.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        pts.push_back(Point{x[i], y[i]});
+    }
+    return pts;
+}
+
+// 一行出图的公共编排：Chart → Canvas → Renderer → 字节流（不写 stdout）。
+// 只做接线：不含 SGR、不含平台判断（各自在 render/sgr 与 term/）。
+Result<std::string> render_chart_bytes(std::unique_ptr<chart::Chart> chart,
+                                       const PlotOpts& opts) noexcept {
+    init_core();
+    if (opts.width == 0 || opts.height == 0) {
+        return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+    }
+    if (!opts.title.empty()) {
+        chart->set_title(opts.title);
+    }
+    canvas::Canvas canvas(opts.width, opts.height);
+    chart->draw({canvas});
+    render::Renderer renderer(opts.depth);
+    return renderer.render_full(canvas.to_buffer());
+}
+
+Status print_rendered(const Result<std::string>& rendered) noexcept {
+    if (!rendered.has_value()) {
+        return rendered.error();
+    }
+    return write_stdout(*rendered);
+}
+
+}  // namespace
+
+Result<std::string> render_plot(const std::vector<double>& x, const std::vector<double>& y,
+                                const PlotOpts& opts) noexcept {
+    auto chart = std::make_unique<chart::LineChart>();
+    chart->set_show_legend(opts.show_legend);
+    chart::Series s;
+    s.name = "y";
+    s.color = chart::default_color(chart::DefaultColor::Neutral);
+    s.points = to_points(x, y);
+    chart->add_series(std::move(s));
+    return render_chart_bytes(std::move(chart), opts);
+}
+
+Status plot(const std::vector<double>& x, const std::vector<double>& y,
+            const PlotOpts& opts) noexcept {
+    return print_rendered(render_plot(x, y, opts));
+}
+
+Result<std::string> render_scatter(const std::vector<double>& x, const std::vector<double>& y,
+                                   const PlotOpts& opts) noexcept {
+    auto chart = std::make_unique<chart::ScatterChart>();
+    chart->set_show_legend(opts.show_legend);
+    chart::Series s;
+    s.name = "y";
+    s.color = chart::default_color(chart::DefaultColor::Accent);
+    s.points = to_points(x, y);
+    chart->add_series(std::move(s));
+    return render_chart_bytes(std::move(chart), opts);
+}
+
+Status scatter(const std::vector<double>& x, const std::vector<double>& y,
+               const PlotOpts& opts) noexcept {
+    return print_rendered(render_scatter(x, y, opts));
+}
+
+Result<std::string> render_bar(const std::vector<double>& values,
+                               const std::vector<std::string>& labels,
+                               const PlotOpts& opts) noexcept {
+    auto chart = std::make_unique<chart::BarChart>();
+    chart->set_show_legend(opts.show_legend);
+    std::vector<std::string> names = labels;
+    if (names.size() < values.size()) {  // 缺省按序号补标签
+        names.reserve(values.size());
+        for (std::size_t i = names.size(); i < values.size(); ++i) {
+            names.push_back(std::to_string(i));
+        }
+    }
+    chart->set_values(values, names, chart::default_color(chart::DefaultColor::Accent),
+                      "series");
+    return render_chart_bytes(std::move(chart), opts);
+}
+
+Status bar(const std::vector<double>& values, const std::vector<std::string>& labels,
+           const PlotOpts& opts) noexcept {
+    return print_rendered(render_bar(values, labels, opts));
 }
 
 }  // namespace termchart::api

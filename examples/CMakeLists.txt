@@ -63,7 +63,8 @@ foreach(example
         35_export_html
         36_export_json
         38_image_sixel
-        40_advanced_master)
+        40_advanced_master
+        59_quick_plot)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE termchart)
     termchart_set_warnings(${example})
@@ -77,6 +78,13 @@ add_executable(57_gui_app 57_gui_app.cpp)
 target_link_libraries(57_gui_app PRIVATE termchart_gui)
 termchart_set_warnings(57_gui_app)
 set_target_properties(57_gui_app PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+
+# 58 演示 TuiBackend：GUI Bitmap → 上半块真彩刷终端（零依赖、真可见）。
+add_executable(58_gui_terminal 58_gui_terminal.cpp)
+target_link_libraries(58_gui_terminal PRIVATE termchart_gui)
+termchart_set_warnings(58_gui_terminal)
+set_target_properties(58_gui_terminal PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 
 # 42 只 include 单头产物（single_include/），证明其自包含——正常 include 路径之外
@@ -104,7 +112,8 @@ if(TERMCHART_BUILD_TESTS)
                     39_headless_render 40_immediate_mode 41_reactive_dashboard
                     43_contour 44_violin 45_ridgeline 46_parallel 47_gantt 48_forest
                     49_ecdf 50_qq 51_hexbin 52_chord 53_er_diagram 54_dag
-                    55_gui_scene_png 56_sugiyama 57_gui_app 58_gui_hover
+                    55_gui_scene_png 56_sugiyama 57_gui_app 58_gui_terminal
+                    59_quick_plot 58_gui_hover
                     34_export_svg 35_export_html 36_export_json 37_export_latex 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})

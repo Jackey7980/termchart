@@ -9,11 +9,14 @@
 #ifndef TERMCHART_API_QUICK_HPP
 #define TERMCHART_API_QUICK_HPP
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "termchart/api/opts.hpp"
 #include "termchart/api/print.hpp"
+#include "termchart/core/color_depth.hpp"
 #include "termchart/core/expected.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/export.hpp"
@@ -34,6 +37,42 @@ TERMCHART_API Status print_line(std::string_view text, const Style& style,
 
 // 零配置演示：一行调用即看到彩色输出（examples/32_quick_one_liner.cpp）。
 TERMCHART_API Status hello(const Opts& opts = {}) noexcept;
+
+// ── 一行出图（matplotlib 式零配置）────────────────────────────────────────────
+//
+// 目标：新手 `api::plot(x, y)` 一行即见图，**无需注册 backend、无需选字体、无需懂
+// Scene/Chart/Backend 分层**。内部固定走 CellBuffer → Canvas → chart → Renderer →
+// stdout（ANSI），把 backend 选择/颜色降级全藏在壳里。headless / 测试用 render_*。
+
+struct PlotOpts {
+    std::uint32_t width = 80;
+    std::uint32_t height = 24;
+    std::string title;
+    ColorDepth depth = ColorDepth::TrueColor;
+    bool show_legend = false;  // 单系列默认不画图例（新手向）
+};
+
+// 折线图：(x[i], y[i]) 逐点连线 + 数据点标记。
+TERMCHART_API Result<std::string> render_plot(const std::vector<double>& x,
+                                              const std::vector<double>& y,
+                                              const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status plot(const std::vector<double>& x, const std::vector<double>& y,
+                          const PlotOpts& opts = {}) noexcept;
+
+// 散点图：不连线，仅标记每个点。
+TERMCHART_API Result<std::string> render_scatter(const std::vector<double>& x,
+                                                 const std::vector<double>& y,
+                                                 const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status scatter(const std::vector<double>& x, const std::vector<double>& y,
+                             const PlotOpts& opts = {}) noexcept;
+
+// 柱状图：values[i] 配 labels[i]（labels 缺省按序号）。
+TERMCHART_API Result<std::string> render_bar(const std::vector<double>& values,
+                                             const std::vector<std::string>& labels,
+                                             const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status bar(const std::vector<double>& values,
+                         const std::vector<std::string>& labels,
+                         const PlotOpts& opts = {}) noexcept;
 
 }  // namespace termchart::api
 

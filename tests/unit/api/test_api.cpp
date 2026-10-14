@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "termchart/api/chart.hpp"
 #include "termchart/api/opts.hpp"
@@ -171,4 +172,48 @@ TEST_CASE("api: escape_for_debug 让不可打印字节可读且不回显控制�
     CHECK(escaped.find("<ESC>") != std::string::npos);
     CHECK(escaped.find("<LF>") != std::string::npos);
     CHECK(escaped.find("31m") != std::string::npos);
+}
+
+TEST_CASE("api: quick::render_plot 一行折线（零配置 + 标题 + 尺寸）") {
+    const std::vector<double> x{0, 1, 2, 3, 4};
+    const std::vector<double> y{0, 1, 4, 9, 16};
+
+    const Result<std::string> zero = render_plot(x, y);  // 默认 80×24
+    REQUIRE(zero.has_value());
+    CHECK_FALSE(zero->empty());
+    CHECK(zero->find("\x1b[") != std::string::npos);  // 轴/网格有颜色
+
+    PlotOpts po;
+    po.width = 60;
+    po.height = 16;
+    po.title = "parabola";
+    const Result<std::string> t = render_plot(x, y, po);
+    REQUIRE(t.has_value());
+    CHECK(t->find("parabola") != std::string::npos);  // 标题渲染进画面
+}
+
+TEST_CASE("api: quick::render_scatter / render_bar 一行出图") {
+    const std::vector<double> x{0, 1, 2};
+    const std::vector<double> y{2, 1, 3};
+    const Result<std::string> sc = render_scatter(x, y);
+    REQUIRE(sc.has_value());
+    CHECK_FALSE(sc->empty());
+    CHECK(sc->find("\x1b[") != std::string::npos);
+
+    const std::vector<double> vals{3, 5, 2, 8};
+    const std::vector<std::string> labels{"a", "b", "c", "d"};
+    const Result<std::string> br = render_bar(vals, labels);
+    REQUIRE(br.has_value());
+    CHECK_FALSE(br->empty());
+    CHECK(br->find("\x1b[") != std::string::npos);
+}
+
+TEST_CASE("api: quick::render_plot 尺寸 0 是参数错误，不钳位") {
+    const std::vector<double> x{0, 1};
+    const std::vector<double> y{0, 1};
+    PlotOpts po;
+    po.width = 0;
+    const Result<std::string> bad = render_plot(x, y, po);
+    REQUIRE_FALSE(bad.has_value());
+    CHECK(bad.error() == ErrorCode::InvalidArgument);
 }
