@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 314 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 333 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -4379,6 +4379,159 @@ public:
 
 }  // namespace termchart::scale
 
+// ===== include/termchart/scale/band.hpp =====
+// band.hpp —— 带状比例尺（每个类别占一条等宽带，forward 返回带中心）
+//
+// 与 CategoryScale 把类别压成"网格点"不同，BandScale 把 [range_min, range_max]
+// 均分成 n 条等宽带，第 i 个类别落在第 i 条带的中心。柱状/条形图让柱体落在带
+// 内、两侧留 padding 时观感最自然。band_width() 暴露单带宽度供绘制。
+
+
+
+namespace termchart::scale {
+
+class BandScale final : public Scale {
+public:
+    BandScale() = default;
+    BandScale(std::size_t categories, double range_min = 0.0, double range_max = 1.0,
+              double padding = 0.1) noexcept {
+        set_categories(categories);
+        set_range(range_min, range_max);
+        set_padding(padding);
+    }
+
+    void set_categories(std::size_t n) noexcept { n_ = n; }
+    void set_range(double rmin, double rmax) noexcept {
+        rmin_ = rmin;
+        rmax_ = rmax;
+    }
+    void set_padding(double p) noexcept { padding_ = util::clamp(p, 0.0, 0.5); }
+    void set_clamp(bool on) noexcept { clamp_ = on; }
+
+    [[nodiscard]] double forward(double data) const noexcept override {
+        if (n_ == 0) {
+            return rmin_;
+        }
+        const double band = (rmax_ - rmin_) / static_cast<double>(n_);
+        const double inner = band * (1.0 - 2.0 * padding_);
+        const double center = rmin_ + (data + 0.5) * band;
+        if (clamp_) {
+            const double half = inner / 2.0;
+            return util::clamp(center, rmin_ + half, rmax_ - half);
+        }
+        return center;
+    }
+
+    [[nodiscard]] double inverse(double pixel) const noexcept override {
+        if (n_ == 0) {
+            return 0.0;
+        }
+        const double band = (rmax_ - rmin_) / static_cast<double>(n_);
+        double t = (pixel - rmin_) / band - 0.5;
+        if (clamp_) {
+            t = util::clamp(t, 0.0, static_cast<double>(n_ > 0 ? n_ - 1 : 0));
+        }
+        return t;
+    }
+
+    [[nodiscard]] bool valid() const noexcept override {
+        return util::is_finite(rmin_) && util::is_finite(rmax_) && n_ >= 1 &&
+               rmax_ > rmin_;
+    }
+
+    [[nodiscard]] double domain_min() const noexcept override { return 0.0; }
+    [[nodiscard]] double domain_max() const noexcept override {
+        return static_cast<double>(n_ > 0 ? n_ - 1 : 0);
+    }
+    [[nodiscard]] double range_min() const noexcept override { return rmin_; }
+    [[nodiscard]] double range_max() const noexcept override { return rmax_; }
+
+    [[nodiscard]] double band_width() const noexcept {
+        return n_ > 0 ? (rmax_ - rmin_) / static_cast<double>(n_) : 0.0;
+    }
+    [[nodiscard]] std::size_t categories() const noexcept { return n_; }
+    [[nodiscard]] bool clamped() const noexcept { return clamp_; }
+
+private:
+    std::size_t n_ = 0;
+    double rmin_ = 0.0;
+    double rmax_ = 1.0;
+    double padding_ = 0.1;
+    bool clamp_ = true;
+};
+
+}  // namespace termchart::scale
+
+// ===== include/termchart/scale/category.hpp =====
+// category.hpp —— 类别比例尺（离散类别等距排布）
+//
+// 把 0..n-1 的类别索引线性映射到 [range_min, range_max]：第 i 个类别落在
+// 等距网格点上。柱形/条形/分类型坐标轴常用。forward(类别索引) 取对应网格点，
+// inverse(像素) 反算最近类别索引（用于命中判定）。
+
+
+
+namespace termchart::scale {
+
+class CategoryScale final : public Scale {
+public:
+    CategoryScale() = default;
+    explicit CategoryScale(std::size_t categories, double range_min = 0.0,
+                          double range_max = 1.0) noexcept {
+        set_categories(categories);
+        set_range(range_min, range_max);
+    }
+
+    void set_categories(std::size_t n) noexcept { n_ = n; }
+    void set_range(double rmin, double rmax) noexcept {
+        rmin_ = rmin;
+        rmax_ = rmax;
+    }
+    void set_clamp(bool on) noexcept { clamp_ = on; }
+
+    [[nodiscard]] double forward(double data) const noexcept override {
+        if (n_ <= 1) {
+            return rmin_;
+        }
+        double t = data / static_cast<double>(n_ - 1);
+        if (clamp_) {
+            t = util::clamp(t, 0.0, 1.0);
+        }
+        return util::lerp(rmin_, rmax_, t);
+    }
+
+    [[nodiscard]] double inverse(double pixel) const noexcept override {
+        const double rspan = rmax_ - rmin_;
+        double t = rspan == 0.0 ? 0.0 : (pixel - rmin_) / rspan;
+        if (clamp_) {
+            t = util::clamp(t, 0.0, 1.0);
+        }
+        return t * static_cast<double>(n_ > 1 ? n_ - 1 : 0);
+    }
+
+    [[nodiscard]] bool valid() const noexcept override {
+        return util::is_finite(rmin_) && util::is_finite(rmax_) && n_ >= 1;
+    }
+
+    [[nodiscard]] double domain_min() const noexcept override { return 0.0; }
+    [[nodiscard]] double domain_max() const noexcept override {
+        return static_cast<double>(n_ > 0 ? n_ - 1 : 0);
+    }
+    [[nodiscard]] double range_min() const noexcept override { return rmin_; }
+    [[nodiscard]] double range_max() const noexcept override { return rmax_; }
+
+    [[nodiscard]] std::size_t categories() const noexcept { return n_; }
+    [[nodiscard]] bool clamped() const noexcept { return clamp_; }
+
+private:
+    std::size_t n_ = 0;
+    double rmin_ = 0.0;
+    double rmax_ = 1.0;
+    bool clamp_ = true;
+};
+
+}  // namespace termchart::scale
+
 // ===== include/termchart/scale/linear.hpp =====
 // linear.hpp —— 线性比例尺（最常用，也是其他比例尺的退化形态）
 //
@@ -4590,6 +4743,77 @@ TERMCHART_API std::vector<double> nice_ticks(double domain_min, double domain_ma
 // 对 Scale 生成刻度：在 range 上均匀取约 target 个点（用 nice_step 定步长），
 // 再 inverse 回数据坐标。要求 scale.valid()。
 TERMCHART_API std::vector<double> ticks_for(const Scale& scale, int target = 5) noexcept;
+
+}  // namespace termchart::scale
+
+// ===== include/termchart/scale/time.hpp =====
+// time.hpp —— 时间比例尺（时间戳数值线性映射，语义化时间轴）
+//
+// 把时间（以数值表示的时间戳，例如 Unix 秒/毫秒；单位由调用方统一）线性映射到
+// 显示域。calendar-aware 的刻度（年/月/日/时）由 ticks 模块按数据范围选取，
+// 本类只负责坐标变换。与 LinearScale 同构，单列一类以明确"这是时间轴"语义，
+// 便于图表层识别并切换到时间刻度策略。
+
+
+namespace termchart::scale {
+
+class TimeScale final : public Scale {
+public:
+    TimeScale() = default;
+    TimeScale(double domain_min, double domain_max, double range_min = 0.0,
+              double range_max = 1.0, bool clamp = true) noexcept {
+        set_domain(domain_min, domain_max);
+        set_range(range_min, range_max);
+        clamp_ = clamp;
+    }
+
+    void set_domain(double dmin, double dmax) noexcept {
+        dmin_ = dmin;
+        dmax_ = dmax;
+    }
+    void set_range(double rmin, double rmax) noexcept {
+        rmin_ = rmin;
+        rmax_ = rmax;
+    }
+    void set_clamp(bool on) noexcept { clamp_ = on; }
+
+    [[nodiscard]] double forward(double data) const noexcept override {
+        const double span = dmax_ - dmin_;
+        double t = span == 0.0 ? 0.0 : (data - dmin_) / span;
+        if (clamp_) {
+            t = util::clamp(t, 0.0, 1.0);
+        }
+        return util::lerp(rmin_, rmax_, t);
+    }
+
+    [[nodiscard]] double inverse(double pixel) const noexcept override {
+        const double rspan = rmax_ - rmin_;
+        double t = rspan == 0.0 ? 0.0 : (pixel - rmin_) / rspan;
+        if (clamp_) {
+            t = util::clamp(t, 0.0, 1.0);
+        }
+        return util::lerp(dmin_, dmax_, t);
+    }
+
+    [[nodiscard]] bool valid() const noexcept override {
+        return util::is_finite(dmin_) && util::is_finite(dmax_) &&
+               util::is_finite(rmin_) && util::is_finite(rmax_) && dmin_ != dmax_;
+    }
+
+    [[nodiscard]] double domain_min() const noexcept override { return dmin_; }
+    [[nodiscard]] double domain_max() const noexcept override { return dmax_; }
+    [[nodiscard]] double range_min() const noexcept override { return rmin_; }
+    [[nodiscard]] double range_max() const noexcept override { return rmax_; }
+
+    [[nodiscard]] bool clamped() const noexcept { return clamp_; }
+
+private:
+    double dmin_ = 0.0;
+    double dmax_ = 1.0;
+    double rmin_ = 0.0;
+    double rmax_ = 1.0;
+    bool clamp_ = true;
+};
 
 }  // namespace termchart::scale
 
@@ -5391,6 +5615,7 @@ enum class RasterKind {
     Quadrant,   // 2×2，单色
     Ascii,      // 1×1，密度字符，最朴素
     Block,      // 1×1，八级竖条，单色
+    Sextant,    // 2×3，六分仪字符（Unicode 1FB00 区）
 };
 
 struct RasterOptions {
@@ -5456,6 +5681,7 @@ struct RasterCaps {
     bool quadrant = false;
     bool block = false;
     bool ascii = false;
+    bool sextant = false;  // 六分仪字符（Unicode 1FB00），默认关闭，调用方按需开启
     bool sixel = false;  // 预留：真彩色图像协议，光栅器层不管
 };
 
@@ -5592,6 +5818,29 @@ public:
 private:
     RasterRegistry() = default;
     std::map<std::string, Creator, std::less<>> custom_;
+};
+
+}  // namespace termchart::raster
+
+// ===== include/termchart/raster/sextant.hpp =====
+// sextant.hpp —— 六分仪字符光栅器（2×3 子像素，Unicode 1FB00 区）
+//
+// 保真度介于象限(2×2=4) 与盲文(2×4=8) 之间，是终端字符图里"中等保真度"的一档。
+// 每个字符格切成 2 列 × 3 行的 6 个 sextant 区域，按填充情况映射到 Unicode
+// "Symbols for Legacy Computing" 的六分仪块（U+1FB00 起，码点 = 0x1FB00 + 6 位掩码；
+// 位序约定：左上 0 / 左中 1 / 左下 2 / 右上 3 / 右中 4 / 右下 5）。
+
+
+namespace termchart::raster {
+
+class SextantRasterizer final : public Rasterizer {
+public:
+    [[nodiscard]] std::uint32_t subpixel_width() const noexcept override { return 2; }
+    [[nodiscard]] std::uint32_t subpixel_height() const noexcept override { return 3; }
+    [[nodiscard]] RasterKind kind() const noexcept override { return RasterKind::Sextant; }
+    [[nodiscard]] const char* name() const noexcept override { return "sextant"; }
+    CellBuffer rasterize(const image::FloatField& field,
+                         const RasterOptions& opts) const override;
 };
 
 }  // namespace termchart::raster
@@ -10919,6 +11168,25 @@ struct RadialOptions {
 
 }  // namespace termchart::graph
 
+// ===== include/termchart/graph/layout/sugiyama.hpp =====
+// sugiyama.hpp —— 四步分层布局（Sugiyama 框架）
+//
+// 在 layout_layered 的"分层 + 坐标分配"之上补上第二步"同层顺序交叉最小化"
+// （median / barycenter 启发式），让复杂 DAG 的同层节点不再按登记顺序简单堆叠
+// 而交叉凌乱。四步：① 最长路径分层（含破环）② 同层交叉最小化 ③ 坐标分配
+// ④ 边路由（由调用方在布局后调用 route，本函数只做几何）。
+
+
+namespace termchart::graph {
+
+// 四步分层布局。iterations 为交叉最小化双向扫描轮数（默认 4，越大越收敛越慢）。
+// 返回所有节点外框的并集。
+[[nodiscard]] TERMCHART_API Rect layout_sugiyama(Graph& graph,
+                                                 const LayoutOptions& opts = {},
+                                                 std::uint32_t iterations = 4);
+
+}  // namespace termchart::graph
+
 // ===== include/termchart/graph/layout/tree_layout.hpp =====
 // tree_layout.hpp —— 根树布局（层级 + 兄弟子树行槽）
 //
@@ -11898,6 +12166,34 @@ namespace termchart::graph {
                                                      WireGrid* grid = nullptr);
 
 }  // namespace termchart::graph
+
+// ===== include/termchart/render/compositor.hpp =====
+// compositor.hpp —— 多图层合成（把若干 CellBuffer 按偏移叠加成最终帧）
+//
+// GUI / 重叠元素 / 多 Pass 渲染都需要"图层"概念：本组件把任意数量的图层
+// （每个是一个 CellBuffer + 左上角偏移）合成到一张目标缓冲。后绘制的图层覆盖
+// 先绘制的；transparent 时，空格单元不覆盖下层（透出底色）。
+
+
+
+namespace termchart::render {
+
+struct Layer {
+    const CellBuffer* buffer = nullptr;  // 非空图层缓冲（不拷贝，零成本）
+    std::int32_t x = 0;                  // 左上角列偏移
+    std::int32_t y = 0;                  // 左上角行偏移
+    bool transparent = true;             // 空格单元是否透出下层
+};
+
+class Compositor {
+public:
+    // 合成到给定的 out（out 尺寸需已足够容纳最远图层；否则用重载版本自动扩展）。
+    TERMCHART_API static void composite(const std::vector<Layer>& layers, CellBuffer& out);
+    // 自动按包围盒分配 out 并返回。
+    [[nodiscard]] TERMCHART_API static CellBuffer composite(const std::vector<Layer>& layers);
+};
+
+}  // namespace termchart::render
 
 // ===== include/termchart/render/damage.hpp =====
 // damage.hpp —— 脏区域跟踪
@@ -14518,6 +14814,11 @@ public:
     // 是否沿用旗标判定。
     [[nodiscard]] virtual bool hit_test(Point p) const noexcept;
 
+    // 整树重排钩子：默认空实现（叶子控件无需重排）。容器覆写为"先排自己、
+    // 再递归子容器"，从而一次 relayout() 拍平整棵控件树。Widget 基类不定义
+    // layout（那是容器的事），所以这里只提供安全的递归落点。
+    virtual void relayout() noexcept {}
+
 private:
     std::string id_;
     Rect bounds_{};
@@ -14525,6 +14826,223 @@ private:
     bool enabled_ = true;
     bool focusable_ = true;
     bool focused_ = false;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/border.hpp =====
+// border.hpp —— 即时模式边框绘制（header-only，无状态）
+//
+// 与 immediate_widget.hpp 同风格：不持有状态，调用方传入 canvas + rect +
+// 主题，每次调用重描完整边框。box-drawing 字符取自 Unicode，配色用
+// ThemePalette.border。矩形不足 2 格宽/高时退化为单边（不崩、不画四角）。
+
+
+namespace termchart::widget {
+
+// 边框线型。None 表示不画（调用方自行决定）。
+enum class BorderStyle {
+    None,
+    Single,   // ┌─┐ │ └┘
+    Double,   // ╔═╗ ║ ╚╝
+    Rounded,  // ╭─╮ │ ╰╯
+};
+
+// 用 box-drawing 字符把 rect 描边到 canvas（即时风格，与 immediate_widget 一致）。
+// rect 宽高需 >= 2 才能画出四角；不足时退化为单边。
+inline void draw_border(canvas::Canvas& c, Rect rect, const ThemePalette& theme,
+                        BorderStyle style = BorderStyle::Single) noexcept {
+    if (style == BorderStyle::None) {
+        return;
+    }
+    const Style s = style_fg(theme.border);
+    const char32_t h = (style == BorderStyle::Double) ? U'═' : U'─';
+    const char32_t v = (style == BorderStyle::Double) ? U'║' : U'│';
+    const char32_t tl = (style == BorderStyle::Double) ? U'╔'
+                      : (style == BorderStyle::Rounded) ? U'╭' : U'┌';
+    const char32_t tr = (style == BorderStyle::Double) ? U'╗'
+                      : (style == BorderStyle::Rounded) ? U'╮' : U'┐';
+    const char32_t bl = (style == BorderStyle::Double) ? U'╚'
+                      : (style == BorderStyle::Rounded) ? U'╰' : U'└';
+    const char32_t br = (style == BorderStyle::Double) ? U'╝'
+                      : (style == BorderStyle::Rounded) ? U'╯' : U'┘';
+
+    const double x0 = rect.x;
+    const double y0 = rect.y;
+    const double x1 = rect.x + rect.w - 1.0;
+    const double y1 = rect.y + rect.h - 1.0;
+
+    // 四角
+    c.put(Point{x0, y0}, tl, s);
+    c.put(Point{x1, y0}, tr, s);
+    c.put(Point{x0, y1}, bl, s);
+    c.put(Point{x1, y1}, br, s);
+
+    // 上/下横线
+    for (double x = x0 + 1.0; x < x1; ++x) {
+        c.put(Point{x, y0}, h, s);
+        c.put(Point{x, y1}, h, s);
+    }
+    // 左/右竖线
+    for (double y = y0 + 1.0; y < y1; ++y) {
+        c.put(Point{x0, y}, v, s);
+        c.put(Point{x1, y}, v, s);
+    }
+}
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/container.hpp =====
+// container.hpp —— 容器基类：控件树中枢（保留模式几何 + 命中测试）
+//
+// 与 widget.hpp 的设计一致：Widget 只管身份/几何/命中测试，绘制走 immediate_widget
+// 的即时函数。Container 在此基础上持有子控件（裸指针，生命周期由调用方管理），
+// 提供递归命中测试与统一的 layout 契约。它是布局控件的公共基类。
+
+
+
+namespace termchart::widget {
+
+// 子控件相对容器主轴的对齐方式（交叉轴同理）。
+enum class Alignment {
+    Start,    // 靠起始边
+    Center,   // 居中
+    End,      // 靠结束边
+    Stretch,  // 拉伸填满交叉轴
+};
+
+// 容器基类。持有子控件并提供递归命中测试与 layout 契约。
+class Container : public Widget {
+public:
+    explicit Container(std::string id);
+    ~Container() override;
+
+    // 加入子控件。引用版本存地址，指针版本直接存；空指针或重复添加被忽略。
+    void add(Widget& child);
+    void add(Widget* child);
+
+    // 移除：成功返回 true；不在树中返回 false（no-op，不报错）。
+    [[nodiscard]] bool remove(Widget& child) noexcept;
+    void clear() noexcept;
+
+    [[nodiscard]] std::span<Widget* const> children() const noexcept { return children_; }
+
+    // 递归命中测试：任一可见子控件命中即命中；否则回退到自身 bounds。
+    [[nodiscard]] bool hit_test(Point p) const noexcept override;
+
+    // layout 契约（纯虚）：依据自身 bounds() 重排子控件几何。基类 Widget 不定义
+    // layout（那是容器的事），所以这里声明一个新的纯虚函数，子类用 override 覆写。
+    virtual void layout() = 0;
+
+    // 整树重排：先排自己，再递归子容器（叶子控件是 Widget::relayout 的空实现）。
+    void relayout() noexcept;
+
+    void set_dirty(bool on = true) noexcept { dirty_ = on; }
+    [[nodiscard]] bool dirty() const noexcept { return dirty_; }
+
+protected:
+    std::vector<Widget*> children_;
+    bool dirty_ = true;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/dock.hpp =====
+// dock.hpp —— 五区停靠布局（top/bottom/left/right/center）
+
+
+
+namespace termchart::widget {
+
+// 停靠区域。处理顺序固定为 Top→Bottom→Left→Right→Center，从而嵌套出正确的
+// 剩余矩形（中心区拿到被四边切剩的部分）。
+enum class DockRegion {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+};
+
+// 停靠布局：边栏按自身尺寸切走对应长条，中心区占据剩余矩形。典型用法是每区一个
+// 子控件（多为布局容器）；同区多个子控件会重叠，由调用方嵌套布局容器避免。
+class Dock : public Container {
+public:
+    explicit Dock(std::string id);
+
+    void add(DockRegion region, Widget& child);
+    void add(DockRegion region, Widget* child);
+
+    [[nodiscard]] std::span<const std::pair<DockRegion, Widget*>> docked() const noexcept {
+        return docked_;
+    }
+
+    void layout() override;
+
+private:
+    std::vector<std::pair<DockRegion, Widget*>> docked_;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/grid_layout.hpp =====
+// grid_layout.hpp —— 网格布局（子控件按行列均分单元格）
+
+
+
+namespace termchart::widget {
+
+// 网格布局：把内容区均分为 columns × rows 的单元格，按加入顺序先行后列填入。
+// 每个子控件在其单元格内按对齐方式定位（Stretch 填满单元格）。
+class GridLayout : public Container {
+public:
+    explicit GridLayout(std::string id);
+
+    void set_columns(std::size_t cols) noexcept { columns_ = cols ? cols : 1; set_dirty(); }
+    [[nodiscard]] std::size_t columns() const noexcept { return columns_; }
+    void set_spacing(double s) noexcept { spacing_ = s; set_dirty(); }
+    [[nodiscard]] double spacing() const noexcept { return spacing_; }
+    void set_padding(double p) noexcept { padding_ = p; set_dirty(); }
+    [[nodiscard]] double padding() const noexcept { return padding_; }
+    void set_alignment(Alignment a) noexcept { align_ = a; set_dirty(); }
+    [[nodiscard]] Alignment alignment() const noexcept { return align_; }
+
+    void layout() override;
+
+private:
+    std::size_t columns_ = 1;
+    double spacing_ = 0.0;
+    double padding_ = 0.0;
+    Alignment align_ = Alignment::Center;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/hbox.hpp =====
+// hbox.hpp —— 水平盒子布局（子控件自左向右排列，主轴 = x）
+
+
+namespace termchart::widget {
+
+// 水平盒子：子控件按加入顺序自左向右排，主轴为 x，交叉轴为 y。
+// 子控件宽度取自其当前 bounds().w；高度按对齐方式决定（Stretch 填满内容高）。
+class HBox : public Container {
+public:
+    explicit HBox(std::string id);
+
+    void set_spacing(double s) noexcept { spacing_ = s; set_dirty(); }
+    [[nodiscard]] double spacing() const noexcept { return spacing_; }
+    void set_padding(double p) noexcept { padding_ = p; set_dirty(); }
+    [[nodiscard]] double padding() const noexcept { return padding_; }
+    void set_alignment(Alignment a) noexcept { align_ = a; set_dirty(); }
+    [[nodiscard]] Alignment alignment() const noexcept { return align_; }
+
+    void layout() override;
+
+private:
+    double spacing_ = 0.0;
+    double padding_ = 0.0;
+    Alignment align_ = Alignment::Stretch;
 };
 
 }  // namespace termchart::widget
@@ -14575,6 +15093,211 @@ struct ControlState {
                                                   std::string_view label, bool checked,
                                                   const ThemePalette& theme,
                                                   const ControlState& state) noexcept;
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/panel.hpp =====
+// panel.hpp —— 带边框的容器（Container + Border）
+//
+// Panel 在 Container 之上加一层边框：content_rect() 给出减去边框厚度后的内容区，
+// 子控件应布局在其中（典型做法是内部再放一个 VBox/HBox）。draw_border() 用
+// 即时风格把边框描到 canvas（与 immediate_widget 一致）。Panel 不做子控件打包，
+// layout() 仅把子控件整体铺进内容区——嵌套布局容器即可获得真实排版。
+
+
+namespace termchart::widget {
+
+class Panel : public Container {
+public:
+    explicit Panel(std::string id);
+
+    void set_border_style(BorderStyle s) noexcept { border_ = s; set_dirty(); }
+    [[nodiscard]] BorderStyle border_style() const noexcept { return border_; }
+
+    // 内容区：bounds 减去边框厚度（None=0，Single=1，Double=2）。
+    [[nodiscard]] Rect content_rect() const noexcept;
+
+    // 即时绘制边框（配合 immediate_widget 的使用方式）。
+    void draw_border(canvas::Canvas& c, const ThemePalette& theme) const noexcept {
+        termchart::widget::draw_border(c, bounds(), theme, border_);
+    }
+
+    // 把子控件整体铺进内容区（不打包）。Container::relayout 会再递归子容器。
+    void layout() override;
+
+private:
+    BorderStyle border_ = BorderStyle::Single;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/scroll.hpp =====
+// scroll.hpp —— 可滚动容器（带视口偏移，裁剪由调用方负责）
+//
+// ScrollArea 持有一个"内容坐标空间"，子控件按各自 bounds 留在内容空间里，
+// layout() 把每个子控件按其坐标减去 offset 摆到视口（= bounds）坐标系。offset
+// 会被夹在 [0, content - viewport] 内（内容小于视口则不滚）。真正的视口裁剪
+// （只显示 bounds 覆盖的格）由调用方负责——例如借 Compositor 按偏移合成，或
+// 在绘制前对 canvas 做范围判断。
+
+
+
+namespace termchart::widget {
+
+class ScrollArea : public Container {
+public:
+    explicit ScrollArea(std::string id);
+
+    void set_content_size(double w, double h) noexcept {
+        content_w_ = w;
+        content_h_ = h;
+        set_dirty();
+    }
+    [[nodiscard]] std::pair<double, double> content_size() const noexcept {
+        return {content_w_, content_h_};
+    }
+
+    void set_offset(double x, double y) noexcept;
+    [[nodiscard]] std::pair<double, double> offset() const noexcept {
+        return {off_x_, off_y_};
+    }
+    void scroll_by(double dx, double dy) noexcept { set_offset(off_x_ + dx, off_y_ + dy); }
+
+    // 视口 = 容器自身 bounds。
+    [[nodiscard]] Rect viewport() const noexcept { return bounds(); }
+
+    void layout() override;
+
+private:
+    double content_w_ = 0.0;
+    double content_h_ = 0.0;
+    double off_x_ = 0.0;
+    double off_y_ = 0.0;
+};
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/styles.hpp =====
+// styles.hpp —— 控件样式值类型 + 基于 ThemePalette 的样式构造（header-only）
+//
+// WidgetStyle 是一组按交互状态分槽的 Style（normal/hover/active/disabled/
+// focused）。它与绘制解耦：即时组件（immediate_widget）或应用层把 WidgetStyle
+// 按当前 ControlState 选一份 Style 后交给 canvas。全部 constexpr/inline，无全局
+// 状态，可按值传递。
+
+
+namespace termchart::widget {
+
+// 交互状态槽位键。与 immediate_widget::ControlState 正交——这里只描述"该状态
+// 长什么样"，不描述"怎么进入该状态"。
+enum class WidgetState {
+    Normal,
+    Hover,
+    Active,
+    Disabled,
+    Focused,
+};
+
+// 一套控件的五态样式。未显式设置的槽位保持默认 Style（沿用终端默认色）。
+struct WidgetStyle {
+    Style normal;
+    Style hover;
+    Style active;
+    Style disabled;
+    Style focused;
+};
+
+// 按钮样式：常态浅字深底，悬停高亮底，按压反白，禁用淡字，聚焦强调字。
+[[nodiscard]] inline WidgetStyle button_style(const ThemePalette& t) noexcept {
+    WidgetStyle s;
+    s.normal   = style_fg_bg(t.foreground, t.background);
+    s.hover    = style_fg_bg(t.foreground, t.highlight_bg);
+    s.active   = style_fg_bg(t.background, t.accent);
+    s.disabled = style_fg_bg(t.text_dim, t.background);
+    s.focused  = style_fg_bg(t.accent, t.background);
+    return s;
+}
+
+// 面板样式：背景填充 + 常态/聚焦两态（边框由 draw_border 单独负责）。
+[[nodiscard]] inline WidgetStyle panel_style(const ThemePalette& t) noexcept {
+    WidgetStyle s;
+    s.normal  = style_fg_bg(t.foreground, t.background);
+    s.focused = style_fg_bg(t.accent, t.background);
+    return s;
+}
+
+// 标签样式：常规前景色，禁用淡色，聚焦强调色。
+[[nodiscard]] inline WidgetStyle label_style(const ThemePalette& t) noexcept {
+    WidgetStyle s;
+    s.normal   = style_fg(t.foreground);
+    s.disabled = style_fg(t.text_dim);
+    s.focused  = style_fg(t.accent);
+    return s;
+}
+
+// 按状态取样式槽；未知状态回落 normal。
+[[nodiscard]] inline const Style& style_for(const WidgetStyle& ws,
+                                            WidgetState st) noexcept {
+    switch (st) {
+        case WidgetState::Hover:
+            return ws.hover;
+        case WidgetState::Active:
+            return ws.active;
+        case WidgetState::Disabled:
+            return ws.disabled;
+        case WidgetState::Focused:
+            return ws.focused;
+        case WidgetState::Normal:
+        default:
+            return ws.normal;
+    }
+}
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/style_sheet.hpp =====
+// style_sheet.hpp —— 类名 → WidgetStyle 映射（header-only，无全局状态）
+//
+// 即时模式下没有"控件持有自己样式"的说法，样式按类名查表取用：调用方给控件
+// 一个 class 名（如 "primary-button"），渲染时从 StyleSheet 取对应 WidgetStyle。
+// 与 CSS 的类选择器同构，但只做精确名匹配（不含继承/层叠）。
+
+
+
+namespace termchart::widget {
+
+class StyleSheet {
+public:
+    // 注册/覆盖一个类样式。
+    void add_class(std::string name, WidgetStyle style) {
+        classes_.insert_or_assign(std::move(name), std::move(style));
+    }
+
+    // 查表；找不到返回 nullptr（调用方据此回落默认样式）。
+    [[nodiscard]] const WidgetStyle* find(std::string_view name) const noexcept {
+        auto it = classes_.find(std::string(name));
+        return it == classes_.end() ? nullptr : &it->second;
+    }
+
+    // 取样式：找不到返回 fallback（默认空样式）。
+    [[nodiscard]] WidgetStyle style_of(std::string_view name,
+                                       const WidgetStyle& fallback = {}) const {
+        auto it = classes_.find(std::string(name));
+        return it == classes_.end() ? fallback : it->second;
+    }
+
+    // 把某类样式整体赋给 into（覆盖）。
+    void merge_into(std::string_view name, WidgetStyle& into) const {
+        if (const WidgetStyle* p = find(name)) {
+            into = *p;
+        }
+    }
+
+    [[nodiscard]] bool empty() const noexcept { return classes_.empty(); }
+
+private:
+    std::unordered_map<std::string, WidgetStyle> classes_;
+};
 
 }  // namespace termchart::widget
 
@@ -14648,6 +15371,66 @@ inline constexpr ThemePalette kMonoTheme{
     .highlight_bg = Rgb{64, 64, 64},
 };
 // clang-format on
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/theme.hpp =====
+// theme.hpp —— 主题聚合 + 按名取用（header-only）
+//
+// Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
+// （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
+// 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
+
+
+
+namespace termchart::widget {
+
+// 主题 = 名字 + 色板。
+struct Theme {
+    std::string name;
+    ThemePalette palette;
+};
+
+// 按名取主题；未知名回落 dark。
+[[nodiscard]] inline Theme theme_by_name(std::string_view name) noexcept {
+    if (name == "light") {
+        return Theme{"light", kLightTheme};
+    }
+    if (name == "mono") {
+        return Theme{"mono", kMonoTheme};
+    }
+    return Theme{"dark", kDarkTheme};
+}
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/vbox.hpp =====
+// vbox.hpp —— 垂直盒子布局（子控件自上而下堆叠，主轴 = y）
+
+
+namespace termchart::widget {
+
+// 垂直盒子：子控件按加入顺序自上而下排，主轴为 y，交叉轴为 x。
+// 子控件的高度取自其当前 bounds().h（调用方应先设好期望高度）；宽度按
+// 对齐方式决定（Stretch 填满内容宽，其余保留自身宽度）。
+class VBox : public Container {
+public:
+    explicit VBox(std::string id);
+
+    void set_spacing(double s) noexcept { spacing_ = s; set_dirty(); }
+    [[nodiscard]] double spacing() const noexcept { return spacing_; }
+    void set_padding(double p) noexcept { padding_ = p; set_dirty(); }
+    [[nodiscard]] double padding() const noexcept { return padding_; }
+    void set_alignment(Alignment a) noexcept { align_ = a; set_dirty(); }
+    [[nodiscard]] Alignment alignment() const noexcept { return align_; }
+
+    void layout() override;
+
+private:
+    double spacing_ = 0.0;
+    double padding_ = 0.0;
+    Alignment align_ = Alignment::Stretch;
+};
 
 }  // namespace termchart::widget
 
@@ -15605,6 +16388,69 @@ private:
     double stroke_radius_ = 1.0;  // 半线宽（超采样像素）
     std::vector<PendingText> texts_;
     color::ResolveOptions resolve_{};
+};
+
+}  // namespace termchart::gui
+
+// ===== include/termchart/termchart_full.hpp =====
+// termchart_full.hpp —— 全量伞形头（自动生成，请勿手改；见 tools/gen_full_header.py）
+// 包含整个 termchart 公共 API：termchart.hpp 覆盖 core/util/color/term/render/api，
+// 这里再补齐 chart/graph/scale/raster/dsl/widget/gui/backend/interaction 等全部子模块。
+
+
+namespace tc = termchart;
+
+// ===== include/termchart/gui/hover_chart.hpp =====
+// hover_chart.hpp —— GUI 悬停层：命中 → 把浮层翻译成 Scene 图元
+//
+// 定位：GUI 平行栈的交互呈现。核心设计是"**悬停不改渲染器，只改 Scene**"——
+// gui::SceneRenderer 根本不知道交互存在，它只是又消费了一份 Scene。
+//
+// 复用面（都是既有件，不是新写的状态机）：
+//   * chart::HitRegion         —— 图表渲染时登记的命中形状 + 不透明 payload，
+//                                 是 chart → interaction 的唯一契约；
+//   * interaction::topmost_hit —— 纯几何判定（最后登记者在上），禁图表名；
+//   * scene::SceneBuilder      —— 浮层就是普通的 RectOp / TextOp 图元。
+//
+// 与终端侧 interaction::Tooltip 的关系：**刻意不共用实现**。终端 tooltip 是
+// cell 补丁语义（记住被改写的格、clear() 后逐格还原），因为它画在字符画布上、
+// 覆盖即破坏；GUI 每帧重建整份 Scene，浮层只是"这一帧多塞几个图元"，既不需要
+// patch/restore，也不该把"字符格"这个概念带进像素域。二者共享的只有上游的
+// HitRegion / topmost_hit，以及"贴边要翻方向"这条直觉。
+//
+// 坐标系：HitRegion 与浮层坐标都在 **Scene 坐标系**里，与底图同一坐标系。
+// 调用方负责把窗口/鼠标像素换算成 Scene 坐标；autofit=false 时二者恒等。
+
+
+
+namespace termchart::gui {
+
+class HoverLayer {
+public:
+    // base    底图 Scene；
+    // regions 命中区域（约定 payload ≥ 1，0 视为"只有几何、未登记语义"）；
+    // labels  labels[payload-1] 是该 payload 的浮层文本，可含 '\n' 多行；
+    // options 与渲染底图时**同一份** RenderOptions（坐标系/文本格必须一致）。
+    TERMCHART_API HoverLayer(scene::Scene base,
+                             std::vector<chart::HitRegion> regions,
+                             std::vector<std::string> labels,
+                             RenderOptions options);
+
+    // 不带浮层的底图。
+    [[nodiscard]] TERMCHART_API image::Bitmap render_base() const;
+
+    // (x,y) 命中则返回"底图 + 浮层"；未命中等价于 render_base()。
+    // 浮层位置：优先锚点右上，越界翻左上、再越界翻下方，最后夹进画布。
+    [[nodiscard]] TERMCHART_API image::Bitmap render_at(double x, double y) const;
+
+    // 只查询不渲染：命中返回该 payload 的浮层文本，未命中/未登记返回空串。
+    [[nodiscard]] TERMCHART_API std::string hit_label(double x, double y) const;
+
+private:
+    scene::Scene base_;
+    std::vector<chart::HitRegion> regions_;
+    std::vector<std::string> labels_;
+    RenderOptions options_;
 };
 
 }  // namespace termchart::gui

@@ -11,7 +11,7 @@
 数字口径（2026-10-13 实测）：`include/termchart/**/*.hpp`（310 个）、`src/**/*.cpp`（271 个）、
 `examples/`（57 个源，规格示例 01–54 齐备）、`tests/`（126 个源）、golden 9 份。
 `ctest` **65 项**（5 套件 + 57 示例 + 3 bench 冒烟；开 fuzz 后为 73 项，
-即 `ctest --preset fuzz` 另加 8 条 fuzz 自检），doctest **876 用例 / 192219 断言**。
+即 `ctest --preset fuzz` 另加 8 条 fuzz 自检），doctest **900 用例 / 192306 断言**。
 改动后请重跑下列命令再更新本文件。
 
 ```bash
@@ -50,8 +50,8 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `widget` | 18 | **可用（6 头 / 3 实现）** | `widget`（布局 + 生命周期 + 事件注入）、`immediate_widget`（每帧重建的即时模式）、`reactive`（信号式，脏标记 + 重建）、主题三份（`theme_dark` / `theme_light` / `theme_mono`） | GUI 平行栈的 `widget` 层由 GUI 自己重写（设计选择，见第六节） |
 | `plugin` | 19 | **可用（4 头 / 4 实现）** | `plugin`（接口 + 生命周期）、`manifest`（元数据）、`loader`（加载）、`dynamic`（动态库）；注册表为 function-local static + App 构造时冻结快照（见 `docs/design/registry.md`） | 真·跨动态库加载（当前为同进程登记） |
 | `app` | 20 | **可用（7 头 / 7 实现）** | `app`（reactive 主循环）/ `immediate_app`（即时模式循环）、`loop`（事件循环）、`headless`（无 tty 可测）、`animation`（帧调度）、`post`（帧后处理）、`config`（运行期配置） | 平台原生循环（GUI 侧自写） |
-| `gui` | 22 | **可用（2 头 / 2 实现）** | `font`（5×7 点阵等宽字体：ASCII 全量 95 字形、缺字画占位框、UTF-8/显示宽度口径）、`scene_renderer`（Scene → RGBA Bitmap：3× 超采样盒式 AA、线宽随 autofit 与 SVG 同构、文本下采样后直绘置顶、透明背景；`examples/55_gui_scene_png` 出 PNG，`image/png_encode` stored-deflate） | 文本仅内置 ASCII 字形（非 ASCII 画占位框）；hover/事件循环属 `native_loop`（未开工） |
-| `termchart_gui` | — | **渲染核心已先期落地**（见上 `gui` 行） | `gui/font` + `gui/scene_renderer` + `examples/55` | `widget_tree/*`、`native_loop/*`、`layout/*`、`backend_tk/*` 仍未开工（平行项目） |
+| `gui` | 22 | **可用（3 头 / 3 实现）** | `font`（5×7 点阵等宽字体：ASCII 全量 95 字形、缺字画占位框、UTF-8/显示宽度口径）、`scene_renderer`（Scene → RGBA Bitmap：3× 超采样盒式 AA、线宽随 autofit 与 SVG 同构、文本下采样后直绘置顶、透明背景）、`hover_chart`（悬停层：`chart::HitRegion` + `interaction::topmost_hit` 命中 → 浮层翻译成 RectOp/TextOp 叠进 Scene 副本 → 重放；渲染器零改动。`examples/55` 出底图、`examples/58` 出悬停帧） | 文本仅内置 ASCII 字形（非 ASCII 画占位框）；真实窗口/鼠标事件循环在平行栈 `termchart_gui`（`backend_tk` 现为无头参考） |
+| `termchart_gui` | — | **平行栈骨架已落地（见 `include/termchart_gui/`）** | 自写 `layout`/`widget_tree`/`native_loop`/`backend_tk`/`render::style_map`；呈现侧复用主库 `gui/font` + `gui/scene_renderer` + `gui/hover_chart` | 真实 tk 后端未接（现为 `HeadlessBackend` + `BitmapCanvas`）；悬停命中链路已在主库 `gui` 侧打通 |
 
 ## 二、三物种导出能力
 

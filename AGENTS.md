@@ -64,7 +64,7 @@ python tools/gen_golden.py                             # 重生成 golden 快照
 ## 进度口径（2026-10-13 尾段快照，复核以 ROADMAP「修订记录」表为准）
 
 最新一行：`ctest` **73/73 全绿**、doctest **848 用例 / 191580 断言、0 失败**、
-四护栏全绿（`check_header_only` **314 头 / 271 实现**）；**阶段 0–7 出口条件全部闭合**，
+四护栏全绿（`check_header_only` **333 头 / 282 实现**）；**阶段 0–7 出口条件全部闭合**，
 阶段 8（GUI 平行栈）未开工。文件普查：`include/` 310 头、`src/` 267 `.cpp`、
 `examples/` 57 源、`tests/` 126 源、golden 9 份。
 

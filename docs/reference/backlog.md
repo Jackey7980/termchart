@@ -14,7 +14,7 @@
 - [x] **graph/route/obstacle 横挡绕障**：缺陷已修并加回归测试 `test_graph_route_obstacle_fix.cpp`（绕行段不穿障碍）。
 - [x] **导出格式补齐**（2026-10-13）：`latex_backend` + `png_screenshot` + `37_export_latex` 示例（片段/standalone 双模式）全部落地。
 - [x] **examples 补齐到规格**（2026-10-13）：规格表 01–54 全部落地并进 ctest（`ctest` 73/73），无缺口。
-- [x] **具名头缺口重数**（2026-10-13）：`capability_matrix` 第五节已按实测 **314 头 / 271 实现** 刷新，缺口改为"约 26–28 个"。
+- [x] **具名头缺口重数**（2026-10-13）：`capability_matrix` 第五节已按实测 **333 头 / 282 实现** 刷新，缺口改为"约 26–28 个"。
 - [x] **fuzz 目标**：`fuzz_mermaid` / `fuzz_dsl_lexer` 早已建好并进 ctest（backlog 该条基于过期快照）——实存 8 个 fuzz 目标全绿。
 - [x] **tests/fixtures 7 份待补**（2026-10-13）：新增 `tools/gen_fixtures.py`，补齐
   `sample_data.hpp` / `sample_graph.hpp` / `sample_grapheme.txt` 三份（前 4 份仍由
@@ -75,7 +75,7 @@
 
 > phase7 落地 `dsl`/`widget`/`plugin`/`app`/`diagrams`/`single_include` + 大量 examples 后，下列文档数字已失真，需重数刷新（`capability_matrix` 自身要求"改动后重跑命令再更新"）：
 
-- [x] `capability_matrix.md`：第五节"规格差距"按实测刷新（314 头 / 271 实现、缺口 ~26–28、
+- [x] `capability_matrix.md`：第五节"规格差距"按实测刷新（333 头 / 282 实现、缺口 ~26–28、
   examples 57、single_include 已建立、bench 2→3、fuzz 8、fixtures 7/7）；
   第一节 `widget`/`plugin`/`app` 三行由"空"改为真实内容；开篇数字口径、示例索引标题同步。
 - [x] `ROADMAP.md` 现状节"未落地"清单：`dsl`/`widget`/`plugin`/`app` 改为"已落地"。
@@ -83,7 +83,7 @@
 
 ## 五、GUI 平行项目（不阻塞库本体）
 
-- [ ] `termchart_gui`（`结构.md` 标为平行项目）：`include/termchart_gui/` + `src_gui/` 共 25 文件未开工（GUI 复用 `scene` 及以下 L0–L4，`widget`/`app`/`plugin` 在 GUI 下重写）。详见 `capability_matrix.md` 第六节。**进展（2026-10-14）**：渲染核心以 `include/termchart/gui/`（层 22）先期落地——`font` + `scene_renderer`（Scene→Bitmap，3× 超采样 AA）+ `examples/55`；widget_tree/native_loop/layout/backend_tk 仍待开工。
+- [ ] `termchart_gui`（`结构.md` 标为平行项目）：`include/termchart_gui/` + `src_gui/` 共 25 文件未开工（GUI 复用 `scene` 及以下 L0–L4，`widget`/`app`/`plugin` 在 GUI 下重写）。详见 `capability_matrix.md` 第六节。**进展（2026-10-14）**：渲染核心以 `include/termchart/gui/`（层 22）先期落地——`font` + `scene_renderer`（Scene→Bitmap，3× 超采样 AA）+ `hover_chart`（悬停出数据，`examples/58`）+ `examples/55`；widget_tree/native_loop/layout/backend_tk 的骨架已在平行栈 `include/termchart_gui/` 落地（真实 tk 后端未接）。
 
 ---
 

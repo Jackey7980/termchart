@@ -57,6 +57,7 @@ foreach(example
         54_dag
         55_gui_scene_png
         56_sugiyama
+        58_gui_hover
         34_export_svg
         37_export_latex
         35_export_html
@@ -103,7 +104,7 @@ if(TERMCHART_BUILD_TESTS)
                     39_headless_render 40_immediate_mode 41_reactive_dashboard
                     43_contour 44_violin 45_ridgeline 46_parallel 47_gantt 48_forest
                     49_ecdf 50_qq 51_hexbin 52_chord 53_er_diagram 54_dag
-                    55_gui_scene_png 56_sugiyama 57_gui_app
+                    55_gui_scene_png 56_sugiyama 57_gui_app 58_gui_hover
                     34_export_svg 35_export_html 36_export_json 37_export_latex 38_image_sixel
                     40_advanced_master)
         add_test(NAME example_${example} COMMAND ${example})

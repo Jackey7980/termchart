@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **314 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **333 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -10,31 +10,31 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 | 模块 | 层 | 头文件数 |
 | --- | --- | --- |
-| （顶层头） | — | 5 |
+| （顶层头） | — | 6 |
 | detail | L-1 | 9 |
 | core | L0 | 13 |
 | util | L1 | 15 |
 | color | L2 | 6 |
-| scale | L3 | 7 |
+| scale | L3 | 10 |
 | scene | L4 | 6 |
 | image | L5 | 6 |
-| raster | L6 | 8 |
+| raster | L6 | 9 |
 | term | L7 | 13 |
 | document | L8 | 4 |
 | protocol | L9 | 7 |
 | canvas | L10 | 8 |
 | layout | L11 | 11 |
 | chart | L12 | 78 |
-| graph | L13 | 45 |
-| render | L14 | 4 |
+| graph | L13 | 46 |
+| render | L14 | 5 |
 | interaction | L15 | 18 |
 | backend | L16 | 14 |
 | dsl | L17 | 14 |
-| widget | L18 | 6 |
+| widget | L18 | 17 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 4 |
-| gui | L22 | 2 |
+| gui | L22 | 3 |
 
 ## （顶层头）
 
@@ -102,6 +102,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 分层豁免：伞形头是聚合入口，天然依赖全模块，check_layers.py 对它不做层号判定。
 
 - `const char* version_string() noexcept`
+
+### `termchart_full.hpp`
+
+> termchart_full.hpp —— 全量伞形头（自动生成，请勿手改；见 tools/gen_full_header.py）
+> 包含整个 termchart 公共 API：termchart.hpp 覆盖 core/util/color/term/render/api，
+> 这里再补齐 chart/graph/scale/raster/dsl/widget/gui/backend/interaction 等全部子模块。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `version.hpp`
 
@@ -666,6 +674,26 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct Domain`
 - `TERMCHART_API Domain nice_domain(double data_min, double data_max, bool include_zero = false) noexcept`
 
+### `scale/band.hpp`
+
+> band.hpp —— 带状比例尺（每个类别占一条等宽带，forward 返回带中心）
+>
+> 与 CategoryScale 把类别压成"网格点"不同，BandScale 把 [range_min, range_max]
+> 均分成 n 条等宽带，第 i 个类别落在第 i 条带的中心。柱状/条形图让柱体落在带
+> 内、两侧留 padding 时观感最自然。band_width() 暴露单带宽度供绘制。
+
+- `class BandScale final : public Scale`
+
+### `scale/category.hpp`
+
+> category.hpp —— 类别比例尺（离散类别等距排布）
+>
+> 把 0..n-1 的类别索引线性映射到 [range_min, range_max]：第 i 个类别落在
+> 等距网格点上。柱形/条形/分类型坐标轴常用。forward(类别索引) 取对应网格点，
+> inverse(像素) 反算最近类别索引（用于命中判定）。
+
+- `class CategoryScale final : public Scale`
+
 ### `scale/linear.hpp`
 
 > linear.hpp —— 线性比例尺（最常用，也是其他比例尺的退化形态）
@@ -732,6 +760,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `TERMCHART_API std::vector<double> nice_ticks(double domain_min, double domain_max, int target = 5) noexcept`
 - `TERMCHART_API std::vector<double> ticks_for(const Scale& scale, int target = 5) noexcept`
+
+### `scale/time.hpp`
+
+> time.hpp —— 时间比例尺（时间戳数值线性映射，语义化时间轴）
+>
+> 把时间（以数值表示的时间戳，例如 Unix 秒/毫秒；单位由调用方统一）线性映射到
+> 显示域。calendar-aware 的刻度（年/月/日/时）由 ticks 模块按数据范围选取，
+> 本类只负责坐标变换。与 LinearScale 同构，单列一类以明确"这是时间轴"语义，
+> 便于图表层识别并切换到时间刻度策略。
+
+- `class TimeScale final : public Scale`
 
 ## scene（L4）
 
@@ -1027,6 +1066,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > tests/integration/replace_raster_custom.cpp）。
 
 - `class RasterRegistry`
+
+### `raster/sextant.hpp`
+
+> sextant.hpp —— 六分仪字符光栅器（2×3 子像素，Unicode 1FB00 区）
+>
+> 保真度介于象限(2×2=4) 与盲文(2×4=8) 之间，是终端字符图里"中等保真度"的一档。
+> 每个字符格切成 2 列 × 3 行的 6 个 sextant 区域，按填充情况映射到 Unicode
+> "Symbols for Legacy Computing" 的六分仪块（U+1FB00 起，码点 = 0x1FB00 + 6 位掩码；
+> 位序约定：左上 0 / 左中 1 / 左下 2 / 右上 3 / 右中 4 / 右下 5）。
+
+- `class SextantRasterizer final : public Rasterizer`
 
 ## term（L7）
 
@@ -2914,6 +2964,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct RadialOptions`
 
+### `graph/layout/sugiyama.hpp`
+
+> sugiyama.hpp —— 四步分层布局（Sugiyama 框架）
+>
+> 在 layout_layered 的"分层 + 坐标分配"之上补上第二步"同层顺序交叉最小化"
+> （median / barycenter 启发式），让复杂 DAG 的同层节点不再按登记顺序简单堆叠
+> 而交叉凌乱。四步：① 最长路径分层（含破环）② 同层交叉最小化 ③ 坐标分配
+> ④ 边路由（由调用方在布局后调用 route，本函数只做几何）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
 ### `graph/layout/tree_layout.hpp`
 
 > tree_layout.hpp —— 根树布局（层级 + 兄弟子树行槽）
@@ -3070,6 +3131,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class WireGrid`
 
 ## render（L14）
+
+### `render/compositor.hpp`
+
+> compositor.hpp —— 多图层合成（把若干 CellBuffer 按偏移叠加成最终帧）
+>
+> GUI / 重叠元素 / 多 Pass 渲染都需要"图层"概念：本组件把任意数量的图层
+> （每个是一个 CellBuffer + 左上角偏移）合成到一张目标缓冲。后绘制的图层覆盖
+> 先绘制的；transparent 时，空格单元不覆盖下层（透出底色）。
+
+- `struct Layer`
+- `class Compositor`
 
 ### `render/damage.hpp`
 
@@ -3932,6 +4004,46 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ## widget（L18）
 
+### `widget/border.hpp`
+
+> border.hpp —— 即时模式边框绘制（header-only，无状态）
+>
+> 与 immediate_widget.hpp 同风格：不持有状态，调用方传入 canvas + rect +
+> 主题，每次调用重描完整边框。box-drawing 字符取自 Unicode，配色用
+> ThemePalette.border。矩形不足 2 格宽/高时退化为单边（不崩、不画四角）。
+
+- `enum class BorderStyle`
+
+### `widget/container.hpp`
+
+> container.hpp —— 容器基类：控件树中枢（保留模式几何 + 命中测试）
+>
+> 与 widget.hpp 的设计一致：Widget 只管身份/几何/命中测试，绘制走 immediate_widget
+> 的即时函数。Container 在此基础上持有子控件（裸指针，生命周期由调用方管理），
+> 提供递归命中测试与统一的 layout 契约。它是布局控件的公共基类。
+
+- `enum class Alignment`
+- `class Container : public Widget`
+
+### `widget/dock.hpp`
+
+> dock.hpp —— 五区停靠布局（top/bottom/left/right/center）
+
+- `enum class DockRegion`
+- `class Dock : public Container`
+
+### `widget/grid_layout.hpp`
+
+> grid_layout.hpp —— 网格布局（子控件按行列均分单元格）
+
+- `class GridLayout : public Container`
+
+### `widget/hbox.hpp`
+
+> hbox.hpp —— 水平盒子布局（子控件自左向右排列，主轴 = x）
+
+- `class HBox : public Container`
+
 ### `widget/immediate_widget.hpp`
 
 > immediate_widget.hpp —— 无状态即时组件：按钮 / 复选框
@@ -3950,6 +4062,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > East Asian 宽度时调用方应自行截断后再传入）。
 
 - `struct ControlState`
+
+### `widget/panel.hpp`
+
+> panel.hpp —— 带边框的容器（Container + Border）
+>
+> Panel 在 Container 之上加一层边框：content_rect() 给出减去边框厚度后的内容区，
+> 子控件应布局在其中（典型做法是内部再放一个 VBox/HBox）。draw_border() 用
+> 即时风格把边框描到 canvas（与 immediate_widget 一致）。Panel 不做子控件打包，
+> layout() 仅把子控件整体铺进内容区——嵌套布局容器即可获得真实排版。
+
+- `class Panel : public Container`
 
 ### `widget/reactive.hpp`
 
@@ -3971,6 +4094,50 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class ListenerBook`
 - `class Subscription`
 - `class ListenerBook`
+
+### `widget/scroll.hpp`
+
+> scroll.hpp —— 可滚动容器（带视口偏移，裁剪由调用方负责）
+>
+> ScrollArea 持有一个"内容坐标空间"，子控件按各自 bounds 留在内容空间里，
+> layout() 把每个子控件按其坐标减去 offset 摆到视口（= bounds）坐标系。offset
+> 会被夹在 [0, content - viewport] 内（内容小于视口则不滚）。真正的视口裁剪
+> （只显示 bounds 覆盖的格）由调用方负责——例如借 Compositor 按偏移合成，或
+> 在绘制前对 canvas 做范围判断。
+
+- `class ScrollArea : public Container`
+
+### `widget/style_sheet.hpp`
+
+> style_sheet.hpp —— 类名 → WidgetStyle 映射（header-only，无全局状态）
+>
+> 即时模式下没有"控件持有自己样式"的说法，样式按类名查表取用：调用方给控件
+> 一个 class 名（如 "primary-button"），渲染时从 StyleSheet 取对应 WidgetStyle。
+> 与 CSS 的类选择器同构，但只做精确名匹配（不含继承/层叠）。
+
+- `class StyleSheet`
+
+### `widget/styles.hpp`
+
+> styles.hpp —— 控件样式值类型 + 基于 ThemePalette 的样式构造（header-only）
+>
+> WidgetStyle 是一组按交互状态分槽的 Style（normal/hover/active/disabled/
+> focused）。它与绘制解耦：即时组件（immediate_widget）或应用层把 WidgetStyle
+> 按当前 ControlState 选一份 Style 后交给 canvas。全部 constexpr/inline，无全局
+> 状态，可按值传递。
+
+- `enum class WidgetState`
+- `struct WidgetStyle`
+
+### `widget/theme.hpp`
+
+> theme.hpp —— 主题聚合 + 按名取用（header-only）
+>
+> Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
+> （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
+> 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
+
+- `struct Theme`
 
 ### `widget/theme_dark.hpp`
 
@@ -3999,6 +4166,12 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `widget/vbox.hpp`
+
+> vbox.hpp —— 垂直盒子布局（子控件自上而下堆叠，主轴 = y）
+
+- `class VBox : public Container`
 
 ### `widget/widget.hpp`
 
@@ -4272,6 +4445,30 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
 
 - `struct TextMetrics`
+
+### `gui/hover_chart.hpp`
+
+> hover_chart.hpp —— GUI 悬停层：命中 → 把浮层翻译成 Scene 图元
+>
+> 定位：GUI 平行栈的交互呈现。核心设计是"**悬停不改渲染器，只改 Scene**"——
+> gui::SceneRenderer 根本不知道交互存在，它只是又消费了一份 Scene。
+>
+> 复用面（都是既有件，不是新写的状态机）：
+> * chart::HitRegion         —— 图表渲染时登记的命中形状 + 不透明 payload，
+> 是 chart → interaction 的唯一契约；
+> * interaction::topmost_hit —— 纯几何判定（最后登记者在上），禁图表名；
+> * scene::SceneBuilder      —— 浮层就是普通的 RectOp / TextOp 图元。
+>
+> 与终端侧 interaction::Tooltip 的关系：**刻意不共用实现**。终端 tooltip 是
+> cell 补丁语义（记住被改写的格、clear() 后逐格还原），因为它画在字符画布上、
+> 覆盖即破坏；GUI 每帧重建整份 Scene，浮层只是"这一帧多塞几个图元"，既不需要
+> patch/restore，也不该把"字符格"这个概念带进像素域。二者共享的只有上游的
+> HitRegion / topmost_hit，以及"贴边要翻方向"这条直觉。
+>
+> 坐标系：HitRegion 与浮层坐标都在 **Scene 坐标系**里，与底图同一坐标系。
+> 调用方负责把窗口/鼠标像素换算成 Scene 坐标；autofit=false 时二者恒等。
+
+- `class HoverLayer`
 
 ### `gui/scene_renderer.hpp`
 

@@ -58,6 +58,8 @@
 | `53_er_diagram` | ER 图：实体表框 + 鸭掌记号基数 + 关系名标签（规格示例） | [文本快照](gallery/53_er_diagram.txt) |
 | `54_dag` | DAG：无环走分层+正交路由；带环输入走退化路径（规格示例） | [文本快照](gallery/54_dag.txt) |
 | `55_gui_scene_png` | 生产级观感折线图：deterministic Scene → 超采样位图 → PNG | [文本快照](gallery/55_gui_scene_png.txt) |
+| `56_sugiyama` | Sugiyama 分层图：分层 → 层内排序（重心法）→ 正交路由 → 字符画 | [文本快照](gallery/56_sugiyama.txt) |
+| `58_gui_hover` | GUI 悬停出数据：命中 → 浮层图元 → Scene 重放（无头可跑） | [文本快照](gallery/58_gui_hover.txt) |
 | `34_export_svg` | 矢量导出：Scene → SVG（写 stdout） | [文本快照](gallery/34_export_svg.txt) |
 | `37_export_latex` | 导出 LaTeX TikZ（规格示例） | [文本快照](gallery/37_export_latex.txt) |
 | `35_export_html` | 结构化导出：Document → HTML（写 stdout） | [文本快照](gallery/35_export_html.txt) |
