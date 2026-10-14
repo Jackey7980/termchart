@@ -37,5 +37,8 @@ GUI（窗口/位图渲染）与终端（字符格渲染）是**平行栈**，共
 
 ## 现状
 
-widget/plugin/app 三个模块目录在 `include/termchart/` 下**尚不存在**（结构.md 规划、
-未落地）；GUI 平行栈本身是规格设想，公开头里没有 GUI 专属 API。
+widget/plugin/app 已在 `include/termchart/` 落地（终端栈使用）。GUI 平行栈的**渲染核心**已落地：
+`include/termchart/gui/`（层 22）提供 `font`（点阵等宽字体）与 `scene_renderer`（Scene → RGBA 位图，
+超采样抗锯齿），复用 `scene::StatefulVisitor` 时序与 `image/png_encode` 出图，可运行产物见
+`examples/55_gui_scene_png.cpp`。仍缺：GUI 侧 `widget_tree` / `native_loop` / `layout` / `backend_tk`
+（平行项目，进度见 `capability_matrix.md` 第六节与 ROADMAP）。
