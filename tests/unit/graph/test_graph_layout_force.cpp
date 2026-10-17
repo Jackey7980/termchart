@@ -95,3 +95,26 @@ TEST_CASE("graph/layout/force: 迭代数为 0 时退化为初始圆环且不崩"
         CHECK(node.box().y >= doctest::Approx(opts.layout.margin));
     }
 }
+
+TEST_CASE("graph/layout/force: 断开图（两孤立三角）布局后无重叠") {
+    // 验证硬碰撞移除趟在"无连边分量"这类斥力主导的输入上也保证不重叠。
+    Graph graph;
+    const NodeId a = graph.add_node("a").id();
+    const NodeId b = graph.add_node("b").id();
+    const NodeId c = graph.add_node("c").id();
+    (void)graph.add_edge(a, b);
+    (void)graph.add_edge(b, c);
+    (void)graph.add_edge(c, a);
+    const NodeId d = graph.add_node("d").id();
+    const NodeId e = graph.add_node("e").id();
+    const NodeId f = graph.add_node("f").id();
+    (void)graph.add_edge(d, e);
+    (void)graph.add_edge(e, f);
+    (void)graph.add_edge(f, d);
+    (void)layout_force(graph);
+    for (std::size_t i = 0; i < graph.node_count(); ++i) {
+        for (std::size_t j = i + 1; j < graph.node_count(); ++j) {
+            CHECK_FALSE(overlaps(graph.nodes()[i].box(), graph.nodes()[j].box()));
+        }
+    }
+}

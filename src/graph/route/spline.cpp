@@ -266,6 +266,7 @@ std::size_t route_spline(Graph& graph, const RouteOptions& opts, WireGrid* grid)
     std::size_t routed = 0;
     for (std::size_t i = 0; i < count; ++i) {
         Edge& edge = graph.edges()[i];
+        edge.set_route_failed(false);  // 重置：本次重算的成败以此为准（雷区1 信号）
         const std::vector<Point>& anchor_route = edge.route();
         if (anchor_route.size() < 2) {
             continue;  // 端点缺失：保持空折线
@@ -320,7 +321,10 @@ std::size_t route_spline(Graph& graph, const RouteOptions& opts, WireGrid* grid)
             chosen = std::move(fallback);  // 宁可折线也不穿框
         }
         if (chosen.empty()) {
-            chosen = cells_from_samples({a, b});  // 最后手段：直线（不再保证不穿框）
+            // 最后手段：直线（不再保证不穿框）。平滑/正交都失败 → 置 route_failed
+            // 让上层提示"此处过挤"（雷区1）。
+            chosen = cells_from_samples({a, b});
+            edge.set_route_failed(true);
         }
         if (!chosen.empty()) {
             chosen.front() = a;  // 端点钉死在锚点上，抵消取整漂移

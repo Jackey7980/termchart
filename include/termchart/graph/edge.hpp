@@ -39,6 +39,14 @@ public:
     [[nodiscard]] const std::vector<Point>& route() const noexcept { return route_; }
     void set_route(std::vector<Point> route) { route_ = std::move(route); }
 
+    // 路由是否"被迫退化为直连兜底"（正交/平滑/弧线路由在 Z 形/L 形/贝塞尔全部失败后
+    // 写出的 2 点直线，不保证不穿过节点框/障碍）。由 graph/route 在写出兜底直线时置
+    // true；调用方/渲染器可读它提示用户"此处过挤、路由未达预期"，而不是被静默画出的
+    // 穿障直线蒙蔽（见路由层审查 雷区1）。直线风格（RouteStyle::Straight）是显式需求，
+    // 不算失败。
+    [[nodiscard]] bool route_failed() const noexcept { return route_failed_; }
+    void set_route_failed(bool v) noexcept { route_failed_ = v; }
+
 private:
     NodeId from_;
     NodeId to_;
@@ -46,6 +54,7 @@ private:
     Attributes attributes_;
     ArrowStyle arrow_ = ArrowStyle::AtTarget;
     std::vector<Point> route_;
+    bool route_failed_ = false;
 };
 
 }  // namespace termchart::graph

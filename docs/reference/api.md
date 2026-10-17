@@ -4421,6 +4421,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > CellBuffer → Renderer → stdout 链路。
 
 - `TERMCHART_API void init_core() noexcept`
+- `struct PlotOpts`
 
 ## gui（L22）
 

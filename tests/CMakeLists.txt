@@ -18,6 +18,7 @@ add_executable(termchart_tests
     unit/util/test_grapheme.cpp
     unit/util/test_wcwidth.cpp
     unit/util/test_text.cpp
+    unit/util/test_format.cpp
     unit/util/test_util_misc.cpp
 
     # ── color ──
@@ -26,6 +27,7 @@ add_executable(termchart_tests
 
     # ── term ──
     unit/term/test_term.cpp
+    unit/term/test_term_size_waker.cpp
 
     # ── api ──
     unit/api/test_api.cpp
@@ -34,6 +36,7 @@ add_executable(termchart_tests
     unit/render/test_render.cpp
     unit/render/test_diff_damage.cpp
     unit/render/test_sgr.cpp
+    unit/render/test_render_compositor.cpp
 
     # ── scene ──
     unit/scene/test_scene.cpp
@@ -61,6 +64,7 @@ add_executable(termchart_tests
     unit/scale/test_nice.cpp
     unit/scale/test_ticks.cpp
     unit/scale/test_scale_registry.cpp
+    unit/scale/test_scale_discrete.cpp
 
     # ── image ──
     unit/image/test_field.cpp
@@ -76,6 +80,7 @@ add_executable(termchart_tests
     unit/raster/test_raster_block.cpp
     unit/raster/test_raster_ascii.cpp
     unit/raster/test_raster_registry.cpp
+    unit/raster/test_raster_sextant.cpp
 
     # ── layout ──
     unit/layout/test_layout_axis.cpp
@@ -140,6 +145,7 @@ add_executable(termchart_tests
     unit/graph/test_graph_route_obstacle_bundling.cpp
     unit/graph/test_graph_route_obstacle_fix.cpp
     unit/graph/test_graph_kamada_kawai.cpp
+    unit/graph/test_graph_sugiyama.cpp
     unit/graph/test_diagrams_dag.cpp
     unit/graph/test_diagrams_uml.cpp
     unit/graph/test_diagrams_network.cpp

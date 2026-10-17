@@ -18,6 +18,10 @@ option(TERMCHART_ENABLE_PNG "尝试引入 libpng/zlib（PNG 解码 / 编码）" 
 option(TERMCHART_ENABLE_UTF8PROC "尝试引入 utf8proc（完整 Unicode 属性）" OFF)
 option(TERMCHART_ENABLE_FUZZING "构建 fuzz 目标（需 clang 或 libFuzzer）" OFF)
 
+# 原生 GUI 后端插件（可选，默认关）：Win32 真实窗口后端需编译型平台代码 + 链
+# user32/gdi32，违背核心"零强制依赖、header-only"，故独立插件、仅 Windows、默认不编。
+option(TERMCHART_BUILD_GUI_WIN32 "构建原生 Win32 GUI 后端插件（可选，仅 Windows；默认关）" OFF)
+
 # ── 模块开关：关掉即裁掉对应 src 目录 ─────────────────────────────────────
 #   上层模块的缺失不影响下层编译（分层规则保证单向依赖）。
 set(TERMCHART_MODULES

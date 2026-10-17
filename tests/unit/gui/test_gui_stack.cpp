@@ -4,6 +4,7 @@
 // 复用 termchart 的 scene/color/image，不碰终端栈（gui_stack.md）。
 #include <doctest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -13,7 +14,13 @@
 #include "termchart_gui/gui.hpp"
 #include "termchart_gui/backend_tk/tui_backend.hpp"
 #include "termchart_gui/widget_tree/button.hpp"
+#include "termchart_gui/widget_tree/chart_widget.hpp"
+#include "termchart_gui/widget_tree/checkbox.hpp"
+#include "termchart_gui/widget_tree/combo_renderer.hpp"
+#include "termchart_gui/widget_tree/gauge_renderer.hpp"
 #include "termchart_gui/widget_tree/label.hpp"
+#include "termchart_gui/widget_tree/polar_renderer.hpp"
+#include "termchart_gui/widget_tree/progress_bar.hpp"
 #include "termchart_gui/widget_tree/slider.hpp"
 
 using namespace termchart_gui;
@@ -258,4 +265,411 @@ TEST_CASE("gui/widget: Button/Slider paint 落真彩色像素") {
     CHECK(bmp.at(4, 40, 0) == 120);
     CHECK(bmp.at(4, 40, 1) == 184);
     CHECK(bmp.at(4, 40, 2) == 236);
+}
+
+TEST_CASE("gui/widget: Checkbox 切换 + 勾选/未勾选像素") {
+    Checkbox cb("cb", "Enable");
+    cb.set_bounds(Rect{0, 0, 80, 20});
+    bool state = false;
+    cb.set_on_toggle([&](bool on) { state = on; });
+
+    Event press{};
+    press.type = EventType::MousePress;
+    press.x = 40.0;
+    press.y = 10.0;
+    CHECK(cb.on_event(press) == true);
+    CHECK(cb.checked() == true);
+    CHECK(state == true);
+
+    HeadlessBackend backend(80, 20);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    cb.paint(backend.canvas());
+    const Bitmap on = backend.canvas().snapshot();
+    // 勾选内块（box 左上 (2,3) 边长 14，内缩 3 → (5..13, 6..14)）为绿色。
+    CHECK(on.at(9, 10, 0) == 90);
+    CHECK(on.at(9, 10, 1) == 200);
+    CHECK(on.at(9, 10, 2) == 120);
+
+    cb.set_checked(false);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    cb.paint(backend.canvas());
+    const Bitmap off = backend.canvas().snapshot();
+    // 未勾选：同格回落为方框底色 (40,40,46)。
+    CHECK(off.at(9, 10, 0) == 40);
+    CHECK(off.at(9, 10, 2) == 46);
+}
+
+TEST_CASE("gui/widget: ProgressBar 按 value 比例填充") {
+    ProgressBar pb("pb");
+    pb.set_bounds(Rect{0, 0, 100, 10});
+    pb.set_value(0.5);
+
+    HeadlessBackend backend(100, 10);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    pb.paint(backend.canvas());
+    const Bitmap bmp = backend.canvas().snapshot();
+    // 取中线 y=5（避开 1px 描边）：左半填充 (90,190,240)，右半轨道 (45,45,52)。
+    CHECK(bmp.at(10, 5, 0) == 90);
+    CHECK(bmp.at(10, 5, 2) == 240);
+    CHECK(bmp.at(90, 5, 0) == 45);
+    CHECK(bmp.at(90, 5, 2) == 52);
+}
+
+TEST_CASE("gui/backend: blit alpha 合成位图") {
+    HeadlessBackend backend(20, 10);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    image::Bitmap src(4, 4, 4);
+    src.fill(200, 100, 50, 255);
+    backend.canvas().blit(src, 2.0, 2.0);
+    const image::Bitmap bmp = backend.canvas().snapshot();
+    CHECK(bmp.at(3, 3, 0) == 200);  // blit 区内取到源像素
+    CHECK(bmp.at(3, 3, 2) == 50);
+    CHECK(bmp.at(0, 0, 0) == 0);    // 区外保持清屏背景
+}
+
+TEST_CASE("gui/backend: blit opacity 半透明合成") {
+    HeadlessBackend backend(4, 4);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    image::Bitmap src(2, 2, 4);
+    src.fill(200, 100, 50, 255);
+    backend.canvas().blit(src, 0.0, 0.0, 0.5);  // 50% 合成到黑底
+    const image::Bitmap bmp = backend.canvas().snapshot();
+    CHECK(bmp.at(0, 0, 0) >= 95);  // ≈ 200*0.5
+    CHECK(bmp.at(0, 0, 0) <= 105);
+    CHECK(bmp.at(0, 0, 1) >= 45);  // ≈ 100*0.5
+    CHECK(bmp.at(0, 0, 1) <= 55);
+}
+
+TEST_CASE("gui/widget: ChartWidget 组合图渲染 + 悬停命中 + 缩放自适应") {
+    ChartWidget ch("chart");
+    ch.set_bounds(Rect{0, 0, 300, 160});
+    ch.set_data({"a", "b", "c", "d"}, {10, 40, 20, 50}, {12, 38, 25, 48});
+
+    HeadlessBackend backend(300, 160);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());  // 首帧：建几何 + 光栅化缓存 + blit
+    const image::Bitmap b1 = backend.canvas().snapshot();
+
+    CHECK(b1.at(2, 2, 0) == 24);  // 左上角=图表深色底（blit 覆盖了控件区）
+    int blue = 0;                 // 存在柱蓝色像素 → combo 真的画出来了
+    for (std::uint32_t y = 0; y < b1.height(); ++y) {
+        for (std::uint32_t x = 0; x < b1.width(); ++x) {
+            if (b1.at(x, y, 0) == 59 && b1.at(x, y, 1) == 110 && b1.at(x, y, 2) == 246) {
+                ++blue;
+            }
+        }
+    }
+    CHECK(blue > 0);
+
+    // 半透明面积盖在柱子上：柱子被覆盖处是 青×蓝 混合色（既非纯柱蓝也非纯面积），
+    // 即绿色被青色抬高、且不是纯柱蓝 (59,110,246)。
+    int blended = 0;
+    for (std::uint32_t y = 0; y < b1.height(); ++y) {
+        for (std::uint32_t x = 0; x < b1.width(); ++x) {
+            const int r = b1.at(x, y, 0);
+            const int gg = b1.at(x, y, 1);
+            const int bb = b1.at(x, y, 2);
+            if (gg > 111 && gg < 175 && r < 70 && bb > 200) {
+                ++blended;
+            }
+        }
+    }
+    CHECK(blended > 0);  // 面积真透在柱子上
+
+    Event mv{};  // 悬停：移到类别 1 中心 x（cx1 = 46 + (300-14-46)*1.5/4 = 136）
+    mv.type = EventType::MouseMove;
+    mv.x = 136.0;
+    mv.y = 90.0;
+    CHECK(ch.on_event(mv) == true);
+    CHECK(ch.hovered_index() == 1);
+
+    ch.paint(backend.canvas());  // 悬停后重绘：base + 信息框
+    const image::Bitmap bt = backend.canvas().snapshot();
+    int tip = 0;  // 信息框底色 {32,36,46} 出现在数据点旁 → 悬停信息框真的画出来了
+    for (std::uint32_t y = 0; y < bt.height(); ++y) {
+        for (std::uint32_t x = 0; x < bt.width(); ++x) {
+            if (bt.at(x, y, 0) == 30 && bt.at(x, y, 1) == 34 && bt.at(x, y, 2) == 44) {
+                ++tip;
+            }
+        }
+    }
+    CHECK(tip > 0);
+
+    int cross = 0;  // 悬停十字轴线 (90,100,120) 出现 → axisPointer 真画出来了
+    for (std::uint32_t y = 0; y < bt.height(); ++y) {
+        for (std::uint32_t x = 0; x < bt.width(); ++x) {
+            if (bt.at(x, y, 0) == 90 && bt.at(x, y, 1) == 100 && bt.at(x, y, 2) == 120) {
+                ++cross;
+            }
+        }
+    }
+    CHECK(cross > 0);
+
+    Event out{};  // 移出绘图区（x < 左边界 46）→ -1
+    out.type = EventType::MouseMove;
+    out.x = 5.0;
+    out.y = 5.0;
+    CHECK(ch.on_event(out) == true);
+    CHECK(ch.hovered_index() == -1);
+
+    // 缩放自适应 + 过渡动画：放大到 420×240。
+    ch.set_bounds(Rect{0, 0, 420, 240});
+    HeadlessBackend backend2(420, 240);
+    backend2.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend2.canvas());
+    CHECK(ch.animating() == true);                   // 尺寸变化触发过渡
+    CHECK(ch.plot_right() == doctest::Approx(286.0));  // 触发瞬间仍停在旧框架
+    ch.tick(0.016);                                    // 一帧：框架立即吸附到新尺寸
+    CHECK(ch.plot_right() == doctest::Approx(406.0));  // 撑满（不留暗边）
+    CHECK(ch.animating() == true);                     // 内容(xs/ly)仍在平滑形变
+    while (ch.animating()) ch.tick(0.05);              // 推进到静止
+    ch.paint(backend2.canvas());
+    CHECK(ch.animating() == false);
+    CHECK(ch.plot_right() == doctest::Approx(406.0));  // 420-14，到位
+    const image::Bitmap b2 = backend2.canvas().snapshot();
+    CHECK(b2.width() == 420);
+    CHECK(b2.at(2, 2, 0) == 24);
+    Event mv2{};  // 新几何下类别 1 中心 x = 46 + (420-14-46)*1.5/4 = 181
+    mv2.type = EventType::MouseMove;
+    mv2.x = 181.0;
+    mv2.y = 120.0;
+    CHECK(ch.on_event(mv2) == true);
+    CHECK(ch.hovered_index() == 1);
+}
+
+TEST_CASE("gui/widget: ChartWidget request_snap 拖动中吸附到位（不等 tick）") {
+    ChartWidget ch("chart");
+    ch.set_bounds(Rect{0, 0, 300, 160});
+    ch.set_data({"a", "b", "c", "d"}, {10, 40, 20, 50}, {12, 38, 25, 48});
+    HeadlessBackend backend(300, 160);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == false);
+    // 模拟拖动中：改尺寸 + request_snap + 立即 paint → 直接吸附，不走过渡。
+    ch.set_bounds(Rect{0, 0, 420, 240});
+    ch.request_snap();
+    ch.paint(backend.canvas());
+    CHECK(ch.plot_right() == doctest::Approx(406.0));  // 几何立即吸附（不走过渡）
+    CHECK(ch.animating() == true);                     // 但变化触发交互高光 → 需 tick 衰减
+    while (ch.animating()) ch.tick(0.05);
+    CHECK(ch.animating() == false);                    // 高光衰减后归假
+    CHECK(ch.plot_right() == doctest::Approx(406.0));  // 几何仍吸附
+}
+
+TEST_CASE("gui/widget: ChartWidget 拖动冻结抽稀、松手重算") {
+    ChartWidget ch("chart");
+    ch.set_bounds(Rect{0, 0, 600, 380});
+    ch.set_data({"6-4", "6-7", "6-10", "6-13", "6-16", "6-19", "6-22", "6-25", "6-28", "7-1",
+                 "7-2"},
+                {120, 200, 150, 260, 210, 300, 240, 280, 190, 230, 260},
+                {130, 210, 160, 250, 220, 310, 245, 290, 200, 240, 270});
+    HeadlessBackend backend(600, 380);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());
+    CHECK(ch.label_step() == 1);  // 宽：11 个标签都放得下，全显示
+
+    // 拖到很窄 + dragging：步长冻结（数量不变、只重排），不因宽度骤减而反复增删。
+    ch.set_bounds(Rect{0, 0, 200, 160});
+    ch.set_dragging(true);
+    ch.request_snap();
+    ch.paint(backend.canvas());
+    CHECK(ch.label_step() == 1);  // 拖动中：冻结
+
+    // 松手（set_dragging false）：按窄宽度重算 → step>1（抽稀，增删数据显示）。
+    ch.set_dragging(false);
+    ch.paint(backend.canvas());
+    CHECK(ch.label_step() > 1);
+}
+
+TEST_CASE("gui/widget: ChartWidget 低清→高清交叉淡入") {
+    ChartWidget ch("chart");
+    ch.set_bounds(Rect{0, 0, 400, 300});
+    ch.set_data({"a", "b", "c", "d"}, {10, 40, 20, 50}, {12, 38, 25, 48});
+    HeadlessBackend backend(1000, 800);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == false);  // 首帧落定（400×300，d=1 不降分辨率，无淡入）
+
+    // 拖大到 1000×800（d=2 降分辨率）→ 低清快帧。
+    ch.set_bounds(Rect{0, 0, 1000, 800});
+    ch.set_dragging(true);
+    ch.request_snap();
+    ch.paint(backend.canvas());
+    // 松手：重算成高清帧；因前帧是降分辨率低清 → 触发交叉淡入。
+    ch.set_dragging(false);
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == true);  // 淡入进行中
+    while (ch.animating()) ch.tick(0.05);
+    CHECK(ch.animating() == false);  // 淡入收敛
+}
+
+TEST_CASE("gui/widget: ChartWidget set_data 数据更新走平滑过渡（非硬切）") {
+    ChartWidget ch("chart");
+    ch.set_bounds(Rect{0, 0, 300, 160});
+    ch.set_data({"a", "b", "c", "d"}, {10, 40, 20, 50}, {12, 38, 25, 48});
+    HeadlessBackend backend(300, 160);
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == false);  // 首帧落定
+
+    // 同尺寸换数据 → 折线点位置变 → 应触发过渡（而非瞬间跳）。
+    ch.set_data({"a", "b", "c", "d"}, {50, 10, 40, 20}, {48, 12, 38, 25});
+    backend.canvas().clear(Rgb{0, 0, 0});
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == true);
+    while (ch.animating()) ch.tick(0.05);
+    ch.paint(backend.canvas());
+    CHECK(ch.animating() == false);  // 收敛到新数据
+
+    const image::Bitmap bmp = backend.canvas().snapshot();
+    CHECK(bmp.at(2, 2, 0) == 24);  // 仍正常出图
+}
+
+// 天气看板用的"多系列"ComboRenderer：验证 ① 24h 温度（平滑折线+面积+最高温高亮）
+// 与 ② 7 天（降水柱+最高/最低折线）都能经 ChartWidget 管线渲染出关键颜色像素。
+TEST_CASE("gui/widget: ComboRenderer 多系列（天气看板）渲染") {
+    const std::vector<std::string> hlab(24, "00");
+    std::vector<double> htemp(24), hprec(24);
+    for (int i = 0; i < 24; ++i) {
+        htemp[static_cast<std::size_t>(i)] = 10.0 + 8.0 * std::sin(i / 3.0);
+        hprec[static_cast<std::size_t>(i)] = static_cast<double>((i * 37) % 100);
+    }
+
+    // —— 上半屏：24h 温度（折线[0]+面积 + 折线[1]降水% + 最高温高亮）——
+    auto temp_r = std::make_shared<ComboRenderer>();
+    temp_r->set_series(hlab, {}, {htemp, hprec}, {"温度°C", "降水%"});
+    temp_r->set_line_colors({{255, 138, 76}, {90, 170, 230}});
+    temp_r->set_area(0, {255, 138, 76});
+    temp_r->set_marker(0, {255, 210, 120});
+    temp_r->set_show_bars(false);
+    temp_r->set_title("24 小时温度 (°C)");
+
+    ChartWidget temp_chart("temp");
+    temp_chart.set_bounds(Rect{0, 0, 600, 300});
+    temp_chart.set_renderer(temp_r);
+    temp_chart.invalidate();
+
+    HeadlessBackend b1(600, 300);
+    b1.canvas().clear(Rgb{0, 0, 0});
+    temp_chart.paint(b1.canvas());
+    const image::Bitmap t = b1.canvas().snapshot();
+
+    int orange = 0;  // 温度线/面积色 {255,138,76} 应出现
+    int marker = 0;  // 最高温高亮 {255,210,120} 应出现
+    for (std::uint32_t y = 0; y < t.height(); ++y) {
+        for (std::uint32_t x = 0; x < t.width(); ++x) {
+            if (t.at(x, y, 0) == 255 && t.at(x, y, 1) == 138 && t.at(x, y, 2) == 76) ++orange;
+            if (t.at(x, y, 0) == 255 && t.at(x, y, 1) == 210 && t.at(x, y, 2) == 120) ++marker;
+        }
+    }
+    CHECK(orange > 0);  // 温度折线/面积真的画出来了
+    CHECK(marker > 0);  // 最高温高亮点真的画出来了
+
+    // —— 下半屏：7 天 降水概率柱 + 最高/最低温折线 ——
+    const std::vector<std::string> dlab = {"10-17", "10-18", "10-19", "10-20",
+                                           "10-21", "10-22", "10-23"};
+    const std::vector<double> dmax = {15.9, 16.7, 17.6, 16.2, 14.6, 14.4, 15.0};
+    const std::vector<double> dmin = {12.7, 10.1, 7.0, 7.3, 4.2, 3.3, 4.7};
+    const std::vector<double> dprec = {100, 5, 0, 22, 0, 2, 4};
+
+    auto fc_r = std::make_shared<ComboRenderer>();
+    fc_r->set_series(dlab, dprec, {dmax, dmin}, {"最高", "最低"});
+    fc_r->set_line_colors({{255, 120, 90}, {80, 160, 255}});
+    fc_r->set_bar_color({70, 130, 230});
+    fc_r->set_bar_name("降水%");
+    fc_r->set_area(-1, {0, 0, 0});  // 关闭面积
+    fc_r->set_show_bars(true);
+    fc_r->set_right_axis(true, {0, 1});  // 温度折线走右轴（双 Y 轴路径）
+    fc_r->set_title("未来 7 天 最高/最低温 与 降水概率");
+
+    ChartWidget fc_chart("fc");
+    fc_chart.set_bounds(Rect{0, 0, 600, 300});
+    fc_chart.set_renderer(fc_r);
+    fc_chart.invalidate();
+
+    HeadlessBackend b2(600, 300);
+    b2.canvas().clear(Rgb{0, 0, 0});
+    fc_chart.paint(b2.canvas());
+    const image::Bitmap f = b2.canvas().snapshot();
+
+    int bar = 0;    // 降水柱 {70,130,230}
+    int hi = 0;     // 最高温线 {255,120,90}
+    int lo = 0;     // 最低温线 {80,160,255}
+    for (std::uint32_t y = 0; y < f.height(); ++y) {
+        for (std::uint32_t x = 0; x < f.width(); ++x) {
+            if (f.at(x, y, 0) == 70 && f.at(x, y, 1) == 130 && f.at(x, y, 2) == 230) ++bar;
+            if (f.at(x, y, 0) == 255 && f.at(x, y, 1) == 120 && f.at(x, y, 2) == 90) ++hi;
+            if (f.at(x, y, 0) == 80 && f.at(x, y, 1) == 160 && f.at(x, y, 2) == 255) ++lo;
+        }
+    }
+    CHECK(bar > 0);   // 降水柱真的画出来了
+    CHECK(hi > 0);    // 最高温折线真的画出来了
+    CHECK(lo > 0);    // 最低温折线真的画出来了
+
+    // 关闭面积后不应再出现 teal 面积色 {40,170,200}。
+    int teal = 0;
+    for (std::uint32_t y = 0; y < f.height(); ++y) {
+        for (std::uint32_t x = 0; x < f.width(); ++x) {
+            if (f.at(x, y, 0) == 40 && f.at(x, y, 1) == 170 && f.at(x, y, 2) == 200) ++teal;
+        }
+    }
+    CHECK(teal == 0);  // 7 天图未启用面积 → 无青色面积层
+}
+
+// AQI 仪表盘（GaugeRenderer）：270° 分段色带 + 指针/轴帽。验证彩色分段与指针真的画出来。
+TEST_CASE("gui/widget: GaugeRenderer 仪表盘渲染") {
+    auto g = std::make_shared<GaugeRenderer>();
+    g->set_value(165.0);  // 中度污染，落在 151-200 红区
+    g->set_max(300.0);
+    g->set_title("AQI");
+    ChartWidget gw("aqi");
+    gw.set_bounds(Rect{0, 0, 240, 240});
+    gw.set_renderer(g);
+    gw.invalidate();
+
+    HeadlessBackend b(240, 240);
+    b.canvas().clear(Rgb{0, 0, 0});
+    gw.paint(b.canvas());
+    const image::Bitmap bm = b.canvas().snapshot();
+
+    int red = 0;  // 红区分段（151-200）{230,90,80}
+    int white = 0;  // 指针/轴帽 {238,240,246}
+    for (std::uint32_t y = 0; y < bm.height(); ++y) {
+        for (std::uint32_t x = 0; x < bm.width(); ++x) {
+            if (bm.at(x, y, 0) > 200 && bm.at(x, y, 1) < 120 && bm.at(x, y, 2) < 120) ++red;
+            if (bm.at(x, y, 0) == 238 && bm.at(x, y, 1) == 240 && bm.at(x, y, 2) == 246) ++white;
+        }
+    }
+    CHECK(red > 0);    // 彩色分段弧带真的画出来了
+    CHECK(white > 0);  // 指针/轴帽真的画出来了
+}
+
+// 风玫瑰（PolarRenderer）：同心环 + 方位辐条 + 24h 风数据折线/点。验证数据线真的画出来。
+TEST_CASE("gui/widget: PolarRenderer 风玫瑰渲染") {
+    auto p = std::make_shared<PolarRenderer>();
+    std::vector<Point> wp;
+    wp.reserve(24);
+    for (int i = 0; i < 24; ++i) {
+        wp.push_back(Point{static_cast<double>((i * 15) % 360),
+                           10.0 + 8.0 * std::sin(static_cast<double>(i) / 3.0)});
+    }
+    p->set_points(std::move(wp));
+    p->set_title("24h Wind");
+    ChartWidget pw("wind");
+    pw.set_bounds(Rect{0, 0, 240, 240});
+    pw.set_renderer(p);
+    pw.invalidate();
+
+    HeadlessBackend b(240, 240);
+    b.canvas().clear(Rgb{0, 0, 0});
+    pw.paint(b.canvas());
+    const image::Bitmap bm = b.canvas().snapshot();
+
+    int blue = 0;  // 数据折线 {90,170,230}
+    for (std::uint32_t y = 0; y < bm.height(); ++y) {
+        for (std::uint32_t x = 0; x < bm.width(); ++x) {
+            if (bm.at(x, y, 0) == 90 && bm.at(x, y, 1) == 170 && bm.at(x, y, 2) == 230) ++blue;
+        }
+    }
+    CHECK(blue > 0);  // 风玫瑰数据折线/点真的画出来了
 }

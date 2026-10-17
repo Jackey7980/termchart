@@ -25,6 +25,15 @@ enum class RouteStyle {
 
 struct RouteOptions {
     int max_detour = 8;  // 正交路由向两侧尝试的最大偏移（格）
+    // 是否把"已路由的连线"也当障碍。默认开：稀疏图里连线互不重叠更好看。
+    // 密集图（几十条边挤在层间通道里）建议关：连线之间本就必然相交，硬要
+    // 互避会让后来的边找不到任何正交通路、退化成斜线；交叉处由 junction_char
+    // 合成 ┼ 表达，比斜线乱穿清楚得多。节点外框无论此开关如何都是障碍。
+    bool avoid_wires = true;
+    // 尊重已有的折线：布局阶段（layout_sugiyama）会给跨多层的长边写一条沿
+    // dummy 槽位走的正交通道折线，比这里的通用 Z 形更准（不会撞中间列的节点框）。
+    // 默认为 false：不看已有 route，全部按本函数重算，行为与以前一致。
+    bool keep_existing_routes = false;
 };
 
 // 为所有边计算折线并写入 Edge::set_route（首尾为节点边框上的锚点）。

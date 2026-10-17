@@ -85,34 +85,42 @@ image::Bitmap SceneRenderer::render(const scene::Scene& scene) {
     run(scene);
 
     // ── 3a. 盒式降采样：ss×ss 取平均 = 免费抗锯齿 ──
+    // 直接写 out 的原始内存（免去每像素 4 次跨 TU 的 Bitmap::set）；ss==1 时整块拷贝。
     image::Bitmap out(opts_.width, opts_.height, 4);
-    const double inv = 1.0 / static_cast<double>(ss_ * ss_);
-    for (std::uint32_t py = 0; py < opts_.height; ++py) {
-        for (std::uint32_t px = 0; px < opts_.width; ++px) {
-            double r = 0.0;
-            double g = 0.0;
-            double b = 0.0;
-            double a = 0.0;
-            for (int sy = 0; sy < ss_; ++sy) {
-                const std::size_t row =
-                    (static_cast<std::size_t>(py) * static_cast<std::size_t>(ss_) +
-                     static_cast<std::size_t>(sy)) *
-                    static_cast<std::size_t>(sw_) * 4;
-                for (int sx = 0; sx < ss_; ++sx) {
-                    const std::size_t idx =
-                        row + (static_cast<std::size_t>(px) * static_cast<std::size_t>(ss_) +
-                               static_cast<std::size_t>(sx)) *
-                                  4;
-                    r += buffer_[idx + 0];
-                    g += buffer_[idx + 1];
-                    b += buffer_[idx + 2];
-                    a += buffer_[idx + 3];
+    std::uint8_t* dst = out.data();
+    if (ss_ == 1) {
+        std::copy(buffer_.begin(), buffer_.end(), dst);
+    } else {
+        const std::size_t stride = static_cast<std::size_t>(sw_) * 4;
+        const double inv = 1.0 / static_cast<double>(ss_ * ss_);
+        for (std::uint32_t py = 0; py < opts_.height; ++py) {
+            const std::uint8_t* srow =
+                buffer_.data() + static_cast<std::size_t>(py) * static_cast<std::size_t>(ss_) * stride;
+            std::uint8_t* drow =
+                dst + static_cast<std::size_t>(py) * static_cast<std::size_t>(opts_.width) * 4;
+            for (std::uint32_t px = 0; px < opts_.width; ++px) {
+                double r = 0.0;
+                double g = 0.0;
+                double b = 0.0;
+                double a = 0.0;
+                for (int sy = 0; sy < ss_; ++sy) {
+                    const std::uint8_t* s = srow + static_cast<std::size_t>(sy) * stride +
+                                            static_cast<std::size_t>(px) *
+                                                static_cast<std::size_t>(ss_) * 4;
+                    for (int sx = 0; sx < ss_; ++sx) {
+                        r += s[0];
+                        g += s[1];
+                        b += s[2];
+                        a += s[3];
+                        s += 4;
+                    }
                 }
+                std::uint8_t* d = drow + static_cast<std::size_t>(px) * 4;
+                d[0] = clamp_byte(r * inv);
+                d[1] = clamp_byte(g * inv);
+                d[2] = clamp_byte(b * inv);
+                d[3] = clamp_byte(a * inv);
             }
-            out.set(px, py, 0, clamp_byte(r * inv));
-            out.set(px, py, 1, clamp_byte(g * inv));
-            out.set(px, py, 2, clamp_byte(b * inv));
-            out.set(px, py, 3, clamp_byte(a * inv));
         }
     }
 

@@ -133,9 +133,18 @@ bool path_cells(const std::vector<Point>& path, std::vector<Cell>& out) {
     return true;
 }
 
+// 障碍视图：grid 是节点外框等"硬障碍"；wires 记录已路由连线占的格，是否参与
+// 避让由 avoid_wires 决定（见 RouteOptions 注释）。
+struct Obstacles {
+    WireGrid* grid = nullptr;
+    std::vector<char>* wires = nullptr;
+    std::uint32_t width = 0;
+    bool avoid_wires = true;
+};
+
 // 探测可用（不占用）。首格与末格是落在节点边框上的锚点（节点框已登记为障碍），
 // 故跳过它们，只检查中间格。
-bool can_place(const WireGrid& grid, const std::vector<Point>& path) {
+bool can_place(const Obstacles& obs, const std::vector<Point>& path) {
     std::vector<Cell> cells;
     if (!path_cells(path, cells)) {
         return false;
@@ -144,8 +153,12 @@ bool can_place(const WireGrid& grid, const std::vector<Point>& path) {
         return true;  // 只有两个锚点格：无中间格可撞
     }
     for (std::size_t i = 1; i + 1 < cells.size(); ++i) {
-        if (!grid.in_bounds(cells[i].first, cells[i].second) ||
-            grid.occupied(cells[i].first, cells[i].second)) {
+        const auto x = cells[i].first;
+        const auto y = cells[i].second;
+        if (!obs.grid->in_bounds(x, y) || obs.grid->occupied(x, y)) {
+            return false;
+        }
+        if (obs.avoid_wires && (*obs.wires)[static_cast<std::size_t>(y) * obs.width + x] != 0) {
             return false;
         }
     }
@@ -153,13 +166,17 @@ bool can_place(const WireGrid& grid, const std::vector<Point>& path) {
 }
 
 // 占用整条折线（调用前须先 can_place）。
-void place(WireGrid& grid, const std::vector<Point>& path) {
+void place(Obstacles& obs, const std::vector<Point>& path) {
     std::vector<Cell> cells;
     if (!path_cells(path, cells)) {
         return;
     }
     for (std::size_t i = 1; i + 1 < cells.size(); ++i) {
-        (void)grid.occupy(cells[i].first, cells[i].second);
+        const auto x = cells[i].first;
+        const auto y = cells[i].second;
+        // 连线只记进 wires：grid 保持"只有节点框"的语义，这样 avoid_wires=false
+        // 时连线之间真的可以相交（相交处由 junction_char 合成 ┼）。
+        (*obs.wires)[static_cast<std::size_t>(y) * obs.width + x] = 1;
     }
 }
 
@@ -205,8 +222,27 @@ std::size_t route_edges(Graph& graph, RouteStyle style, const RouteOptions& opts
                                 from->box().y + from->box().h / 2.0};
         const Point to_center{to->box().x + to->box().w / 2.0,
                               to->box().y + to->box().h / 2.0};
-        leave_side[i] = side_towards(from_center, to_center);
-        enter_side[i] = side_towards(to_center, from_center);
+        // 侧别优先看两框在哪个轴上分离：分层图里跨列的边应当**横向**进出（走
+        // 列的左/右边），而不是按中心连线的主导轴选到上/下侧。选到上/下侧时，
+        // 出框第一段会贴着自己框的上下边框走，中间格仍在框内（如 5×3 的框从
+        // 南边出发，x 要横穿 2 格才出框），被障碍判定否决后退化成斜线。
+        // 两条轴上的框间隙（交叠时为负）。间隙太窄时不该从那一侧进出：锚点会
+        // 紧贴对方框、出框第一格就撞障碍，反而比按方向选侧更差。
+        constexpr double kMinPortGap = 2.0;
+        const double x_gap = std::max(from->box().x, to->box().x) -
+                             std::min(from->box().right(), to->box().right());
+        const double y_gap = std::max(from->box().y, to->box().y) -
+                             std::min(from->box().bottom(), to->box().bottom());
+        if (x_gap >= kMinPortGap) {
+            leave_side[i] = to_center.x >= from_center.x ? PortSide::East : PortSide::West;
+            enter_side[i] = to_center.x >= from_center.x ? PortSide::West : PortSide::East;
+        } else if (y_gap >= kMinPortGap) {
+            leave_side[i] = to_center.y >= from_center.y ? PortSide::South : PortSide::North;
+            enter_side[i] = to_center.y >= from_center.y ? PortSide::North : PortSide::South;
+        } else {
+            leave_side[i] = side_towards(from_center, to_center);
+            enter_side[i] = side_towards(to_center, from_center);
+        }
         leave_groups[{edge.from(), side_key(leave_side[i])}].push_back(i);
         enter_groups[{edge.to(), side_key(enter_side[i])}].push_back(i);
     }
@@ -234,15 +270,22 @@ std::size_t route_edges(Graph& graph, RouteStyle style, const RouteOptions& opts
     }
 
     // 第三遍：先把节点框登记为障碍，再逐边定折线。
+    std::vector<char> wires;
     if (grid != nullptr) {
         reserve_nodes(graph, *grid);
+        wires.assign(static_cast<std::size_t>(grid->width()) * grid->height(), 0);
     }
+    Obstacles obs{grid, &wires, grid != nullptr ? grid->width() : 0u, opts.avoid_wires};
     std::size_t routed = 0;
     for (std::size_t i = 0; i < count; ++i) {
         if (!routable[i]) {
             continue;
         }
         Edge& edge = graph.edges()[i];
+        edge.set_route_failed(false);  // 重置：本次重算的成败以此为准（雷区1 信号）
+        if (opts.keep_existing_routes && edge.route().size() >= 2) {
+            continue;  // 布局阶段已给出折线（长边骨架），直接沿用
+        }
         const Node* from = graph.find(edge.from());
         const Node* to = graph.find(edge.to());
         if (from == nullptr || to == nullptr) {
@@ -279,8 +322,8 @@ std::size_t route_edges(Graph& graph, RouteStyle style, const RouteOptions& opts
                 }
                 const double mid = std::round(base + static_cast<double>(detour * sign));
                 std::vector<Point> candidate = orthogonal_path(a, b, horizontal, mid);
-                if (can_place(*grid, candidate)) {
-                    place(*grid, candidate);
+                if (can_place(obs, candidate)) {
+                    place(obs, candidate);
                     chosen = std::move(candidate);
                     break;
                 }
@@ -290,16 +333,19 @@ std::size_t route_edges(Graph& graph, RouteStyle style, const RouteOptions& opts
             // Z 形都不通时退一档：两种 L 形（只拐一次），仍做障碍检查。
             const std::vector<Point> horizontal_first = simplify({a, Point{b.x, a.y}, b});
             const std::vector<Point> vertical_first = simplify({a, Point{a.x, b.y}, b});
-            if (can_place(*grid, horizontal_first)) {
-                place(*grid, horizontal_first);
+            if (can_place(obs, horizontal_first)) {
+                place(obs, horizontal_first);
                 chosen = horizontal_first;
-            } else if (can_place(*grid, vertical_first)) {
-                place(*grid, vertical_first);
+            } else if (can_place(obs, vertical_first)) {
+                place(obs, vertical_first);
                 chosen = vertical_first;
             }
         }
         if (chosen.empty()) {
-            chosen = {a, b};  // 最后手段：直线（不占用栅格，也不再保证不穿节点）
+            // 最后手段：直线（不占用栅格，也不再保证不穿节点）。这是"正交避让失败"
+            // 的信号，置 route_failed 让上层可提示"此处过挤"（雷区1）。
+            chosen = {a, b};
+            edge.set_route_failed(true);
         }
         edge.set_route(std::move(chosen));
         ++routed;

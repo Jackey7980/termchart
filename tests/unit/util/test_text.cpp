@@ -50,4 +50,21 @@ TEST_CASE("util: fit 同时做截断与补齐") {
     CHECK(display_width(fitted) == 3);
 }
 
+TEST_CASE("util: 超宽单簇不被丢弃（雷区2）") {
+    // 单个簇（如 2 宽的汉字）比行宽还宽时，force_break 必须整簇保留，
+    // 绝不能静默丢字（旧实现 prefix_by_width 返回 0 → 整簇被吞）。
+    const auto lines = wrap("\u4e2d", 1, true);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0] == "\u4e2d");
+
+    SUBCASE("超宽簇夹在文本中间也不丢后续字符") {
+        const auto mixed = wrap("a\u4e2db", 1, true);
+        std::string joined;
+        for (const auto& l : mixed) {
+            joined += l;
+        }
+        CHECK(joined == "a\u4e2db");  // 字符一个不少
+    }
+}
+
 }  // namespace

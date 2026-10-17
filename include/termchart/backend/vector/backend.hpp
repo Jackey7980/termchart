@@ -20,6 +20,10 @@ struct VectorOptions {
     bool autofit = true;   // 用 Scene::bounds() 自动定 viewBox
     double width = 640.0;  // autofit=false 时使用的画布尺寸
     double height = 480.0;
+    // 文字的字号（场景单位）。0 表示沿用旧行为 = scale：scene 单位当作像素时
+    // 恰好是 1px 字（历史金标如此）。以"格"为场景单位的图形（如 graph）要把
+    // 它设成 1.0——字号是场景单位而不是输出单位，否则会放大 scale 倍。
+    double font_size = 0.0;
 };
 
 class VectorBackend : public Backend {

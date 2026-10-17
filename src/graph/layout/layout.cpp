@@ -4,12 +4,18 @@
 #include <algorithm>
 #include <cstddef>
 #include <queue>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include "termchart/util/wcwidth.hpp"
 
+#include "cycle_removal.hpp"
+
 namespace termchart::graph {
+
+using layout_internal::CycleRemoval;
+using layout_internal::DirectedEdge;
 
 namespace {
 
@@ -44,9 +50,28 @@ std::unordered_map<NodeId, std::size_t> index_by_id(const Graph& graph) {
 }  // namespace
 
 Rect node_box_for(const Node& node, const LayoutOptions& opts) noexcept {
-    const int label_width = util::display_width(node.label());
+    // 多行标签（'\n' 分行）：宽取最长行，高 = 行数 + 2（上下边框各一行）。
+    // 单行标签与旧行为完全一致（行数 1 ⇒ 高 = 3，仍由 min_height 兜底），
+    // 只有多行标签才会把框撑高——这是"不等高节点"的来源，也是层内坐标分配
+    // 真正有空间的场景：等高节点的层内步长恒定，位置没有自由度可言。
+    const std::string_view label = node.label();
+    int label_width = 0;
+    int lines = 1;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t nl = label.find('\n', start);
+        const std::string_view line = nl == std::string_view::npos
+                                          ? label.substr(start)
+                                          : label.substr(start, nl - start);
+        label_width = std::max(label_width, util::display_width(line));
+        if (nl == std::string_view::npos) {
+            break;
+        }
+        ++lines;
+        start = nl + 1;
+    }
     const double width = std::max(opts.min_width, static_cast<double>(label_width) + 2.0);
-    const double height = std::max(opts.min_height, 2.0);
+    const double height = std::max(opts.min_height, static_cast<double>(lines) + 2.0);
     return Rect{0.0, 0.0, width, height};
 }
 
@@ -87,74 +112,53 @@ Rect layout_layered(Graph& graph, const LayoutOptions& opts) {
     const std::size_t count = graph.nodes().size();
     const std::unordered_map<NodeId, std::size_t> index = index_by_id(graph);
 
-    std::vector<std::vector<std::size_t>> out_edges(count);
-    std::vector<std::vector<std::size_t>> in_edges(count);
-    std::vector<int> in_degree(count, 0);
+    // —— 破环（与 layout_sugiyama 同一份实现）——
+    // layout_layered 是含环图的"before 基线"来源：如果它还用旧的就地兜底，而
+    // layout_sugiyama 已经先打成 DAG，两张图的分层就不一样，before/after 的差值
+    // 里混着"破环方式不同"这一项，读出来的数不能用来评价降交叉。
+    std::vector<std::pair<std::size_t, std::size_t>> raw_edges;
+    raw_edges.reserve(graph.edge_count());
     for (const Edge& e : graph.edges()) {
         const auto from_it = index.find(e.from());
         const auto to_it = index.find(e.to());
         if (from_it == index.end() || to_it == index.end()) {
             continue;
         }
-        out_edges[from_it->second].push_back(to_it->second);
-        in_edges[to_it->second].push_back(from_it->second);
-        ++in_degree[to_it->second];
+        raw_edges.emplace_back(from_it->second, to_it->second);
+    }
+    const layout_internal::CycleRemoval dag = layout_internal::remove_cycles(count, raw_edges);
+
+    // 最长路径分层（Kahn 拓扑序）。输入已无环，所以不需要"没源点就挑一个当种子"、
+    // "处理不到的节点挂到前驱下一层"那套兜底——那套兜底会把环上的整条链塌到第 0 层。
+    // 反转的回边同样不参与：它视觉上就该往回走，若让它约束 rank，破环点会被推到
+    // 很后面（与 layout_sugiyama 保持同一口径，before/after 才可比）。
+    std::vector<std::vector<std::size_t>> out_edges(count);
+    std::vector<int> in_degree(count, 0);
+    for (const layout_internal::DirectedEdge& e : dag.edges) {
+        if (e.reversed) {
+            continue;
+        }
+        out_edges[e.from].push_back(e.to);
+        ++in_degree[e.to];
     }
 
-    // 最长路径分层（Kahn 拓扑序）。
     std::vector<int> rank(count, 0);
     std::vector<int> remaining = in_degree;
-    std::vector<bool> processed(count, false);
     std::queue<std::size_t> ready;
-    bool has_source = false;
     for (std::size_t i = 0; i < count; ++i) {
         if (remaining[i] == 0) {
             ready.push(i);
-            has_source = true;
         }
-    }
-    if (!has_source) {
-        // 整图都是环（每个节点都有入边）：取入度最小者当起点破环。
-        // 否则全部节点都会留在第 0 层，退化成一根竖列。
-        std::size_t seed = 0;
-        for (std::size_t i = 1; i < count; ++i) {
-            if (remaining[i] < remaining[seed]) {
-                seed = i;
-            }
-        }
-        ready.push(seed);
-        remaining[seed] = 0;
     }
     while (!ready.empty()) {
         const std::size_t u = ready.front();
         ready.pop();
-        if (processed[u]) {
-            continue;  // 破环起点可能被再次入队
-        }
-        processed[u] = true;
         for (const std::size_t v : out_edges[u]) {
-            // 已处理过的 v 说明这条边是回边（破环后指向更早的层）：不能再抬高它，
-            // 否则破环点会被推到最后一层，整张图的层序就乱了。
-            if (!processed[v]) {
-                rank[v] = std::max(rank[v], rank[u] + 1);
-            }
-            if (--remaining[v] == 0 && !processed[v]) {
+            rank[v] = std::max(rank[v], rank[u] + 1);
+            if (--remaining[v] == 0) {
                 ready.push(v);
             }
         }
-    }
-    // 仍留在环上的节点：挂到"已定层前驱"的下一层；没有这样的前驱则留 0 层。
-    for (std::size_t i = 0; i < count; ++i) {
-        if (processed[i]) {
-            continue;
-        }
-        int best = -1;
-        for (const std::size_t p : in_edges[i]) {
-            if (processed[p]) {
-                best = std::max(best, rank[p]);
-            }
-        }
-        rank[i] = best >= 0 ? best + 1 : 0;
     }
 
     int max_rank = 0;

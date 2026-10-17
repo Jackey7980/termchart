@@ -63,3 +63,6 @@ docs/_build/
 .clangd
 .clang-tidy-local
 CMakeUserPresets.local.json
+
+# 并行 Agent 会话产物（不入库）
+.codebuddy/

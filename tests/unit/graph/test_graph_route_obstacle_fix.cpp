@@ -94,6 +94,37 @@ TEST_CASE("graph/route_avoiding: 障碍横挡直连走廊时折线不穿障") {
     // 禁行区 = 外扩障碍 + 两个节点框；中间格一律不得进入。
     const std::vector<Rect> zones{expanded(obstacle, 1.0), ab, bb};
     check_route_avoids(graph, zones);
+    CHECK_FALSE(graph.edges()[0].route_failed());  // 成功重绕 → 非失败兜底（雷区1）
+}
+
+TEST_CASE("graph/route_avoiding: 修复需绕整屏时放弃并保留直连兜底（雷区1+雷区3）") {
+    Graph graph;
+    const NodeId a = graph.add_node("a").id();
+    const NodeId b = graph.add_node("b").id();
+    // a 在上、b 在下，同列。一条横贯全宽的墙（y=5..6 + clearance 1 → y=4..7）堵死直连，
+    // 唯一空通道是绕到栅格右端（x≈300）再折返——远超修复预算，BFS 应放弃，
+    // 保留 2 点直连 best-effort（route_failed 为真），且绝不产出绕整屏的巨凹形。
+    graph.find(a)->set_box(Rect{1.0, 1.0, 3.0, 2.0});
+    graph.find(b)->set_box(Rect{1.0, 9.0, 3.0, 2.0});
+    (void)graph.add_edge(a, b);
+
+    const Rect obstacle{0.0, 5.0, 300.0, 1.0};
+    ObstacleOptions opts;
+    opts.route.max_detour = 4;
+    CHECK(route_avoiding(graph, {obstacle}, opts) == 1);
+
+    const Edge& edge = graph.edges()[0];
+    CHECK(edge.route_failed());  // 正交失败 → 兜底直线，标记失败
+    // 修复被预算截断：不得被重绕成绕整屏的巨型路径（雷区3·坑位B）。
+    const std::vector<Point> cells = route_cells(edge.route());
+    CHECK(cells.size() <= 50);
+    // 仍把两端连上（锚点落在各自框上）。
+    const Rect ab = graph.find(a)->box();
+    const Rect bb = graph.find(b)->box();
+    CHECK(edge.route().front().y >= ab.y);
+    CHECK(edge.route().front().y <= ab.bottom());
+    CHECK(edge.route().back().y >= bb.y);
+    CHECK(edge.route().back().y <= bb.bottom());
 }
 
 TEST_CASE("graph/route_avoiding: Z 形起始段贴源框时兜底直线被重绕") {

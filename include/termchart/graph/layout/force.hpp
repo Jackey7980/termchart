@@ -23,6 +23,7 @@ struct ForceOptions {
     std::uint32_t iterations = 240;  // 迭代轮数
     double cooling = 0.95;           // 每轮温度衰减
     double min_step = 0.01;          // 温度低于此值提前收敛
+    double gravity = 0.05;           // 朝原点的弱引力（收拢无连边分量，防漂散）
 };
 
 // 力导向布局：就地写入 Node::set_box，返回所有节点外框的并集。

@@ -29,6 +29,26 @@ TEST_CASE("graph/layout: node_box_for 按标签显示宽度取尺寸") {
     CHECK(node_box_for(*graph.find(wide), opts).w == doctest::Approx(15.0));
 }
 
+TEST_CASE("graph/layout: node_box_for 多行标签把框撑高") {
+    Graph graph;
+    const NodeId single = graph.add_node("AB").id();
+    const NodeId two = graph.add_node("AB\nCD").id();
+    const NodeId three = graph.add_node("A\nBCDE\nC").id();
+    LayoutOptions opts;  // min_width 10、min_height 4
+    CHECK(node_box_for(*graph.find(single), opts).h == doctest::Approx(4.0));
+    CHECK(node_box_for(*graph.find(two), opts).h == doctest::Approx(4.0));   // 2 + 2 = 4
+    CHECK(node_box_for(*graph.find(three), opts).h == doctest::Approx(5.0));  // 3 + 2 = 5
+    // 宽度取最长行："BCDE" 4 + 2 = 6，仍由 min_width 10 兜底
+    CHECK(node_box_for(*graph.find(three), opts).w == doctest::Approx(10.0));
+
+    LayoutOptions narrow;
+    narrow.min_width = 5.0;
+    narrow.min_height = 3.0;
+    CHECK(node_box_for(*graph.find(three), narrow).w == doctest::Approx(6.0));
+    CHECK(node_box_for(*graph.find(three), narrow).h == doctest::Approx(5.0));
+    CHECK(node_box_for(*graph.find(single), narrow).h == doctest::Approx(3.0));
+}
+
 TEST_CASE("graph/layout: 网格布局按列推进且互不重叠") {
     Graph graph;
     for (int i = 0; i < 5; ++i) {

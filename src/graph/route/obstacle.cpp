@@ -87,10 +87,20 @@ bool route_hits_blocked(const WireGrid& grid, const std::vector<Point>& route) {
     return false;
 }
 
+// BFS 复用缓冲：parent/gen 只在尺寸增长时一次性重分配（坑位A——不每条边重分配/清零）；
+// gen 用 epoch 戳即可免清零区分"是否已访问"。
+struct BfsScratch {
+    std::vector<std::int32_t> parent;
+    std::vector<std::int32_t> gen;
+    std::int32_t epoch = 0;
+};
+
 // BFS 找一条绕开所有占用格的轴对齐路径（起终点是节点边框上的锚点格，允许其
 // 本身被占用）。找不到返回空。邻居展开顺序固定（右、左、下、上），同一张栅格
-// 上结果确定。
-std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b) {
+// 上结果确定。max_cells 限制探索格数（雷区3·坑位B：防止把"稍穿一个节点"的线
+// 绕成绕整屏的巨型凹形），亦限制最坏耗时。
+std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b, std::size_t max_cells,
+                             BfsScratch& scratch) {
     const std::uint32_t w = grid.width();
     const std::uint32_t h = grid.height();
     if (w == 0 || h == 0 ||
@@ -113,13 +123,22 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b) {
 
     // parent[i]：-2 未访问，-1 为起点，其余为前驱格的线性下标。
     const std::size_t cells_n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-    std::vector<std::int32_t> parent(cells_n, -2);
+    // 复用 scratch：尺寸不够才扩（一次性到 cells_n）；gen 用 epoch 戳免清零（坑位A）。
+    if (scratch.parent.size() < cells_n) {
+        scratch.parent.assign(cells_n, -1);
+    }
+    if (scratch.gen.size() < cells_n) {
+        scratch.gen.assign(cells_n, 0);
+    }
+    ++scratch.epoch;
     const auto linear = [w](Cell c) {
         return static_cast<std::int32_t>(static_cast<std::size_t>(c.second) * w + c.first);
     };
     std::vector<Cell> queue{start};
-    parent[static_cast<std::size_t>(linear(start))] = -1;
+    scratch.gen[static_cast<std::size_t>(linear(start))] = scratch.epoch;
+    scratch.parent[static_cast<std::size_t>(linear(start))] = -1;
     bool found = false;
+    std::size_t expanded = 0;
     for (std::size_t head = 0; head < queue.size() && !found; ++head) {
         const Cell cur = queue[head];
         const std::int32_t dxs[4] = {1, -1, 0, 0};
@@ -134,19 +153,22 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b) {
             const Cell next{static_cast<std::uint32_t>(nx), static_cast<std::uint32_t>(ny)};
             const std::size_t ni =
                 static_cast<std::size_t>(ny) * static_cast<std::size_t>(w) + static_cast<std::size_t>(nx);
-            if (parent[ni] != -2) {
+            if (scratch.gen[ni] == scratch.epoch) {
                 continue;
             }
             // 中间格必须空闲；终点格是锚点，允许落在占用（节点边框）上。
             if (next != goal && grid.occupied(next.first, next.second)) {
                 continue;
             }
-            parent[ni] = linear(cur);
+            scratch.parent[ni] = linear(cur);
             if (next == goal) {
                 found = true;
                 break;
             }
             queue.push_back(next);
+        }
+        if (++expanded >= max_cells) {
+            break;  // 雷区3·坑位B：超探索预算即放弃，避免绕整屏的巨型凹形
         }
     }
     if (!found) {
@@ -159,7 +181,7 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b) {
         const auto y = static_cast<std::uint32_t>(static_cast<std::size_t>(cur) / w);
         const auto x = static_cast<std::uint32_t>(static_cast<std::size_t>(cur) % w);
         path.emplace_back(x, y);
-        cur = parent[static_cast<std::size_t>(cur)];
+        cur = scratch.parent[static_cast<std::size_t>(cur)];
     }
     std::reverse(path.begin(), path.end());
 
@@ -189,13 +211,22 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b) {
 // 查），这条直线可能穿过外扩障碍甚至节点框——横挡直连走廊或 Z 形起始段贴着
 // 源框边框列走时必然发生。对每条中间格撞上占用的折线，用 BFS 在栅格上重找一
 // 条绕行正交路径，兑现 route_avoiding"折线不进入节点框或外扩障碍"的契约。
-void repair_blocked_routes(Graph& graph, WireGrid& grid) {
+// scratch 跨边复用（坑位A）；max_detour 决定修复预算（坑位B）。
+void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScratch& scratch) {
     for (Edge& edge : graph.edges()) {
         const std::vector<Point>& route = edge.route();
         if (route.size() < 2 || !route_hits_blocked(grid, route)) {
             continue;
         }
-        std::vector<Point> detour = bfs_around(grid, route.front(), route.back());
+        // 修复预算：直连曼哈顿距离 + 绕行余量；超预算（需绕整屏）即放弃，维持
+        // best-effort 直线兜底（route_failed 仍为 true）。雷区3·坑位B。
+        const std::size_t manh = static_cast<std::size_t>(
+            std::llabs(static_cast<long long>(route.front().x - route.back().x)) +
+            std::llabs(static_cast<long long>(route.front().y - route.back().y)));
+        const std::size_t max_cells =
+            manh + static_cast<std::size_t>(std::max(0, max_detour)) * 64u + 128u;
+        std::vector<Point> detour =
+            bfs_around(grid, route.front(), route.back(), max_cells, scratch);
         if (detour.size() < 2) {
             continue;  // 栅格上确实无路可绕：维持 best-effort 直线兜底。
         }
@@ -205,6 +236,7 @@ void repair_blocked_routes(Graph& graph, WireGrid& grid) {
             (void)grid.occupy(cells[i].first, cells[i].second);
         }
         edge.set_route(std::move(detour));
+        edge.set_route_failed(false);  // 成功重绕，不再是"失败兜底"
     }
 }
 
@@ -263,7 +295,8 @@ std::size_t route_avoiding(Graph& graph, const std::vector<Rect>& obstacles,
     // 节点框登记与 Z 形逐级绕行都在 route_edges 里（它自己会再登记一次节点框）。
     const std::size_t routed = route_edges(graph, RouteStyle::Orthogonal, opts.route, grid);
     if (grid != nullptr) {
-        repair_blocked_routes(graph, *grid);
+        BfsScratch scratch;  // 跨所有边复用，避免每条边各分配 16MB（坑位A）
+        repair_blocked_routes(graph, *grid, opts.route.max_detour, scratch);
     }
     return routed;
 }

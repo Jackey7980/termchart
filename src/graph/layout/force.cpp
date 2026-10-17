@@ -109,6 +109,14 @@ Rect layout_force(Graph& graph, const ForceOptions& opts) {
             dy[j] += uy * force;
         }
 
+        // 弱引力：把所有节点朝原点 (0,0) 轻轻收拢。连通图因边引力已自居中，此项
+        // 近乎无感；但它防止"无连边分量"（纯斥力、无引力）在冷却冻结前漂成离散
+        // 外壳。纯线性弹簧到原点 + 确定性（无随机），不破坏 golden/回归。
+        for (std::size_t i = 0; i < count; ++i) {
+            dx[i] -= opts.gravity * px[i];
+            dy[i] -= opts.gravity * py[i];
+        }
+
         // 限步长降温后位移。
         for (std::size_t i = 0; i < count; ++i) {
             const double len = std::sqrt(dx[i] * dx[i] + dy[i] * dy[i]);
@@ -120,6 +128,42 @@ Rect layout_force(Graph& graph, const ForceOptions& opts) {
             py[i] += dy[i] / len * step;
         }
         temperature *= opts.cooling;
+    }
+
+    // 硬碰撞移除：落格前做几轮 O(n^2) 分离，把重叠的节点对沿最小穿透轴推开。
+    // 斥力通常已分离，但标签长短不一时仍可能贴住；此趟保证不重叠（ASCII 栅格下
+    // 重叠 = 不可读）。确定性顺序（i,j 升序），不改变已有不重叠图的几何。
+    {
+        const double slack = 1.0;  // 额外留白，避免"刚好挨着"被判重叠
+        for (int relax = 0; relax < 8; ++relax) {
+            bool moved = false;
+            for (std::size_t i = 0; i < count; ++i) {
+                for (std::size_t j = i + 1; j < count; ++j) {
+                    const double aw = size[i].w + slack, ah = size[i].h + slack;
+                    const double bw = size[j].w + slack, bh = size[j].h + slack;
+                    const double dcx = (px[j] - size[j].w / 2.0) - (px[i] - size[i].w / 2.0);
+                    const double dcy = (py[j] - size[j].h / 2.0) - (py[i] - size[i].h / 2.0);
+                    const double ox = (aw + bw) / 2.0 - std::fabs(dcx);  // X 穿透量
+                    const double oy = (ah + bh) / 2.0 - std::fabs(dcy);  // Y 穿透量
+                    if (ox <= 0.0 || oy <= 0.0) {
+                        continue;  // 本轴不重叠
+                    }
+                    if (ox < oy) {
+                        const double s = (dcx >= 0.0 ? 1.0 : -1.0) * ox / 2.0;
+                        px[i] -= s;
+                        px[j] += s;
+                    } else {
+                        const double s = (dcy >= 0.0 ? 1.0 : -1.0) * oy / 2.0;
+                        py[i] -= s;
+                        py[j] += s;
+                    }
+                    moved = true;
+                }
+            }
+            if (!moved) {
+                break;
+            }
+        }
     }
 
     // 落格：位置是中心点，先按中心算外框左上角，再整体平移到边距并取整。

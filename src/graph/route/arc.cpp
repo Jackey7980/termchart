@@ -341,6 +341,7 @@ std::size_t route_arc(Graph& graph, const RouteOptions& opts, WireGrid* grid) {
         }
 
         std::vector<Point> chosen;
+        edge.set_route_failed(false);  // 重置：本次重算的成败以此为准（雷区1 信号）
         if (edge.from() == edge.to()) {
             const Rect box = from->box();
             if (box.w >= 1.0 && box.h >= 1.0 && box.x >= 0.0 && box.y >= 0.0 &&
@@ -355,6 +356,9 @@ std::size_t route_arc(Graph& graph, const RouteOptions& opts, WireGrid* grid) {
             const Point a = anchor_route.front();
             const Point b = anchor_route.back();
             chosen = arc_between(a, b, opts, boxes, g);
+            // arc_between 仅在贝塞尔全部放不下时退回 2 点直线兜底 → 视为路由失败
+            // （雷区1）；成功曲线 ≥ 3 点。
+            edge.set_route_failed(chosen.size() <= 2);
             if (!chosen.empty()) {
                 chosen.front() = a;  // 端点钉死在锚点上，抵消取整漂移
                 chosen.back() = b;

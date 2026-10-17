@@ -77,6 +77,11 @@ target_include_directories(termchart_gui INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(termchart_gui INTERFACE termchart::termchart)
 
+# 原生 Win32 GUI 后端（可选插件，默认关）：接上即可开真实窗口；不进核心零依赖构建。
+if(TERMCHART_BUILD_GUI_WIN32 AND WIN32)
+    add_subdirectory(plugins/gui_win32)
+endif()
+
 # ── 测试与示例 ────────────────────────────────────────────────────────────
 if(TERMCHART_BUILD_TESTS)
     enable_testing()

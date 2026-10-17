@@ -1,4 +1,4 @@
-// 58_gui_terminal.cpp —— termchart_gui 平行栈经 TuiBackend 真彩出到终端
+// 61_gui_terminal.cpp —— termchart_gui 平行栈经 TuiBackend 真彩出到终端
 //
 // 与 57 同源的一棵控件树（Label + Button + Slider），但改用 TuiBackend：把 GUI 画好的
 // image::Bitmap 用 Unicode 上半块（▀）逐格刷到终端——每格上/下两像素映射为前景/背景
@@ -19,11 +19,11 @@
 
 namespace {
 
-using namespace termchart_gui;
+    using namespace termchart_gui;
 
-}  // namespace
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char* const* argv) {
     // 120×48 像素画布（halfblock → 120 列 × 24 文本行）。
     TuiBackend backend(120, 48, termchart::ColorDepth::TrueColor);
 
@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
     const Event click = tk_event_map::mouse_press(60.0, 18.0);
     const bool hit = mount.dispatch_event(click);
     if (hit) {
-        mount.paint_all();  // 按钮进入按下态 → 重绘
+        mount.paint_all(); // 按钮进入按下态 → 重绘
     }
 
     if (argc > 1) {

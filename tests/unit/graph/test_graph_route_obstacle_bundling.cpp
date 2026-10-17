@@ -117,3 +117,47 @@ TEST_CASE("graph/route_bundled: 空边集返回 0") {
     CHECK(route_bundled(graph, BundlingOptions{}) == 0);
     CHECK(route_avoiding(graph, {}, ObstacleOptions{}) == 0);
 }
+
+TEST_CASE("graph/route_bundled: 并束点与末段不进入任何节点框（grid 判定，雷区2）") {
+    Graph graph;
+    const NodeId t1 = graph.add_node("t1").id();
+    const NodeId t2 = graph.add_node("t2").id();
+    (void)graph.add_edge(graph.add_node("a0").id(), t1);
+    (void)graph.add_edge(graph.add_node("a1").id(), t1);
+    (void)graph.add_edge(graph.add_node("a2").id(), t1);
+    (void)graph.add_edge(graph.add_node("b0").id(), t2);
+    (void)graph.add_edge(graph.add_node("b1").id(), t2);
+    (void)graph.add_edge(graph.add_node("b2").id(), t2);
+    (void)layout_layered(graph, LayoutOptions{});
+    CHECK(route_bundled(graph, BundlingOptions{}) == 6);
+    // 收集所有节点框，断言每条边的中间格都不落进任何框（含并束点 / 末段）。
+    std::vector<Rect> boxes;
+    for (const Node& node : graph.nodes()) {
+        const Rect b = node.box();
+        if (b.w >= 1.0 && b.h >= 1.0) boxes.push_back(b);
+    }
+    for (const Edge& edge : graph.edges()) {
+        const std::vector<Point>& route = edge.route();
+        REQUIRE(route.size() >= 2);
+        std::vector<Point> cells;
+        for (std::size_t i = 1; i < route.size(); ++i) {
+            const Point& p0 = route[i - 1];
+            const Point& p1 = route[i];
+            const int steps = static_cast<int>(
+                std::ceil(std::max(std::fabs(p1.x - p0.x), std::fabs(p1.y - p0.y))));
+            for (int s = 0; s <= steps; ++s) {
+                const double t = static_cast<double>(s) / static_cast<double>(steps);
+                cells.push_back(Point{std::round(p0.x + (p1.x - p0.x) * t),
+                                      std::round(p0.y + (p1.y - p0.y) * t)});
+            }
+        }
+        if (cells.size() <= 2) continue;
+        for (std::size_t c = 1; c + 1 < cells.size(); ++c) {
+            for (const Rect& z : boxes) {
+                const bool inside = cells[c].x >= z.x && cells[c].x < z.right() &&
+                                    cells[c].y >= z.y && cells[c].y < z.bottom();
+                CHECK_MESSAGE(!inside, "bundled route enters a node box");
+            }
+        }
+    }
+}

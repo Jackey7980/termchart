@@ -10,14 +10,21 @@
 namespace termchart::util {
 namespace {
 
-constexpr std::size_t kBufferSize = 64;
+constexpr std::size_t kBufferSize = 512;
 
 std::string_view fixed_to_chars(char* buffer, std::size_t capacity, double value, int precision) {
     const int clamped = precision < 0 ? 0 : (precision > 12 ? 12 : precision);
-    const auto result = std::to_chars(buffer, buffer + capacity, value,
-                                      std::chars_format::fixed, clamped);
+    auto result = std::to_chars(buffer, buffer + capacity, value,
+                                std::chars_format::fixed, clamped);
     if (result.ec != std::errc{}) {
-        return std::string_view{};
+        // 极端值（如 1e300 用 fixed+12 位小数会超过缓冲区 → value_too_large）退回
+        // scientific，给出一个有界且可读的表示，而不是空白（见雷区1）。scientific
+        // 对任意有限 double 都只有约 13 个字符，512 缓冲区永不溢出。
+        result = std::to_chars(buffer, buffer + capacity, value,
+                               std::chars_format::scientific, std::min(clamped, 6));
+        if (result.ec != std::errc{}) {
+            return std::string_view{};
+        }
     }
     return std::string_view(buffer, static_cast<std::size_t>(result.ptr - buffer));
 }

@@ -309,8 +309,12 @@ std::size_t route_bundled(Graph& graph, const BundlingOptions& opts, WireGrid* g
             if (from == nullptr) {
                 continue;
             }
-            edge.set_route(route_one(*grid, from_anchor[i], to_anchor[i], from->box(),
-                                     to->box(), opts.route.max_detour));
+            const std::vector<Point> one = route_one(*grid, from_anchor[i], to_anchor[i],
+                                                    from->box(), to->box(),
+                                                    opts.route.max_detour);
+            // route_one 只在 Z 形/L 形全部失败时退回 2 点直线兜底 → 视为路由失败（雷区1）。
+            edge.set_route(one);
+            edge.set_route_failed(one.size() <= 2);
             done[i] = true;
             ++routed;
             continue;
@@ -348,13 +352,14 @@ std::size_t route_bundled(Graph& graph, const BundlingOptions& opts, WireGrid* g
                 cand.y > kMaxGridCoord) {
                 break;
             }
-            bool inside = false;
-            for (const Node& node : graph.nodes()) {
-                if (node.box().contains(cand)) {
-                    inside = true;
-                    break;
-                }
-            }
+            // 并束点必须落在所有节点框之外：直接查已登记节点框的栅格（O(1)），不再每候选
+            // 全量遍历 graph.nodes()（组数×尝试次数×节点数 在高密度图下会爆成 O(G·V)）。
+            // 注：grid 里还含已路由连线，occupied 是"节点框"的超集——并束点本就应避免
+            // 压在既有连线上，更严但不会比原逻辑更糟（找不到框外点时整组退回普通路由）。
+            const bool inside = grid->in_bounds(static_cast<std::uint32_t>(cand.x),
+                                               static_cast<std::uint32_t>(cand.y)) &&
+                                grid->occupied(static_cast<std::uint32_t>(cand.x),
+                                               static_cast<std::uint32_t>(cand.y));
             if (!inside) {
                 bundle = cand;
                 found = true;
@@ -432,10 +437,14 @@ std::size_t route_bundled(Graph& graph, const BundlingOptions& opts, WireGrid* g
             if (picked[k].ok) {
                 place(*grid, picked[k].path);  // 已占用的格静默跳过：共享段只占一次
                 edge.set_route(std::move(picked[k].path));
+                edge.set_route_failed(false);
             } else {
-                edge.set_route(route_one(*grid, from_anchor[i], to_anchor[i],
-                                         from->box(), to->box(),
-                                         opts.route.max_detour));
+                const std::vector<Point> one = route_one(*grid, from_anchor[i], to_anchor[i],
+                                                        from->box(), to->box(),
+                                                        opts.route.max_detour);
+                // 整组放弃捆绑、退回普通路由，route_one 仍可能退回直线兜底。
+                edge.set_route(one);
+                edge.set_route_failed(one.size() <= 2);
             }
             done[i] = true;
             ++routed;

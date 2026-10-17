@@ -2713,11 +2713,16 @@ struct Rect {
         return contains(Point{px, py});
     }
 
+    // 半开区间相交：仅接触边（o.x == right()）不算相交；退化矩形（w/h <= 0）是空集，
+    // 与任何矩形（含另一个退化矩形）都不相交。否则会出现 intersects 为真而
+    // intersection 为空、contains 对任何点为假的矛盾。加守卫后
+    // intersects(o) 与 !intersection(o).empty() 严格等价。
     constexpr bool intersects(const Rect& o) const noexcept {
-        return x < o.right() && o.x < right() && y < o.bottom() && o.y < bottom();
+        return !empty() && !o.empty() && x < o.right() && o.x < right() && y < o.bottom() &&
+               o.y < bottom();
     }
 
-    // 相交矩形；无交返回空矩形（w=h=0）。
+    // 相交矩形；无交（含任一矩形退化）返回空矩形（w=h=0）。
     constexpr Rect intersection(const Rect& o) const noexcept {
         if (!intersects(o)) {
             return Rect{};
@@ -10962,6 +10967,18 @@ struct LayoutOptions {
     double h_gap = 4.0;        // 水平间距
     double v_gap = 2.0;        // 垂直间距
     double margin = 1.0;       // 画布边距
+    // 层内坐标分配是否做"邻居对齐"（Sugiyama 第三步的朴素版）。默认关。
+    // 实测（examples/60_dense_sugiyama，70 节点 / 98 边）：
+    //   紧堆（false）：交叉 37、总长 1328 格、拐点 180
+    //   朴素对齐（true）：交叉 40、总长 1942 格、拐点 204
+    // 朴素版把节点推到"邻居中位数"却不限制层高膨胀，空隙全摊到竖直段上，
+    // 除长边折返（2→0）外全指标更差。正确做法需要 Brandes–Köpf 的 block/shift
+    // 来约束膨胀，等它落地后再考虑把这步打开。
+    bool align_rows = false;
+    // align_rows = true 时的层高膨胀上限（相对紧堆高度）。对齐用"图更高"换"边更直"，
+    // 但换太多就退回来：超过该比例的层整体回退到紧堆位置，该层的对齐收益放弃、
+    // 图高不受影响。0 = 只允许零膨胀（几乎等于不回退），1 = 允许翻倍。
+    double align_slack = 0.15;
 };
 
 // 单个节点的外框尺寸（原点在 0,0）：宽度按标签显示宽度取 max(最小宽, 标签宽+2)。
@@ -11572,6 +11589,15 @@ enum class RouteStyle {
 
 struct RouteOptions {
     int max_detour = 8;  // 正交路由向两侧尝试的最大偏移（格）
+    // 是否把"已路由的连线"也当障碍。默认开：稀疏图里连线互不重叠更好看。
+    // 密集图（几十条边挤在层间通道里）建议关：连线之间本就必然相交，硬要
+    // 互避会让后来的边找不到任何正交通路、退化成斜线；交叉处由 junction_char
+    // 合成 ┼ 表达，比斜线乱穿清楚得多。节点外框无论此开关如何都是障碍。
+    bool avoid_wires = true;
+    // 尊重已有的折线：布局阶段（layout_sugiyama）会给跨多层的长边写一条沿
+    // dummy 槽位走的正交通道折线，比这里的通用 Z 形更准（不会撞中间列的节点框）。
+    // 默认为 false：不看已有 route，全部按本函数重算，行为与以前一致。
+    bool keep_existing_routes = false;
 };
 
 // 为所有边计算折线并写入 Edge::set_route（首尾为节点边框上的锚点）。
@@ -13620,6 +13646,10 @@ struct VectorOptions {
     bool autofit = true;   // 用 Scene::bounds() 自动定 viewBox
     double width = 640.0;  // autofit=false 时使用的画布尺寸
     double height = 480.0;
+    // 文字的字号（场景单位）。0 表示沿用旧行为 = scale：scene 单位当作像素时
+    // 恰好是 1px 字（历史金标如此）。以"格"为场景单位的图形（如 graph）要把
+    // 它设成 1.0——字号是场景单位而不是输出单位，否则会放大 scale 倍。
+    double font_size = 0.0;
 };
 
 class VectorBackend : public Backend {
@@ -16219,6 +16249,42 @@ TERMCHART_API Status print_line(std::string_view text, const Style& style,
 
 // 零配置演示：一行调用即看到彩色输出（examples/32_quick_one_liner.cpp）。
 TERMCHART_API Status hello(const Opts& opts = {}) noexcept;
+
+// ── 一行出图（matplotlib 式零配置）────────────────────────────────────────────
+//
+// 目标：新手 `api::plot(x, y)` 一行即见图，**无需注册 backend、无需选字体、无需懂
+// Scene/Chart/Backend 分层**。内部固定走 CellBuffer → Canvas → chart → Renderer →
+// stdout（ANSI），把 backend 选择/颜色降级全藏在壳里。headless / 测试用 render_*。
+
+struct PlotOpts {
+    std::uint32_t width = 80;
+    std::uint32_t height = 24;
+    std::string title;
+    ColorDepth depth = ColorDepth::TrueColor;
+    bool show_legend = false;  // 单系列默认不画图例（新手向）
+};
+
+// 折线图：(x[i], y[i]) 逐点连线 + 数据点标记。
+TERMCHART_API Result<std::string> render_plot(const std::vector<double>& x,
+                                              const std::vector<double>& y,
+                                              const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status plot(const std::vector<double>& x, const std::vector<double>& y,
+                          const PlotOpts& opts = {}) noexcept;
+
+// 散点图：不连线，仅标记每个点。
+TERMCHART_API Result<std::string> render_scatter(const std::vector<double>& x,
+                                                 const std::vector<double>& y,
+                                                 const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status scatter(const std::vector<double>& x, const std::vector<double>& y,
+                             const PlotOpts& opts = {}) noexcept;
+
+// 柱状图：values[i] 配 labels[i]（labels 缺省按序号）。
+TERMCHART_API Result<std::string> render_bar(const std::vector<double>& values,
+                                             const std::vector<std::string>& labels,
+                                             const PlotOpts& opts = {}) noexcept;
+TERMCHART_API Status bar(const std::vector<double>& values,
+                         const std::vector<std::string>& labels,
+                         const PlotOpts& opts = {}) noexcept;
 
 }  // namespace termchart::api
 

@@ -1,12 +1,15 @@
-// 56_sugiyama.cpp —— Sugiyama 分层图：分层 → 层内排序（重心法）→ 正交路由 → 字符画
+// 56_sugiyama.cpp —— Sugiyama 分层图：分层 → 层内降交叉 → 坐标分配 → 正交路由 → 字符画
 //
-// 规格里 sugiyama 没有独立入口（backlog 登记：分层部分由 graph::layout_layered
-// 覆盖，交叉最小化仍是缺口），所以本示例把 Sugiyama 的前四步**显式**串起来：
-//   1. 分层   graph::layout_layered —— Kahn 最长路径定层，层 = 列（同层共享 x）
-//   2. 排序   重心法（barycenter）上下交替扫描，减少层间边交叉（本示例内实现）
-//   3. 路由   graph::route_edges(RouteStyle::Orthogonal) + WireGrid 避障
-//   4. 绘制   graph/shape 画框、canvas 画折线、arrow_head_char 画箭头
-// 排序的收益用 graph::count_crossings（节点中心连线段）量化：排序前 vs 排序后。
+// 布局四步**全部**走库的真实现，示例内不再手写任何布局算法：
+//   ① 分层      graph::layout_sugiyama 内部：最长路径定层（含破环）
+//   ② 降交叉    graph::layout_sugiyama 内部：median 启发式双向扫描（默认 4 轮）
+//   ③ 坐标分配  graph::layout_sugiyama 内部：层 = 列，层内按降交叉后的顺序纵向排列
+//   ④ 边路由    graph::route_edges(RouteStyle::Orthogonal) + WireGrid 避障
+// 绘制部分用库原语：graph/shape 画框、canvas 画折线、arrow_head_char 画箭头。
+//
+// 降交叉的收益用 graph::count_crossings（节点中心连线段）量化：同一张图先走
+// graph::layout_layered（同样分层，但层内按登记顺序、不做降交叉）拿基线，再走
+// layout_sugiyama；两次都是库实现，数的都是摆好坐标后的真实几何。
 //
 // 演示图故意按"必然交叉"的顺序登记：L0 的 A/B/C 与 L1 的 D/E/F 逆序相连。
 #include <algorithm>
@@ -27,6 +30,7 @@
 #include "termchart/graph/crossing.hpp"
 #include "termchart/graph/graph.hpp"
 #include "termchart/graph/layout/layout.hpp"
+#include "termchart/graph/layout/sugiyama.hpp"
 #include "termchart/graph/port.hpp"
 #include "termchart/graph/route/route.hpp"
 #include "termchart/graph/shape/shape.hpp"
@@ -38,112 +42,7 @@ namespace {
 
 using namespace termchart;
 
-using LayerOrder = std::vector<std::vector<graph::NodeId>>;
-
-// ── 步骤 1 的副产品：把"层"还原出来 ──────────────────────────────────────
-// layout_layered 把同一层的节点摆在同一个 x 上（层 = 列），按 x 分组即可反推分层。
-LayerOrder layers_by_column(const graph::Graph& graph) {
-    std::map<double, std::vector<graph::NodeId>> by_x;
-    for (const graph::Node& node : graph.nodes()) {
-        by_x[node.box().x].push_back(node.id());
-    }
-    LayerOrder layers;
-    layers.reserve(by_x.size());
-    for (auto& entry : by_x) {
-        layers.push_back(std::move(entry.second));
-    }
-    return layers;
-}
-
-// ── 步骤 2：重心法 ───────────────────────────────────────────────────────
-// 一个节点在相邻层里的"重心" = 邻居当前层内序号的平均值；没有可用邻居时保持原位。
-// 跨层长边（跨度 > 1 层）不参与——Sugiyama 里它要插虚节点，这里简化跳过。
-double barycenter_of(const graph::Graph& graph, graph::NodeId id, bool predecessors,
-                     const std::vector<graph::NodeId>& adjacent_layer, double fallback) {
-    double sum = 0.0;
-    std::size_t count = 0;
-    for (const graph::Edge& edge : graph.edges()) {
-        graph::NodeId other = graph::kInvalidNode;
-        if (predecessors && edge.to() == id) {
-            other = edge.from();
-        } else if (!predecessors && edge.from() == id) {
-            other = edge.to();
-        }
-        if (other == graph::kInvalidNode) {
-            continue;
-        }
-        const auto it = std::find(adjacent_layer.begin(), adjacent_layer.end(), other);
-        if (it == adjacent_layer.end()) {
-            continue;
-        }
-        sum += static_cast<double>(it - adjacent_layer.begin());
-        ++count;
-    }
-    return count == 0 ? fallback : sum / static_cast<double>(count);
-}
-
-// 一次扫描：downward 时自左向右用前驱的重心定序，upward 时自右向左用后继的重心。
-void sweep(const graph::Graph& graph, LayerOrder& order, bool downward) {
-    const std::size_t layer_count = order.size();
-    for (std::size_t step = 0; step < layer_count; ++step) {
-        const std::size_t l = downward ? step : layer_count - 1 - step;
-        const bool has_adjacent = downward ? (l > 0) : (l + 1 < layer_count);
-        if (!has_adjacent) {
-            continue;
-        }
-        const std::vector<graph::NodeId>& adjacent = downward ? order[l - 1] : order[l + 1];
-        std::vector<std::pair<double, graph::NodeId>> keyed;
-        keyed.reserve(order[l].size());
-        for (std::size_t i = 0; i < order[l].size(); ++i) {
-            keyed.emplace_back(
-                barycenter_of(graph, order[l][i], downward, adjacent, static_cast<double>(i)),
-                order[l][i]);
-        }
-        // 稳定排序：重心相同的节点保持上一轮的相对次序，避免来回抖动。
-        std::stable_sort(keyed.begin(), keyed.end(),
-                         [](const auto& a, const auto& b) { return a.first < b.first; });
-        for (std::size_t i = 0; i < keyed.size(); ++i) {
-            order[l][i] = keyed[i].second;
-        }
-    }
-}
-
-double layer_height(const graph::Graph& graph, const std::vector<graph::NodeId>& layer,
-                    double v_gap) {
-    double height = 0.0;
-    for (graph::NodeId id : layer) {
-        const graph::Node* node = graph.find(id);
-        if (node != nullptr) {
-            height += node->box().h;
-        }
-    }
-    if (!layer.empty()) {
-        height += v_gap * static_cast<double>(layer.size() - 1);
-    }
-    return height;
-}
-
-// 把层内次序落成 y：x 与节点尺寸沿用 layout_layered 的结果，各层纵向居中。
-void apply_order(graph::Graph& graph, const LayerOrder& order, double margin, double v_gap) {
-    double tallest = 0.0;
-    for (const std::vector<graph::NodeId>& layer : order) {
-        tallest = std::max(tallest, layer_height(graph, layer, v_gap));
-    }
-    for (const std::vector<graph::NodeId>& layer : order) {
-        double y = margin + (tallest - layer_height(graph, layer, v_gap)) / 2.0;
-        for (graph::NodeId id : layer) {
-            graph::Node* node = graph.find(id);
-            if (node == nullptr) {
-                continue;
-            }
-            const Rect box = node->box();
-            node->set_box(Rect{box.x, y, box.w, box.h});
-            y += box.h + v_gap;
-        }
-    }
-}
-
-// ── 度量：排序到底减少了多少交叉 ────────────────────────────────────────
+// ── 度量：降交叉到底减少了多少交叉 ──────────────────────────────────────
 std::size_t count_center_crossings(const graph::Graph& graph) {
     std::vector<std::pair<Point, Point>> segments;
     segments.reserve(graph.edge_count());
@@ -158,7 +57,30 @@ std::size_t count_center_crossings(const graph::Graph& graph) {
     return graph::count_crossings(segments);
 }
 
-// ── 步骤 4：字符画 ───────────────────────────────────────────────────────
+// 层内顺序报告：同层节点共享同一个 x，按 x 分组还原分层，组内按 y 排序
+// （y 才是布局排出来的真实层内次序，nodes() 的遍历顺序是登记顺序，不代表布局）。
+// 只用于把 layout_sugiyama 的结果打印出来看，不参与布局。
+std::string layer_report(const graph::Graph& graph) {
+    std::map<double, std::vector<std::pair<double, std::string>>> by_x;
+    for (const graph::Node& node : graph.nodes()) {
+        by_x[node.box().x].emplace_back(node.box().y, node.label());
+    }
+    std::string out;
+    std::size_t layer = 0;
+    for (auto& entry : by_x) {
+        std::sort(entry.second.begin(), entry.second.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        out += "  L" + std::to_string(layer++) + ":";
+        for (const auto& placed : entry.second) {
+            out += " ";
+            out += placed.second;
+        }
+        out += "\n";
+    }
+    return out;
+}
+
+// ── 绘制 ────────────────────────────────────────────────────────────────
 // 轴对齐段用制表符，斜段（路由退化时的最后手段）用对角线字符。
 char32_t segment_char(Point a, Point b) noexcept {
     if (a.y == b.y) {
@@ -284,25 +206,21 @@ int main() {
     (void)graph.add_edge(g, i);
     (void)graph.add_edge(h, j);
 
-    // 步骤 1：分层（层 = 列）。
-    graph::LayoutOptions layout;
     // 列间距留够（h_gap 6）：层与层之间要容得下 Z 形绕行的竖段，太窄会让
     // 正交路由找不到通路、退化成斜线。
+    graph::LayoutOptions layout;
     layout.min_width = 8.0;
     layout.min_height = 4.0;
     layout.h_gap = 6.0;
     layout.v_gap = 2.0;
     layout.margin = 1.0;
-    const Rect bounds = graph::layout_layered(graph, layout);
+
+    // 基线：只分层、层内按登记顺序（不做降交叉）。
+    (void)graph::layout_layered(graph, layout);
     const std::size_t crossings_before = count_center_crossings(graph);
 
-    // 步骤 2：层内排序（重心法，上下交替各 2 轮）。
-    LayerOrder order = layers_by_column(graph);
-    for (int round = 0; round < 2; ++round) {
-        sweep(graph, order, true);
-        sweep(graph, order, false);
-    }
-    apply_order(graph, order, layout.margin, layout.v_gap);
+    // 真 Sugiyama：分层 → median 双向扫描降交叉 → 坐标分配，一次调用做完三步。
+    const Rect bounds = graph::layout_sugiyama(graph, layout, 4);
     const std::size_t crossings_after = count_center_crossings(graph);
 
     // 画布按整图包围盒取景，再钳到终端可视区（宽取 cols、高取 rows-1，留出提示符行）。
@@ -316,13 +234,13 @@ int main() {
     }
     canvas::Canvas canvas(std::max<std::uint32_t>(canvas_w, 8u), std::max<std::uint32_t>(canvas_h, 4u));
 
-    // 步骤 3：正交路由（WireGrid 由 route_edges 内部把节点框登记成障碍）。
+    // 第四步：正交路由（WireGrid 由 route_edges 内部把节点框登记成障碍）。
     graph::WireGrid grid(canvas.width(), canvas.height());
     graph::RouteOptions route_opts;
     route_opts.max_detour = 8;
     (void)graph::route_edges(graph, graph::RouteStyle::Orthogonal, route_opts, &grid);
 
-    // 步骤 4：绘制。
+    // 绘制。
     const Style node_style = Style{}.set_fg(Color::rgb(86, 197, 154));
     const Style edge_style = Style{}.set_fg(Color::ansi16(8));
     draw_edges(canvas, graph, edge_style);
@@ -336,9 +254,10 @@ int main() {
     }
 
     const std::string summary =
-        "\nSugiyama：4 层 / " + std::to_string(graph.node_count()) + " 节点 / " +
+        "\nSugiyama（graph::layout_sugiyama）：" + std::to_string(graph.node_count()) + " 节点 / " +
         std::to_string(graph.edge_count()) + " 边　交叉数 " + std::to_string(crossings_before) +
-        " → " + std::to_string(crossings_after) + "（重心法层内排序）\n";
+        " → " + std::to_string(crossings_after) + "（median 双向扫描降交叉）\n层内顺序：\n" +
+        layer_report(graph);
     (void)api::write_stdout(summary);
     (void)api::flush_stdout();
     return terminal.leave() == ErrorCode::Ok ? 0 : 1;

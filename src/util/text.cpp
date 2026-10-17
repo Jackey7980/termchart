@@ -79,8 +79,10 @@ std::vector<std::string> wrap(std::string_view text, int width, bool force_break
                 current_width = 0;
             }
             if (piece_width > width && force_break) {
-                // 单个簇就超宽：按显示宽度硬切，切点落在簇边界上。
-                current = std::string(text.substr(pos, prefix_by_width(piece, width)));
+                // 单个不可再分的簇本身就比整行还宽：整簇保留（宁可横向溢出一行，也绝不
+                // 丢字）。绝不能按 prefix_by_width 取前缀再跳过整个 piece —— prefix_by_width
+                // 对"超宽首簇"返回 0，那种写法等于把整簇静默吞掉（见雷区2）。
+                current = std::string(piece);
                 lines.push_back(current);
                 current.clear();
                 current_width = 0;

@@ -81,6 +81,56 @@ public:
 
     [[nodiscard]] Bitmap snapshot() const override { return bmp_; }
 
+    // 只读引用内部位图（免 snapshot 的整图拷贝；原生后端上屏热路径用）。
+    [[nodiscard]] const Bitmap& pixels() const noexcept { return bmp_; }
+
+    // blit：把 src 以 (x,y) 为左上角 alpha 合成进 bmp_（越界裁剪）。opacity 整体缩放源 alpha。
+    // blit：src 以 (x,y) 为左上角 alpha 合成进 bmp_（越界裁剪），opacity 缩放源 alpha。
+    // 热路径全程走裸指针（data()），**不用**逐像素 at()/set()——那俩跨 TU + 边界检查，
+    // 在 1080p 全屏每帧几百万次调用会把帧时间打到几百毫秒（实测过的坑）。
+    void blit(const Bitmap& src, double x, double y, double opacity = 1.0) override {
+        const int ox = floor_to_int(x);
+        const int oy = floor_to_int(y);
+        const int sw = static_cast<int>(src.width());
+        const int sh = static_cast<int>(src.height());
+        const int dw = static_cast<int>(bmp_.width());
+        const int dh = static_cast<int>(bmp_.height());
+        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) {
+            return;
+        }
+        const double op = opacity < 0.0 ? 0.0 : (opacity > 1.0 ? 1.0 : opacity);
+        const std::uint8_t* sp = src.data();
+        std::uint8_t* dp = bmp_.data();
+        for (int sy = 0; sy < sh; ++sy) {
+            const int py = oy + sy;
+            if (py < 0 || py >= dh) {
+                continue;
+            }
+            const std::uint8_t* srow =
+                sp + static_cast<std::size_t>(sy) * static_cast<std::size_t>(sw) * 4;
+            std::uint8_t* drow =
+                dp + static_cast<std::size_t>(py) * static_cast<std::size_t>(dw) * 4;
+            for (int sx = 0; sx < sw; ++sx) {
+                const int px = ox + sx;
+                if (px < 0 || px >= dw) {
+                    continue;
+                }
+                const std::uint8_t* s = srow + static_cast<std::size_t>(sx) * 4;
+                std::uint8_t* d = drow + static_cast<std::size_t>(px) * 4;
+                const int a = static_cast<int>(static_cast<double>(s[3]) * op);
+                if (a >= 255) {
+                    d[0] = s[0];
+                    d[1] = s[1];
+                    d[2] = s[2];
+                } else if (a > 0) {
+                    d[0] = static_cast<std::uint8_t>((s[0] * a + d[0] * (255 - a)) / 255);
+                    d[1] = static_cast<std::uint8_t>((s[1] * a + d[1] * (255 - a)) / 255);
+                    d[2] = static_cast<std::uint8_t>((s[2] * a + d[2] * (255 - a)) / 255);
+                }
+            }
+        }
+    }
+
 private:
     static int floor_to_int(double v) { return static_cast<int>(v); }  // 坐标已为像素
     static int ceil_to_int(double v) {

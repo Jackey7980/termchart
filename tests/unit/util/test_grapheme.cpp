@@ -77,6 +77,14 @@ TEST_CASE("util: 地区旗标两两连缀（GB12 / GB13）") {
     CHECK(cluster_count("\U0001F1FA\U0001F1F8\U0001F1EB\U0001F1F7") == 2);
 }
 
+TEST_CASE("util: 旗标间夹 Extend（U+FE0F）按 UAX #29 断开（雷区3 反驳）") {
+    // 🇨🇳︎🇺🇸 = RI RI FE0F RI RI。FE0F(Extend) 命中 GB9 并入前一簇，但它不是 RI，
+    // 会把 RI 连缀计数清零；其后第二个旗标对与前者不再成对（GB12/GB13 要求 prev==RI），
+    // 故在 Extend 与第二个旗标之间断开 → 共 2 簇。这是 UAX #29 参考算法的正确行为，
+    // 而非把整串并成一簇——有人若想"补"成 1 簇会背离标准，此用例锁死。
+    CHECK(cluster_count("\U0001F1E8\U0001F1F3\uFE0F\U0001F1FA\U0001F1F8") == 2);
+}
+
 TEST_CASE("util: SpacingMark 并入前一簇（GB9a）") {
     CHECK(cluster_count("\u0915\u093F") == 1);
 }

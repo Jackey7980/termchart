@@ -93,14 +93,15 @@ std::size_t fill_polygon(Canvas& canvas, const std::vector<Point>& polygon,
     const auto last_row = static_cast<std::int64_t>(std::ceil(max_y));
 
     std::size_t written = 0;
+    // 覆盖度累加器：本行每个候选格累计"被覆盖的纵向子行比例 × 横向重叠"。
+    // 提到循环外只分配+清零一次，避免每行都触发一次堆分配与初始化（每帧/每多边形复用）。
+    const auto width = canvas.width();
+    std::vector<double> coverage(static_cast<std::size_t>(width) + 1, 0.0);
     for (std::int64_t row = std::max<std::int64_t>(0, first_row); row < last_row; ++row) {
         if (row >= canvas.height()) {
             break;
         }
-        // 覆盖度累加器：本行每个候选格累计"被覆盖的纵向子行比例 × 横向重叠"。
-        // 用 map 式的稀疏数组会引入哈希开销，这里按行开一个定长数组即可。
-        const auto width = canvas.width();
-        std::vector<double> coverage(static_cast<std::size_t>(width) + 1, 0.0);
+        std::fill(coverage.begin(), coverage.end(), 0.0);
 
         for (std::uint32_t sub = 0; sub < sub_rows; ++sub) {
             const double sample_y =

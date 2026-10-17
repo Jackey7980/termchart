@@ -144,7 +144,7 @@ protected:
         *out_ += "\" y=\"";
         *out_ += num(text.at.y);
         *out_ += "\" font-family=\"monospace\" font-size=\"";
-        *out_ += num(opts_->scale);
+        *out_ += num(opts_->font_size > 0.0 ? opts_->font_size : opts_->scale);
         *out_ += "\" dominant-baseline=\"text-before-edge\" fill=\"";
         *out_ += paint_of(text.style.fg());
         *out_ += "\">";

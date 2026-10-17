@@ -58,7 +58,8 @@
 | `53_er_diagram` | ER 图：实体表框 + 鸭掌记号基数 + 关系名标签（规格示例） | [文本快照](gallery/53_er_diagram.txt) |
 | `54_dag` | DAG：无环走分层+正交路由；带环输入走退化路径（规格示例） | [文本快照](gallery/54_dag.txt) |
 | `55_gui_scene_png` | 生产级观感折线图：deterministic Scene → 超采样位图 → PNG | [文本快照](gallery/55_gui_scene_png.txt) |
-| `56_sugiyama` | Sugiyama 分层图：分层 → 层内排序（重心法）→ 正交路由 → 字符画 | [文本快照](gallery/56_sugiyama.txt) |
+| `56_sugiyama` | Sugiyama 分层图：分层 → 层内降交叉 → 坐标分配 → 正交路由 → 字符画 | [文本快照](gallery/56_sugiyama.txt) |
+| `60_dense_sugiyama` | 密集图上的 Sugiyama：分层 → 降交叉 → 坐标分配 → 正交路由 | [文本快照](gallery/60_dense_sugiyama.txt) |
 | `58_gui_hover` | GUI 悬停出数据：命中 → 浮层图元 → Scene 重放（无头可跑） | [文本快照](gallery/58_gui_hover.txt) |
 | `34_export_svg` | 矢量导出：Scene → SVG（写 stdout） | [文本快照](gallery/34_export_svg.txt) |
 | `37_export_latex` | 导出 LaTeX TikZ（规格示例） | [文本快照](gallery/37_export_latex.txt) |
@@ -66,4 +67,5 @@
 | `36_export_json` | 快照导出：Canvas → CellBuffer → JSON（写 stdout） | [文本快照](gallery/36_export_json.txt) |
 | `38_image_sixel` | 终端内显示图片（按能力选择 kitty / iterm2 / sixel / 半块） | [文本快照](gallery/38_image_sixel.txt) |
 | `40_advanced_master` | termchart 高级能力旗舰展示 | [文本快照](gallery/40_advanced_master.txt) |
+| `59_quick_plot` | matplotlib 式「一行出图」（api::plot / bar / scatter） | [文本快照](gallery/59_quick_plot.txt) |
 

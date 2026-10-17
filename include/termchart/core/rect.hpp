@@ -38,11 +38,16 @@ struct Rect {
         return contains(Point{px, py});
     }
 
+    // 半开区间相交：仅接触边（o.x == right()）不算相交；退化矩形（w/h <= 0）是空集，
+    // 与任何矩形（含另一个退化矩形）都不相交。否则会出现 intersects 为真而
+    // intersection 为空、contains 对任何点为假的矛盾。加守卫后
+    // intersects(o) 与 !intersection(o).empty() 严格等价。
     constexpr bool intersects(const Rect& o) const noexcept {
-        return x < o.right() && o.x < right() && y < o.bottom() && o.y < bottom();
+        return !empty() && !o.empty() && x < o.right() && o.x < right() && y < o.bottom() &&
+               o.y < bottom();
     }
 
-    // 相交矩形；无交返回空矩形（w=h=0）。
+    // 相交矩形；无交（含任一矩形退化）返回空矩形（w=h=0）。
     constexpr Rect intersection(const Rect& o) const noexcept {
         if (!intersects(o)) {
             return Rect{};
