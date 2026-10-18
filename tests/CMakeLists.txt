@@ -179,6 +179,7 @@ add_executable(termchart_tests
 
     # ── widget ──
     unit/widget/test_widget.cpp
+    unit/widget/test_controls.cpp
 
     # ── plugin / app ──
     unit/plugin/test_plugin.cpp
