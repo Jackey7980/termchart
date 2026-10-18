@@ -6,6 +6,8 @@ build-*/
 cmake-build-*/
 out/
 CMakeUserPresets.json
+# WSL 侧构建目录：bc8f005 误提交过整树（仅解除跟踪，物理目录保留在磁盘上）
+build_wsl/
 
 # 编译中间产物与二进制
 *.o
