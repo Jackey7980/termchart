@@ -172,6 +172,7 @@ add_executable(termchart_tests
 
     # ── network ──
     unit/network/test_network.cpp
+    unit/network/test_http.cpp
 
     # ── 跨模块不变量 ──
     unit/test_contracts.cpp

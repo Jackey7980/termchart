@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 345 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 347 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -6166,6 +6166,80 @@ private:
 
 }  // namespace termchart::network
 
+// ===== include/termchart/network/http.hpp =====
+// http.hpp —— HTTP/1.1 客户端（network 模块，L7）
+//
+// 支持范围（**明确列出，避免"以为支持"**）：
+//   ✅ http:// 明文与 https://（TLS 走 network/tls 注册表的后端，fail-loud）；
+//   ✅ 请求：任意 method、自定义头、请求体（Content-Length 自动补）；
+//   ✅ 响应：状态行 + 响应头 + 响应体；体长按 Content-Length / chunked /
+//      读到连接关闭三种规则解析（HEAD 与 204/304 按规范不收体）；
+//   ✅ 重定向：301/302/303/307/308 跟 Location（默认上限 5 次；303 降为 GET）；
+//   ✅ 每请求独立连接，发 `Connection: close`（库内不做连接池——图表库的
+//      拉取场景一次一个 URL，池化是纯负担）；
+//   ⛔ 不支持：HTTP/2、Cookie 管理、代理、摘要认证、请求体流式分块上传、
+//      非 ASCII 头的原始字节透传（按 std::string 收）。
+// 错误：连接失败 IoError；TLS 后端缺失/握手失败 Unsupported / IoError；
+// 响应超限 OutOfRange；协议解析失败 ParseError。
+
+
+
+namespace termchart::network::http {
+
+// 解析后的 URL。path 含前导 '/' 与查询串；port == 0 表示按 scheme 取默认端口。
+struct Uri {
+    std::string scheme;  // "http" / "https"（小写）
+    std::string host;    // 不含端口；IPv6 字面量保留方括号
+    std::uint16_t port = 0;
+    std::string path = "/";
+
+    // 解析 URL。失败：InvalidArgument（空/缺 scheme/缺 host/端口非法/非 HTTP 系
+    // scheme）。不做百分号解码——原样保留，交由调用方按需处理。
+    [[nodiscard]] static Result<Uri> parse(std::string_view text) noexcept;
+
+    // scheme 的有效默认端口（http=80，https=443；其余返回 0）。
+    [[nodiscard]] std::uint16_t default_port() const noexcept;
+};
+
+// 请求。headers 由调用方给全（Host 与 Connection 由库补，调用方的同名项忽略）。
+struct Request {
+    std::string method = "GET";
+    Uri uri;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::string body;
+};
+
+// 响应。headers 保持服务端给出的顺序，重复头不合并。
+struct Response {
+    std::uint16_t status = 0;
+    std::string reason;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::string body;
+
+    // 按名字取响应头（大小写不敏感）；多个同名取第一个；没有返回空 view。
+    [[nodiscard]] std::string_view header(std::string_view name) const noexcept;
+    // Content-Type 的主体部分（去掉 ';' 后的参数）；没有返回空 view。
+    [[nodiscard]] std::string_view content_type() const noexcept;
+};
+
+struct HttpOptions {
+    SocketOptions socket;                        // 连接/IO 超时
+    std::string tls_backend;                     // https 用的 TLS 后端名；空则随便一个已注册的
+    std::size_t max_header_bytes = 64u * 1024u;  // 响应头体积上限
+    std::size_t max_body_bytes = 16u * 1024u * 1024u;  // 响应体体积上限
+    std::uint32_t max_redirects = 5;             // 重定向跟随后跟上限
+};
+
+// 执行一次请求-响应（阻塞；内部按 options.max_redirects 跟重定向）。
+[[nodiscard]] TERMCHART_API Result<Response> execute(const Request& request,
+                                                     const HttpOptions& options = {}) noexcept;
+
+// 便捷入口：GET 一个 URL（等价于填好 method/uri 的 execute）。
+[[nodiscard]] TERMCHART_API Result<Response> get(std::string_view url,
+                                                 const HttpOptions& options = {}) noexcept;
+
+}  // namespace termchart::network::http
+
 // ===== include/termchart/network/tls/backend.hpp =====
 // backend.hpp —— TLS 后端抽象接口（network/tls，L7）
 //
@@ -6234,6 +6308,8 @@ public:
 
     TlsRegistry(const TlsRegistry&) = delete;
     TlsRegistry& operator=(const TlsRegistry&) = delete;
+    TlsRegistry(TlsRegistry&&) = default;
+    TlsRegistry& operator=(TlsRegistry&&) = default;
 
     // 扩展点：登记一个 TLS 后端工厂（重复名字以最后一次为准）。
     void register_backend(std::string_view name, Creator creator);
@@ -6241,15 +6317,53 @@ public:
     // 是否已有该名字的后端工厂。
     [[nodiscard]] bool supports(std::string_view name) const;
 
+    // 已登记的后端名字（按字典序），用于"空名字时挑默认"与诊断列举。
+    [[nodiscard]] std::vector<std::string> names() const;
+
     // 按名字造一个后端实例；未登记返回 nullptr（调用方负责显式报错）。
     [[nodiscard]] std::unique_ptr<TlsBackend> create(std::string_view name) const;
 
 private:
     TlsRegistry() = default;
+
+    // 造一份登记好内置后端的注册表（见 registry.cpp 的"不能重入 instance()"注释）。
+    [[nodiscard]] static TlsRegistry with_builtins();
+
     std::map<std::string, Creator, std::less<>> creators_;
 };
 
 }  // namespace termchart::network::tls
+
+// ===== include/termchart/network/tls/schannel.hpp =====
+// schannel.hpp —— Windows 原生 TLS 后端（SChannel / Schannel SSP）
+//
+// 平台后端之一（另一支是 OpenSSL，随可选依赖编译）：
+//   * 实现 TlsBackend（握手 + 记录层加解密 + close_notify）；
+//   * 一个后端实例服务**一条连接**（握手掌状态 CtxtHandle 在实例里）——
+//     每次 create() 拿新实例，勿跨连接复用；
+//   * 证书链与主机名**手动验证**（SCH_CRED_MANUAL_CRED_VALIDATION +
+//     CertGetCertificateChain / CertVerifyCertificateChainPolicy(SSL)），
+//     失败即握手失败，绝不接受"链错了但握手过了"的连接；
+//   * 注册：registry.cpp 构造注册表时直接把本后端登记进去（显式引用
+//     create_backend，避免"静态库里无人引用的 TU 被链接器丢弃"陷阱）；
+//     register_backend() 留给需要显式控制注册时机的调用方。
+//
+// 已知环境限制：某些沙箱/策略加固的 Windows 上 AcquireCredentialsHandleW
+// 会一律返回 SEC_E_UNKNOWN_CREDENTIALS（0x8009030D，连带客户端证书也一样，
+// 而 NTLM/证书系统库正常）——那类机器上本后端 fail-loud 报 Unsupported，
+// 绝不静默退回明文。2026-10-19 在开发沙箱里实测命中该策略。
+
+
+
+namespace termchart::network::tls::schannel {
+
+// 建一个 SChannel 后端实例。非 Windows 平台返回 nullptr（本Header 仍可编译）。
+[[nodiscard]] TERMCHART_API std::unique_ptr<TlsBackend> create_backend() noexcept;
+
+// 注册进 TlsRegistry（幂等）。静态初始化已自动注册一次，重复调用无副作用。
+TERMCHART_API void register_backend() noexcept;
+
+}  // namespace termchart::network::tls::schannel
 
 // ===== include/termchart/term/ansi.hpp =====
 // ansi.hpp —— ANSI 序列常量与生成

@@ -49,10 +49,11 @@ set_target_properties(termchart PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# network/socket_win32.cpp 的 Winsock2 符号（__imp_closesocket 等）来自操作系统的
-# ws2_32——是平台系统库而非第三方依赖，"零强制依赖"口径不变。
+# network/socket_win32.cpp 的 Winsock2 符号与 network/tls/schannel.cpp 的
+# SChannel/证书 API 来自操作系统库——ws2_32 / schannel / secur32 / crypt32
+# 是平台系统库而非第三方依赖，"零强制依赖"口径不变。
 if(WIN32)
-    target_link_libraries(termchart PRIVATE ws2_32)
+    target_link_libraries(termchart PRIVATE ws2_32 schannel secur32 crypt32)
 endif()
 
 if(NOT TERMCHART_BUILD_SHARED)

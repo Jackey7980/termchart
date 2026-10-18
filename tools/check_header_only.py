@@ -29,6 +29,11 @@ HEADER_ONLY_TXT = ROOT / "cmake" / "header_only.txt"
 # 平台拆分实现的后缀：src/term/terminal_posix.cpp ↔ include/termchart/term/terminal.hpp
 PLATFORM_SUFFIXES = ("_posix", "_win32", "_darwin", "_linux", "_macos")
 
+# src/ 内部私有实现单元（有 src/xxx.hpp 私有声明表、不对应 include/ 公开头的
+# .cpp）。先例：src/term/platform_internal.hpp 系列；network/http_parse 是
+# 同类——把 HTTP 线格式解析做成纯函数 TU，测试直接 include 私有头咬分支。
+SRC_INTERNAL_CXX = ("network/http_parse",)
+
 
 def read_header_only() -> set[str]:
     """读 cmake/header_only.txt。清单里带不带 .hpp 后缀都接受，统一去后缀。"""
@@ -75,6 +80,8 @@ def main() -> int:
 
     for c in cpps:
         if c in header_set:
+            continue
+        if c in SRC_INTERNAL_CXX:
             continue
         parent = platform_parent(c)
         if parent is not None and parent in header_set:
