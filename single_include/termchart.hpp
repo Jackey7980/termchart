@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 333 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 341 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -3346,6 +3346,176 @@ constexpr std::uint8_t rotl8(std::uint8_t v, int n) noexcept {
 
 }  // namespace termchart::util
 
+// ===== include/termchart/util/data/aggregate.hpp =====
+// util/data/aggregate.hpp —— 聚合（group by + reducer）
+//
+// 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
+// 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
+// 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
+// "分组键"由第一列决定（或显式指定 key column）。
+//
+// 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
+//
+// 约束：单线程；不抛异常；空输入返回空结果。
+
+
+
+
+namespace termchart::util::data {
+
+struct DataView {
+    const double* data = nullptr;
+    std::size_t   size = 0;
+};
+
+enum class Reducer : std::uint8_t {
+    Sum, Mean, Min, Max, Count, First, Last, Median, Stddev,
+};
+
+[[nodiscard]] TERMCHART_API const char* reducer_name(Reducer r) noexcept;
+
+struct Group {
+    double                key = 0.0;       // 分组键（NaN 不参与聚合）
+    std::vector<DataView> values_per_col;  // 每列在原数组中的"段"
+};
+
+// 基础聚合：单列按 key 分组，对 value 列施加 reducer。
+// `key_view` 与 `value_view` 必须同长度；NaN key 跳过。
+[[nodiscard]] TERMCHART_API std::vector<Group>
+group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reducer);
+
+// 多 reducer：同组输出多个聚合结果。
+struct MultiReduceResult {
+    std::vector<Group>   groups;   // 同一组只出现一次（按 key 升序）
+    std::vector<Reducer> reducers; // 与 groups[i].values_per_col 对应
+};
+[[nodiscard]] TERMCHART_API MultiReduceResult
+group_reduce_multi(DataView key_view,
+                   std::vector<DataView> value_views,
+                   std::vector<Reducer> reducers);
+
+// 直方图：等宽 bin，bin 数由调用方给，返回每桶计数。
+struct HistogramBin {
+    double lo = 0.0;     // 包含
+    double hi = 0.0;     // 不包含（最后一桶包含 hi）
+    std::size_t count = 0;
+};
+[[nodiscard]] TERMCHART_API std::vector<HistogramBin>
+histogram(DataView view, std::size_t num_bins);
+
+// 四分位数（min / Q1 / median / Q3 / max）。NaN 跳过；偶数样本中位数为两均值。
+struct Quartiles {
+    double minimum = 0.0;
+    double q1 = 0.0;
+    double median = 0.0;
+    double q3 = 0.0;
+    double maximum = 0.0;
+};
+[[nodiscard]] TERMCHART_API Quartiles quartiles(DataView view);
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/util/data/fill_missing.hpp =====
+// util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
+//
+// NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
+// 三种策略：
+//   ForwardFill   ：沿用前一个非缺失值（适合时间序列）
+//   LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
+//   Drop          ：返回新 vector 仅含非缺失值
+//
+// 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
+
+
+
+namespace termchart::util::data {
+
+enum class FillStrategy : std::uint8_t {
+    ForwardFill,
+    LinearInterp,
+    Drop,
+};
+
+[[nodiscard]] TERMCHART_API const char* fill_strategy_name(FillStrategy s) noexcept;
+
+// 改写入参；全 NaN 全部保持 NaN（ForwardFill/LinearInterp 都这样）。
+[[nodiscard]] TERMCHART_API std::size_t
+fill_missing(std::vector<double>& values, FillStrategy strategy) noexcept;
+
+// Drop：返回新 vector（仅非缺失值）。
+[[nodiscard]] TERMCHART_API std::vector<double>
+drop_missing(const std::vector<double>& values);
+
+// 计数：返回 NaN 个数。
+[[nodiscard]] TERMCHART_API std::size_t
+count_missing(const std::vector<double>& values) noexcept;
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/util/data/resample.hpp =====
+// util/data/resample.hpp —— 重采样（按规则桶聚合）
+//
+// 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
+// 输出每桶的聚合值（mean / sum / min / max / first / last）。
+//
+// 与 `aggregate::histogram` 的差异：resample 不要求等宽，
+// 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
+
+
+
+namespace termchart::util::data {
+
+// 等宽桶：lo..hi 切成 n 桶（最后一桶包含 hi）。
+[[nodiscard]] TERMCHART_API std::vector<double>
+linspace_edges(double lo, double hi, std::size_t n);
+
+// 重采样：把 values 按 edges 切桶，每桶施加 reducer。
+// edges 必须升序且至少 2 个元素；values 越界的不进任何桶。
+struct ResampleBin {
+    double      lo = 0.0;       // 包含
+    double      hi = 0.0;       // 不包含（最后一桶包含 hi）
+    double      value = 0.0;    // 该桶聚合结果（NaN 表示空桶）
+    std::size_t count = 0;      // 该桶样本数
+};
+[[nodiscard]] TERMCHART_API std::vector<ResampleBin>
+resample(const std::vector<double>& values, const std::vector<double>& edges,
+         Reducer reducer);
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/util/data/rolling.hpp =====
+// util/data/rolling.hpp —— 滚动窗口聚合
+//
+// 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
+// 中心约定：
+//   * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
+//     前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
+//   * min_periods：窗口内最少非缺失值，少于则输出 NaN。
+//   * 支持：mean / sum / stddev / min / max / median。
+//   * 不抛异常；空 vector 返回空 vector。
+
+
+
+namespace termchart::util::data {
+
+enum class RollingStat : std::uint8_t {
+    Mean, Sum, Stddev, Min, Max, Median,
+};
+
+[[nodiscard]] TERMCHART_API const char* rolling_stat_name(RollingStat s) noexcept;
+
+struct RollingOptions {
+    std::size_t window = 3;
+    std::size_t min_periods = 0;       // 0 = 与 window 同；NaN 跳过
+    bool        right_aligned = true;  // false = 中心（左右各半）
+};
+
+[[nodiscard]] TERMCHART_API std::vector<double>
+rolling(const std::vector<double>& values, RollingStat stat,
+        const RollingOptions& options = {}) noexcept;
+
+}  // namespace termchart::util::data
+
 // ===== include/termchart/util/format.hpp =====
 // format.hpp —— 轻量整数 / 浮点格式化
 //
@@ -3374,6 +3544,94 @@ TERMCHART_API std::string format_int(std::int64_t value);
 TERMCHART_API std::string format_compact(double value, int precision = 1);
 
 }  // namespace termchart::util
+
+// ===== include/termchart/util/geo/geojson.hpp =====
+// util/geo/geojson.hpp —— GeoJSON 解析（最小集，仅 FeatureCollection）
+//
+// GeoJSON 规范参考 RFC 7946。本文件只覆盖：
+//   * FeatureCollection → 一组 Polygon / MultiPolygon（边界数据）；
+//   * 每个 Feature 的 `properties` 全部拷成 std::string → std::string；
+//   * `geometry.type == "Polygon" | "MultiPolygon"`（其他类型抛错并返回 false）；
+//   * 坐标数组 [lon, lat] → Point（高度忽略）。
+//
+// 用途：把世界地图/中国省份/主要城市的边界从 assets/maps/*.json 读进 termchart，
+// 再走 util::geo::projection 投影到画布坐标系。
+//
+// 故意不写：
+//   * GeometryCollection（用得少，Poly/MultiPoly 已覆盖 ≥99% 边界数据）；
+//   * 弧线（RFC 7946 §3.1.6 弧线段，termchart 用直线段足够）；
+//   * 跨子午线环（antimeridian cutting）—— caller 自己预处理。
+//
+// 错误：解析失败返回 false，错误信息通过 out_error 输出。
+
+
+
+namespace termchart::util::geo {
+
+struct GeoPolygon {
+    std::vector<std::vector<Point>> rings;  // 首环外环，其余为内环（孔）
+    std::vector<std::pair<std::string, std::string>> properties;
+};
+
+struct GeoFeatureCollection {
+    std::vector<GeoPolygon> polygons;
+};
+
+// 从字符串解析。空字符串或缺 type/feature 字段返回 false。
+[[nodiscard]] TERMCHART_API bool parse_geojson(const std::string& text,
+                                                GeoFeatureCollection& out,
+                                                std::string& out_error) noexcept;
+
+// 从文件中读 + 解析（薄包装）。
+[[nodiscard]] TERMCHART_API bool parse_geojson_file(const std::string& path,
+                                                     GeoFeatureCollection& out,
+                                                     std::string& out_error) noexcept;
+
+// 经纬度范围（粗略 bbox，用于投影前估算画布 / 选投影）。
+struct GeoBounds {
+    double min_lat = 0.0, max_lat = 0.0;
+    double min_lon = 0.0, max_lon = 0.0;
+};
+[[nodiscard]] TERMCHART_API GeoBounds
+compute_bounds(const GeoFeatureCollection& fc) noexcept;
+
+}  // namespace termchart::util::geo
+
+// ===== include/termchart/util/geo/projection.hpp =====
+// util/geo/projection.hpp —— 经纬度 → 平面投影
+//
+// 极简集：4 种最常用投影，纯函数、零依赖、终端坐标友好（aspect 由 caller 自定）。
+// 输入：纬度（-90..90）+ 经度（-180..180）→ 输出：平面 (x, y)（单位无定义，
+//       调用方决定 1 单位 = 多少字符格 / 多少像素）。
+//
+// 约定：y 向上为正（北向上）；调用方需要"y 向下"时自行取负。
+//
+// 边界：极点附近 Mercator / Equirectangular 输出趋于无穷，由 caller 钳制。
+
+
+namespace termchart::util::geo {
+
+// 等距矩形（plate carrée）：最简单，lat → y, lon → x 直接线性。
+// 适合：低分辨率地图、全局数据预览。
+[[nodiscard]] TERMCHART_API Point equirectangular(double lat_deg, double lon_deg) noexcept;
+
+// 墨卡托（Web Mercator）：google/高德/必应地图的标准投影。
+// 公式：x = lon, y = ln(tan(π/4 + lat/2))
+// 在 ±85.05113° 之外返回极大值（Mercator 极点奇点）。
+[[nodiscard]] TERMCHART_API Point web_mercator(double lat_deg, double lon_deg) noexcept;
+
+// 正射投影（orthographic）：从无穷远看地球的视点，圆形地图。
+// 半球内有效；lat/lon 超出可见半球则返回 (NaN, NaN) 哨兵（由 caller 判定）。
+[[nodiscard]] TERMCHART_API Point orthographic(double lat_deg, double lon_deg,
+                                               double center_lat_deg,
+                                               double center_lon_deg) noexcept;
+
+// 兰勃特等面积圆柱投影：保持面积相等，世界地图常用。
+// y = sin(lat), x = lon * cos(lat_mean)。
+[[nodiscard]] TERMCHART_API Point lambert_cylindrical(double lat_deg, double lon_deg,
+                                                       double reference_lat_deg = 0.0) noexcept;
+
+}  // namespace termchart::util::geo
 
 // ===== include/termchart/util/geom.hpp =====
 // geom.hpp —— 平面几何：点线距离、线段关系、多边形面积/重心/凸包
@@ -9015,6 +9273,74 @@ private:
 
 }  // namespace termchart::chart
 
+// ===== include/termchart/chart/geo/geo_map.hpp =====
+// chart/geo/geo_map.hpp —— 真地图图种（GeoJSON + 投影 + 区域着色）
+//
+// 区别于 Choropleth：
+//   * Choropleth：调用方给字符格集合（cells）+ 值，本库只画"值 → 颜色"。
+//   * GeoMap：本库读 GeoJSON → 经纬度多边形 → 投影 → 字符格画多边形 + 按值着色。
+//
+// 设计选择：
+//   * 输入：assets/maps/*.json（GeoJSON FeatureCollection）+ 一组 "feature_id → value"
+//     映射（默认按 properties.name 匹配）；feature_id 与 name 都不匹配时该多边形灰显。
+//   * 投影：等距矩形（默认）/ Mercator / 正射 / 兰勃特 —— enum 切换。
+//   * 输出：终端走 canvas.draw_line / draw_text；SVG / LaTeX 由 caller 自行转换
+//     （本图种不直接 emit Scene，因为地图投影是字符格 ↔ 经纬度 的强契约，
+//     Scene 走的是 0..1 归一化坐标）。
+
+
+
+namespace termchart::chart {
+
+enum class GeoProjection : std::uint8_t {
+    Equirectangular, WebMercator, Orthographic, LambertCylindrical,
+};
+
+[[nodiscard]] TERMCHART_API const char* geo_projection_name(GeoProjection p) noexcept;
+
+struct GeoMapOptions {
+    GeoProjection projection = GeoProjection::Equirectangular;
+    std::uint32_t width = 0;        // 0 = 自适应画布
+    std::uint32_t height = 0;       // 0 = 自适应画布
+    std::uint32_t bins = 5;         // 分级数（[1,8]）
+    bool          show_graticule = false;   // 经纬网格
+    std::int32_t  ortho_center_lat = 0;     // 正射投影中心纬度
+    std::int32_t  ortho_center_lon = 0;     // 正射投影中心经度
+    double        lambert_ref_lat = 0.0;    // 兰勃特参考纬度
+};
+
+class GeoMap final : public Chart {
+public:
+    GeoMap();
+    ~GeoMap() override;
+
+    GeoMap(const GeoMap&) = delete;
+    GeoMap& operator=(const GeoMap&) = delete;
+
+    // 加载 GeoJSON 文本（feature_id 默认按 properties.name 取）。
+    [[nodiscard]] bool load_geojson(const std::string& text, std::string& err);
+    [[nodiscard]] bool load_geojson_file(const std::string& path, std::string& err);
+
+    // 值映射：feature name → value。未命中的多边形不参与分级（仍按灰底画）。
+    void set_value(const std::string& name, double value);
+    void clear_values();
+
+    void set_options(const GeoMapOptions& options) { options_ = options; }
+    [[nodiscard]] const GeoMapOptions& options() const noexcept { return options_; }
+
+    [[nodiscard]] std::size_t polygon_count() const noexcept;
+
+    void draw(DrawContext ctx) override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    GeoMapOptions         options_;
+    std::unordered_map<std::string, double> values_;
+};
+
+}  // namespace termchart::chart
+
 // ===== include/termchart/chart/geo/hexbin.hpp =====
 // hexbin.hpp —— 六边形分箱（示意地图级别）
 //
@@ -10875,6 +11201,14 @@ public:
     [[nodiscard]] const std::vector<Point>& route() const noexcept { return route_; }
     void set_route(std::vector<Point> route) { route_ = std::move(route); }
 
+    // 路由是否"被迫退化为直连兜底"（正交/平滑/弧线路由在 Z 形/L 形/贝塞尔全部失败后
+    // 写出的 2 点直线，不保证不穿过节点框/障碍）。由 graph/route 在写出兜底直线时置
+    // true；调用方/渲染器可读它提示用户"此处过挤、路由未达预期"，而不是被静默画出的
+    // 穿障直线蒙蔽（见路由层审查 雷区1）。直线风格（RouteStyle::Straight）是显式需求，
+    // 不算失败。
+    [[nodiscard]] bool route_failed() const noexcept { return route_failed_; }
+    void set_route_failed(bool v) noexcept { route_failed_ = v; }
+
 private:
     NodeId from_;
     NodeId to_;
@@ -10882,6 +11216,7 @@ private:
     Attributes attributes_;
     ArrowStyle arrow_ = ArrowStyle::AtTarget;
     std::vector<Point> route_;
+    bool route_failed_ = false;
 };
 
 }  // namespace termchart::graph
@@ -11103,6 +11438,7 @@ struct ForceOptions {
     std::uint32_t iterations = 240;  // 迭代轮数
     double cooling = 0.95;           // 每轮温度衰减
     double min_step = 0.01;          // 温度低于此值提前收敛
+    double gravity = 0.05;           // 朝原点的弱引力（收拢无连边分量，防漂散）
 };
 
 // 力导向布局：就地写入 Node::set_box，返回所有节点外框的并集。
@@ -13730,6 +14066,58 @@ private:
 // 便捷：begin + render + end，返回字节流拷贝。
 [[nodiscard]] TERMCHART_API std::string render_latex(LatexBackend& backend,
                                                      const CellBuffer& buffer);
+
+}  // namespace termchart::backend::vector
+
+// ===== include/termchart/backend/vector/pdf_backend.hpp =====
+// backend/vector/pdf_backend.hpp —— Scene → PDF（极简 PDF 1.4）
+//
+// 设计目标：与 svg_backend 同款接口形态（Options + render + bytes()/str()）。
+// 范围：
+//   * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
+//     TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）；
+//   * 真彩 RGB（颜色类型 / PDF Color Operators rg/RG）；
+//   * 内嵌 PNG（走 image::Bitmap → encode_png → /Filter /FlateDecode）；
+//   * 单页（多页留给后续切片，初始只支持 1 页）；
+//   * 文本流：仅 BaseFont / Helvetica（PDF 14 标准字体之一，零嵌入）。
+//
+// 故意不写：
+//   * 圆弧 / 贝塞尔（PDF 支持但与 Scene 圆弧表示不一致，留 TODO）；
+//   * 透明度 / 混合模式；
+//   * 字体嵌入（用标准字体零成本，但 ASCII only）。
+//
+// 输出：完整 PDF 字节流（%PDF-1.4 + objects + xref + trailer），可在浏览器/Acrobat 打开。
+
+
+
+namespace termchart::backend::vector {
+
+struct PdfOptions {
+    double width_pt  = 612.0;   // US Letter 宽（pt）
+    double height_pt = 792.0;   // US Letter 高（pt）
+    bool   compress  = true;    // 内容流走 zlib /FlateDecode（需 TERMCHART_HAVE_ZLIB）
+};
+
+class PdfBackend final : public VectorBackend {
+public:
+    void set_options(const PdfOptions& options) noexcept { opts_ = options; }
+    [[nodiscard]] const PdfOptions& options() const noexcept { return opts_; }
+
+    void begin() override { out_.clear(); }
+    void end() override;
+    [[nodiscard]] std::string_view bytes() const override { return out_; }
+    [[nodiscard]] const std::string& str() const noexcept { return out_; }
+
+    void render(const scene::Scene& scene) override;
+
+private:
+    PdfOptions opts_;
+    std::string out_;
+};
+
+// 便捷：begin + render + end，返回字节流拷贝。
+[[nodiscard]] TERMCHART_API std::string render_pdf(PdfBackend& backend,
+                                                   const scene::Scene& scene);
 
 }  // namespace termchart::backend::vector
 

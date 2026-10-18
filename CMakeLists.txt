@@ -5,6 +5,10 @@ project(termchart
         DESCRIPTION "Modern C++20 terminal charting library with zero mandatory dependencies"
         LANGUAGES CXX)
 
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ── 全局开关与规则源 ──────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -80,6 +84,11 @@ target_link_libraries(termchart_gui INTERFACE termchart::termchart)
 # 原生 Win32 GUI 后端（可选插件，默认关）：接上即可开真实窗口；不进核心零依赖构建。
 if(TERMCHART_BUILD_GUI_WIN32 AND WIN32)
     add_subdirectory(plugins/gui_win32)
+endif()
+
+# Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart；缺 pybind11 即报错。
+if(TERMCHART_BUILD_PYTHON)
+    add_subdirectory(bindings/python)
 endif()
 
 # ── 测试与示例 ────────────────────────────────────────────────────────────

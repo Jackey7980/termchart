@@ -20,6 +20,8 @@ add_executable(termchart_tests
     unit/util/test_text.cpp
     unit/util/test_format.cpp
     unit/util/test_util_misc.cpp
+    unit/util/test_data.cpp
+    unit/util/test_geo.cpp
 
     # ── color ──
     unit/color/test_color.cpp
@@ -98,6 +100,7 @@ add_executable(termchart_tests
     unit/chart/test_chart_statistical.cpp
     unit/chart/test_chart_financial.cpp
     unit/chart/test_chart_hierarchical.cpp
+    unit/chart/geo/test_geo_map.cpp
     unit/chart/test_chart_flow.cpp
     unit/chart/test_chart_geo.cpp
     unit/chart/test_chart_text.cpp
@@ -156,6 +159,7 @@ add_executable(termchart_tests
     unit/backend/test_backend_vector.cpp
     unit/backend/test_backend_structured.cpp
     unit/backend/test_backend_extra.cpp
+    unit/backend/test_pdf_backend.cpp
 
     # ── dsl ──
     unit/dsl/test_dsl_mermaid.cpp

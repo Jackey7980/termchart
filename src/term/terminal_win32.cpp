@@ -1,8 +1,9 @@
 // terminal_win32.cpp —— Windows 控制台平台实现
 //
 // 隔离层：本文件允许出现 #ifdef 与 <windows.h>；其它任何文件不得包含 <windows.h>。
+#ifdef _WIN32
 #include <windows.h>
-
+#endif
 #include <cstdio>
 
 #include "src/term/platform_internal.hpp"

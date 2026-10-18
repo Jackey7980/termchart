@@ -2,6 +2,7 @@
 #include "termchart/graph/route/obstacle.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -215,7 +216,10 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b, std::size_
 void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScratch& scratch) {
     for (Edge& edge : graph.edges()) {
         const std::vector<Point>& route = edge.route();
-        if (route.size() < 2 || !route_hits_blocked(grid, route)) {
+        const bool hit = route_hits_blocked(grid, route);
+        fprintf(stderr, "[DBG] repair: enter rf=%d hit=%d size=%zu\n",
+                (int)edge.route_failed(), (int)hit, route.size());
+        if (route.size() < 2 || !hit) {
             continue;
         }
         // 修复预算：直连曼哈顿距离 + 绕行余量；超预算（需绕整屏）即放弃，维持
@@ -237,6 +241,7 @@ void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScra
         }
         edge.set_route(std::move(detour));
         edge.set_route_failed(false);  // 成功重绕，不再是"失败兜底"
+        fprintf(stderr, "[DBG] repair: success cleared rf, detour size=%zu\n", detour.size());
     }
 }
 

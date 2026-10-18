@@ -66,7 +66,14 @@ def collect() -> dict[str, str]:
     files: dict[str, str] = {}
     for p in sorted(SRC.rglob("*.hpp")):
         rel = p.relative_to(SRC).as_posix()
-        files[rel] = p.read_text(encoding="utf-8")
+        # strip UTF-8 BOM（U+FEFF）：源文件若有 BOM，拼接进 single_include
+        # 会在该头首行变成一个非法标识符，导致后续的类/结构体定义被截断。
+        # 单独编译时编译器能容错，但拼接产物里就成了级联失败。
+        text = p.read_text(encoding="utf-8").lstrip("\ufeff")
+        if "\ufeff" in text:
+            print(f"  warn: {rel} contains mid-file BOM (stripping only first)", file=sys.stderr)
+            text = text.replace("\ufeff", "")
+        files[rel] = text
     return files
 
 
