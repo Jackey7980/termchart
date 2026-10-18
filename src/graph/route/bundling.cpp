@@ -105,12 +105,30 @@ bool path_cells(const std::vector<Point>& path, std::vector<Cell>& out) {
         const auto x1 = static_cast<std::uint32_t>(p1.x);
         const auto y1 = static_cast<std::uint32_t>(p1.y);
         if (y0 == y1) {
-            for (std::uint32_t x = std::min(x0, x1); x <= std::max(x0, x1); ++x) {
-                out.emplace_back(x, y0);
+            // 必须按行进方向展开（p0 → p1），不能按 min..max：回折/向上的段若按
+            // min..max 展开，cells 顺序会颠倒，末格不再是路径终点——捆绑路径末段
+            // 从并束点向上走进框锚点时，锚点格会落到中间被 can_place 当占用检查，
+            // 整组捆绑永远被否决。
+            if (x0 <= x1) {
+                for (std::uint32_t x = x0; x <= x1; ++x) {
+                    out.emplace_back(x, y0);
+                }
+            } else {
+                for (std::int64_t x = static_cast<std::int64_t>(x0);
+                     x >= static_cast<std::int64_t>(x1); --x) {
+                    out.emplace_back(static_cast<std::uint32_t>(x), y0);
+                }
             }
         } else if (x0 == x1) {
-            for (std::uint32_t y = std::min(y0, y1); y <= std::max(y0, y1); ++y) {
-                out.emplace_back(x0, y);
+            if (y0 <= y1) {
+                for (std::uint32_t y = y0; y <= y1; ++y) {
+                    out.emplace_back(x0, y);
+                }
+            } else {
+                for (std::int64_t y = static_cast<std::int64_t>(y0);
+                     y >= static_cast<std::int64_t>(y1); --y) {
+                    out.emplace_back(x0, static_cast<std::uint32_t>(y));
+                }
             }
         } else {
             return false;
@@ -256,8 +274,29 @@ std::size_t route_bundled(Graph& graph, const BundlingOptions& opts, WireGrid* g
         if (from == nullptr || to == nullptr) {
             continue;
         }
-        leave_side[i] = side_towards(from->box().center(), to->box().center());
-        enter_side[i] = side_towards(to->box().center(), from->box().center());
+        // 侧别优先看两框在哪个轴上分离（与 route.cpp 同口径）：分层图里跨列的边
+        // 应当**横向**进出（走列的左/右边），而不是按中心连线的主导轴选到上/下侧。
+        // 选到上/下侧时，Z 形出框第一段会贴着自己框的上下边框走，中间格仍在框内
+        // （如 4 格高的框从北边出发，横段要穿 3 格才出框），被障碍判定否决后整条
+        // 边退化成斜线兜底并穿过兄弟节点框。间隙太窄时不该从那一侧进出：锚点会
+        // 紧贴对方框、出框第一格就撞障碍，反而比按方向选侧更差。
+        constexpr double kMinPortGap = 2.0;
+        const double x_gap = std::max(from->box().x, to->box().x) -
+                             std::min(from->box().right(), to->box().right());
+        const double y_gap = std::max(from->box().y, to->box().y) -
+                             std::min(from->box().bottom(), to->box().bottom());
+        const Point from_center = from->box().center();
+        const Point to_center = to->box().center();
+        if (x_gap >= kMinPortGap) {
+            leave_side[i] = to_center.x >= from_center.x ? PortSide::East : PortSide::West;
+            enter_side[i] = to_center.x >= from_center.x ? PortSide::West : PortSide::East;
+        } else if (y_gap >= kMinPortGap) {
+            leave_side[i] = to_center.y >= from_center.y ? PortSide::South : PortSide::North;
+            enter_side[i] = to_center.y >= from_center.y ? PortSide::North : PortSide::South;
+        } else {
+            leave_side[i] = side_towards(from_center, to_center);
+            enter_side[i] = side_towards(to_center, from_center);
+        }
         leave_groups[{edge.from(), side_key(leave_side[i])}].push_back(i);
         enter_groups[{edge.to(), side_key(enter_side[i])}].push_back(i);
         if (from != to) {

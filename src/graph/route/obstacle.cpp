@@ -2,7 +2,6 @@
 #include "termchart/graph/route/obstacle.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -162,6 +161,7 @@ std::vector<Point> bfs_around(const WireGrid& grid, Point a, Point b, std::size_
                 continue;
             }
             scratch.parent[ni] = linear(cur);
+            scratch.gen[ni] = scratch.epoch;  // 入队即标记访问，否则同格被重复展开
             if (next == goal) {
                 found = true;
                 break;
@@ -217,8 +217,6 @@ void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScra
     for (Edge& edge : graph.edges()) {
         const std::vector<Point>& route = edge.route();
         const bool hit = route_hits_blocked(grid, route);
-        fprintf(stderr, "[DBG] repair: enter rf=%d hit=%d size=%zu\n",
-                (int)edge.route_failed(), (int)hit, route.size());
         if (route.size() < 2 || !hit) {
             continue;
         }
@@ -241,7 +239,6 @@ void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScra
         }
         edge.set_route(std::move(detour));
         edge.set_route_failed(false);  // 成功重绕，不再是"失败兜底"
-        fprintf(stderr, "[DBG] repair: success cleared rf, detour size=%zu\n", detour.size());
     }
 }
 

@@ -107,16 +107,29 @@ bool path_cells(const std::vector<Point>& path, std::vector<Cell>& out) {
             return false;
         }
         if (y0 == y1) {
-            const std::uint32_t lo = std::min(x0, x1);
-            const std::uint32_t hi = std::max(x0, x1);
-            for (std::uint32_t x = lo; x <= hi; ++x) {
-                out.emplace_back(x, y0);
+            // 按行进方向展开（p0 → p1），不能按 min..max：回折/向上的段若按
+            // min..max 展开，cells 顺序会颠倒，末格不再是路径终点——首末锚点格
+            // 会落到中间被 can_place/place 误判，避让契约失效。
+            if (x0 <= x1) {
+                for (std::uint32_t x = x0; x <= x1; ++x) {
+                    out.emplace_back(x, y0);
+                }
+            } else {
+                for (std::int64_t x = static_cast<std::int64_t>(x0);
+                     x >= static_cast<std::int64_t>(x1); --x) {
+                    out.emplace_back(static_cast<std::uint32_t>(x), y0);
+                }
             }
         } else if (x0 == x1) {
-            const std::uint32_t lo = std::min(y0, y1);
-            const std::uint32_t hi = std::max(y0, y1);
-            for (std::uint32_t y = lo; y <= hi; ++y) {
-                out.emplace_back(x0, y);
+            if (y0 <= y1) {
+                for (std::uint32_t y = y0; y <= y1; ++y) {
+                    out.emplace_back(x0, y);
+                }
+            } else {
+                for (std::int64_t y = static_cast<std::int64_t>(y0);
+                     y >= static_cast<std::int64_t>(y1); --y) {
+                    out.emplace_back(x0, static_cast<std::uint32_t>(y));
+                }
             }
         } else {
             return false;  // 斜线段不由正交路由产生

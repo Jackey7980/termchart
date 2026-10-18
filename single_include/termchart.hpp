@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 341 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 345 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -6108,6 +6108,149 @@ public:
 
 }  // namespace termchart::raster
 
+// ===== include/termchart/network/socket.hpp =====
+// socket.hpp —— 跨平台 TCP socket 抽象（network 模块，L7）
+//
+// 平台差异全部落在 src/network/socket_posix.cpp 与 socket_win32.cpp，
+// 公开头**没有任何 #ifdef**（与 term/terminal.hpp 同哲学）。
+//
+// 契约：
+//   * 不抛异常：失败返回 Result（IoError / PlatformError / InvalidArgument）；
+//   * 阻塞 IO + 超时：connect_timeout_ms / io_timeout_ms 经 setsockopt 实现；
+//   * DNS 解析（域名 → 地址）在 connect 内完成，调用方无需自己 getaddrinfo；
+//   * 移动语义（PIMPL），拷贝删除——一个 socket 只有一份底层句柄。
+
+
+
+namespace termchart::network {
+
+struct SocketOptions {
+    std::uint32_t connect_timeout_ms = 10000;  // 连接超时
+    std::uint32_t io_timeout_ms = 30000;      // 单次读/写超时
+};
+
+// 已连接的 TCP socket。默认构造为无效句柄（valid() == false）。
+class TcpSocket {
+public:
+    TcpSocket() noexcept;
+    ~TcpSocket();
+
+    TcpSocket(TcpSocket&& other) noexcept;
+    TcpSocket& operator=(TcpSocket&& other) noexcept;
+    TcpSocket(const TcpSocket&) = delete;
+    TcpSocket& operator=(const TcpSocket&) = delete;
+
+    // 连接 host:port。host 可以是 IPv4/IPv6 字面量或域名（内部 getaddrinfo）。
+    // 失败：InvalidArgument（参数非法）/ IoError（连接失败）/ PlatformError。
+    [[nodiscard]] static Result<TcpSocket> connect(std::string_view host,
+                                                   std::uint16_t port,
+                                                   const SocketOptions& options = {}) noexcept;
+
+    // 读最多 buffer.size() 字节；返回实际读到的字节数（0 = 对端关闭）。
+    // 超时返回 IoError。无效句柄返回 InvalidArgument。
+    [[nodiscard]] Result<std::size_t> read(std::span<char> buffer) noexcept;
+
+    // 写 data 的全部字节（循环发送直到写完或出错）。
+    // 超时返回 IoError。无效句柄返回 InvalidArgument。
+    [[nodiscard]] Result<std::size_t> write(std::span<const char> data) noexcept;
+
+    void close() noexcept;
+
+    [[nodiscard]] bool valid() const noexcept;
+
+private:
+    struct Impl;
+    explicit TcpSocket(std::unique_ptr<Impl> impl) noexcept;
+    std::unique_ptr<Impl> impl_;
+};
+
+}  // namespace termchart::network
+
+// ===== include/termchart/network/tls/backend.hpp =====
+// backend.hpp —— TLS 后端抽象接口（network/tls，L7）
+//
+// 可插拔契约（与 raster/chart/scale 注册表同构，见 docs/design/registry.md）：
+//   * 内置后端（network/tls/builtin/，自主实现）与第三方后端（BearSSL/mbedTLS…）
+//     实现同一接口，经 TlsRegistry 注册，调用方按名字取用；
+//   * 命名项缺失时**显式报错**（fail-loud），不静默降级——请求 "builtin" 而
+//     未链接该后端即 Unsupported，绝不偷偷退回明文；
+//   * 后端只做"客户端 TLS 记录层"：握手 + 加解密读写 + close_notify。
+//     证书链验证由后端负责（hostname 同时用于 SNI 与主机名校验）。
+
+
+
+namespace termchart::network::tls {
+
+class TlsBackend {
+public:
+    // 声明与定义分离：虚表锚点放 src/network/tls/backend.cpp（基类也要有 cpp）。
+    virtual ~TlsBackend();
+
+    // 客户端握手：对已连接的 socket 完成 TLS 握手。
+    // hostname 用于 SNI 扩展与证书主机名校验。失败返回 IoError/ParseError/
+    // Unsupported（证书不受信等，具体语义由后端定义，消息可经 diagnostic 观察）。
+    // 只回报成败 → Status（core/expected.hpp 约定，不用 Result<void>：
+    // Expected<void,E> 依赖"void 形参构造函数"的方言容忍度，不跨编译器可靠）。
+    [[nodiscard]] virtual Status handshake(TcpSocket& socket,
+                                          std::string_view hostname) noexcept = 0;
+
+    // 记录层读：解密后最多 buffer.size() 字节明文；0 = 对端关闭。
+    [[nodiscard]] virtual Result<std::size_t> read(TcpSocket& socket,
+                                                  std::span<char> buffer) noexcept = 0;
+
+    // 记录层写：加密后发送全部字节。
+    [[nodiscard]] virtual Result<std::size_t> write(TcpSocket& socket,
+                                                   std::span<const char> data) noexcept = 0;
+
+    // 关闭 TLS 会话（best-effort 发 close_notify；不关闭底层 socket）。
+    virtual void shutdown(TcpSocket& socket) noexcept = 0;
+
+    // 后端名字（如 "builtin"、"bearssl"），用于注册表键与诊断。
+    [[nodiscard]] virtual std::string_view name() const noexcept = 0;
+};
+
+}  // namespace termchart::network::tls
+
+// ===== include/termchart/network/tls/registry.hpp =====
+// registry.hpp —— TLS 后端注册表（可扩展、构造期冻结）
+//
+// 与 raster/registry.hpp 同构（docs/design/registry.md 的口径）：
+//   * instance() 一律 function-local static；
+//   * 构造后只读（拷贝/赋值删除）；注册的唯一安全时机是 App 构造前；
+//   * 注册的是**工厂**（每次 create 给新实例），不是原型；
+//   * 查询：supports(name) / create(name)；未知名字返回 nullptr，
+//     由调用方显式报错（fail-loud，不静默降级——绝不偷偷退回明文）。
+
+
+
+namespace termchart::network::tls {
+
+class TlsRegistry {
+public:
+    using Creator = std::function<std::unique_ptr<TlsBackend>()>;
+
+    // 全局唯一实例；首次调用即冻结，之后不可增删。
+    static TlsRegistry& instance() noexcept;
+
+    TlsRegistry(const TlsRegistry&) = delete;
+    TlsRegistry& operator=(const TlsRegistry&) = delete;
+
+    // 扩展点：登记一个 TLS 后端工厂（重复名字以最后一次为准）。
+    void register_backend(std::string_view name, Creator creator);
+
+    // 是否已有该名字的后端工厂。
+    [[nodiscard]] bool supports(std::string_view name) const;
+
+    // 按名字造一个后端实例；未登记返回 nullptr（调用方负责显式报错）。
+    [[nodiscard]] std::unique_ptr<TlsBackend> create(std::string_view name) const;
+
+private:
+    TlsRegistry() = default;
+    std::map<std::string, Creator, std::less<>> creators_;
+};
+
+}  // namespace termchart::network::tls
+
 // ===== include/termchart/term/ansi.hpp =====
 // ansi.hpp —— ANSI 序列常量与生成
 //
@@ -9284,9 +9427,13 @@ private:
 //   * 输入：assets/maps/*.json（GeoJSON FeatureCollection）+ 一组 "feature_id → value"
 //     映射（默认按 properties.name 匹配）；feature_id 与 name 都不匹配时该多边形灰显。
 //   * 投影：等距矩形（默认）/ Mercator / 正射 / 兰勃特 —— enum 切换。
-//   * 输出：终端走 canvas.draw_line / draw_text；SVG / LaTeX 由 caller 自行转换
-//     （本图种不直接 emit Scene，因为地图投影是字符格 ↔ 经纬度 的强契约，
-//     Scene 走的是 0..1 归一化坐标）。
+//   * 输出有三条，分辨率从低到高（共用同一份投影几何，不重复实现投影）：
+//     1. draw(DrawContext)     —— 字符格 Bresenham 描边，兼容旧调用方（最低清）
+//     2. rasterize(cols, rows) —— 子像素栅格化：盲文 2×4 / 象限 2×2 / 半块 1×2，
+//                                 逐格保留分级色（一次出图即有 8× 分辨率与颜色）
+//     3. render_bitmap(w, h)   —— 真彩色位图任意像素尺寸（GUI / PNG / sixel 的数据源）
+//     仍不直接 emit Scene：Scene 走 0..1 归一化坐标，而地图是"经纬度 ↔ 目标网格"的
+//     强契约，塞进归一化坐标就丢掉了栅格化时的子像素归属。
 
 
 
@@ -9309,6 +9456,45 @@ struct GeoMapOptions {
     double        lambert_ref_lat = 0.0;    // 兰勃特参考纬度
 };
 
+// 子像素样式。后面的倍数是对字符格的分辨率倍数：
+//   Braille   2×4 = 8×（最高清；单格内多区域时取覆盖面积最大的区域取色）
+//   Quadrant  2×2 = 4×（U+2596–U+259F 象限块，字体覆盖好）
+//   HalfBlock 1×2 = 2×（上下半，字形最通用）
+// 刻意不提供 sextant（2×3）：U+1FB00 区字体覆盖差，且位模式顺序有特殊规则，
+// 收益低于维护成本。
+enum class GeoRasterStyle : std::uint8_t {
+    Braille, Quadrant, HalfBlock,
+};
+
+[[nodiscard]] TERMCHART_API const char* geo_raster_style_name(GeoRasterStyle s) noexcept;
+
+// 子像素数（每字符格）。给调用方换算"要多少字符格才能达到目标分辨率"。
+[[nodiscard]] TERMCHART_API std::uint32_t geo_raster_subpixel_width(GeoRasterStyle s) noexcept;
+[[nodiscard]] TERMCHART_API std::uint32_t geo_raster_subpixel_height(GeoRasterStyle s) noexcept;
+
+struct GeoRasterOptions {
+    GeoRasterStyle style = GeoRasterStyle::Braille;
+    Rgb   no_data{120, 120, 120};                   // 无值多边形
+    // 子像素点亮阈值：该子像素被多边形覆盖的面积比例 >= 此值才置位。
+    double coverage = 0.35;
+    bool   draw_borders = true;                     // 区域边界压一条暗边
+    Color  border       = Color::rgb(30, 30, 34);
+    // 值色带：t∈[0,1] 采样。默认 Turbo（与热力图同源，颜色排序单调）。
+    color::ColormapKind colormap = color::ColormapKind::Turbo;
+};
+
+struct GeoBitmapOptions {
+    double margin = 16.0;               // 四周留白（像素）
+    Rgb    background{18, 18, 22};
+    Rgb    no_data{120, 120, 120};
+    // 区域边界色：填充后按"相邻像素覆盖率突变"检测边缘并压暗一条 1 像素线。
+    // 与 background 同色即等于关闭描边。
+    Rgb    border{28, 28, 32};
+    // 纵向超采样（1 = 关）。水平方向本来就按精确重叠算覆盖率，纵向靠这个补。
+    std::uint32_t supersample = 2;
+    color::ColormapKind colormap = color::ColormapKind::Turbo;
+};
+
 class GeoMap final : public Chart {
 public:
     GeoMap();
@@ -9321,6 +9507,14 @@ public:
     [[nodiscard]] bool load_geojson(const std::string& text, std::string& err);
     [[nodiscard]] bool load_geojson_file(const std::string& path, std::string& err);
 
+    // 叠加图层：把另一个 GeoJSON 追加到已加载数据之上，共用同一套投影、取景与
+    // 值映射（先 load 底图，再 add_overlay 数据层）。
+    // 栅格化时每个子像素记录"最后覆盖它的 feature"，所以后叠加的层天然画在上面；
+    // 收口仍按覆盖面积最大者取色，不被蹭到的底图不会漏色。
+    // 典型用法：国家轮廓当底图（不 set_value → 灰显）+ 城市气泡当数据层（有值 → 分级着色）。
+    [[nodiscard]] bool add_overlay_geojson(const std::string& text, std::string& err);
+    [[nodiscard]] bool add_overlay_geojson_file(const std::string& path, std::string& err);
+
     // 值映射：feature name → value。未命中的多边形不参与分级（仍按灰底画）。
     void set_value(const std::string& name, double value);
     void clear_values();
@@ -9330,10 +9524,29 @@ public:
 
     [[nodiscard]] std::size_t polygon_count() const noexcept;
 
+    // 已加载区域的全部名字（按文件顺序）。set_value 的键必须与这里一致，
+    // 否则那个区域会静默留在"无值灰底"——这是这个 getter 存在的唯一理由。
+    [[nodiscard]] TERMCHART_API std::vector<std::string> feature_names() const;
+
     void draw(DrawContext ctx) override;
+
+    // ── 高清出口 2：子像素栅格化（盲文/象限/半块）────────────────────────────
+    // 输出 CellBuffer 的字符尺寸是 cols × rows；每格内部再按 style 切 2×4 等子像素。
+    // 每个子像素记录"被哪个 feature 覆盖"，收口时每格取覆盖面积最大的 feature 取色——
+    // 于是既拿到 8× 分辨率，又保住分级着色（这是单通道 FloatField 做不到的）。
+    // 与 draw() 共用同一份投影，不重复实现投影逻辑。
+    [[nodiscard]] TERMCHART_API CellBuffer rasterize(std::uint32_t cols, std::uint32_t rows,
+                                                    const GeoRasterOptions& opts = {}) const;
+
+    // ── 高清出口 3：真彩色位图 ────────────────────────────────────────────────
+    // 任意像素尺寸，扫描线填充 + 区域描边 + 可选超采样抗锯齿。GUI / PNG / sixel 的数据源。
+    [[nodiscard]] TERMCHART_API image::Bitmap render_bitmap(std::uint32_t width,
+                                                           std::uint32_t height,
+                                                           const GeoBitmapOptions& opts = {}) const;
 
 private:
     struct Impl;
+    void append_collection(util::geo::GeoFeatureCollection&& fc);
     std::unique_ptr<Impl> impl_;
     GeoMapOptions         options_;
     std::unordered_map<std::string, double> values_;
@@ -14678,6 +14891,104 @@ struct DotParseOptions {
 
 // 典型首行指令；供注册表/自动识别共享，避免两处硬编码字符串。
 inline constexpr std::string_view kDotDirective = "digraph";
+
+}  // namespace termchart::dsl
+
+// ===== include/termchart/dsl/json.hpp =====
+// json.hpp —— JSON 解析（L17）
+//
+// 支持范围（**明确列出，避免"以为支持"**）：
+//   ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
+//   ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
+//      会丢精度，如实记录而非假装精确）；
+//   ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
+//   ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
+//   ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
+//      栈爆/内存爆；
+//   ✅ 诊断：首个错误带行列与字节偏移（与 csv_sniff 同口径）。
+//   ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
+//      控制字符未转义直出（按 JSON 规范拒绝）。
+//
+// 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
+// 可选地把**首个**诊断写到 out_diagnostic。
+
+
+
+namespace termchart::dsl {
+
+// JSON 值：带 tag 的结构体（递归容器用 vector 成员，C++17 起对不完整类型合法）。
+// 不用 variant：array/object 递归嵌套时 variant 需要额外一层间接，可读性更差。
+class JsonValue {
+public:
+    enum class Type : std::uint8_t {
+        Null = 0,
+        Bool,
+        Number,
+        String,
+        Array,
+        Object,
+    };
+
+    JsonValue() noexcept = default;  // Null
+
+    // 工厂
+    static JsonValue null() noexcept;
+    static JsonValue boolean(bool value) noexcept;
+    static JsonValue number(double value) noexcept;
+    static JsonValue string(std::string value);
+    static JsonValue array();
+    static JsonValue object();
+
+    // ── 类型判定 ──────────────────────────────────────────────────────────
+    [[nodiscard]] Type type() const noexcept { return type_; }
+    [[nodiscard]] bool is_null() const noexcept { return type_ == Type::Null; }
+    [[nodiscard]] bool is_bool() const noexcept { return type_ == Type::Bool; }
+    [[nodiscard]] bool is_number() const noexcept { return type_ == Type::Number; }
+    [[nodiscard]] bool is_string() const noexcept { return type_ == Type::String; }
+    [[nodiscard]] bool is_array() const noexcept { return type_ == Type::Array; }
+    [[nodiscard]] bool is_object() const noexcept { return type_ == Type::Object; }
+
+    // ── 取值（类型不匹配返回 fallback，不抛异常）────────────────────────────
+    [[nodiscard]] bool as_bool(bool fallback = false) const noexcept;
+    [[nodiscard]] double as_number(double fallback = 0.0) const noexcept;
+    [[nodiscard]] std::string_view as_string(std::string_view fallback = {}) const noexcept;
+
+    // ── 数组访问 ──────────────────────────────────────────────────────────
+    // size()：array/object 的元素数，其它类型为 0。
+    [[nodiscard]] std::size_t size() const noexcept;
+    // 越界返回 Null 单例（与"缺失即 null"的 JSON 语义一致，调用方无需判空）。
+    [[nodiscard]] const JsonValue& at(std::size_t index) const noexcept;
+    [[nodiscard]] const JsonValue& operator[](std::size_t index) const noexcept;
+
+    // ── 对象访问 ──────────────────────────────────────────────────────────
+    // 找不到返回 nullptr（与 at 的 Null 单例互补：需要区分"缺失"与"显式 null"时用）。
+    [[nodiscard]] const JsonValue* find(std::string_view key) const noexcept;
+    // 找不到返回 Null 单例。
+    [[nodiscard]] const JsonValue& at(std::string_view key) const noexcept;
+
+    // ── 构建（程序化构造；解析产物不需要）──────────────────────────────────
+    void push(JsonValue value);                    // 非 array 时忽略
+    void set(std::string key, JsonValue value);    // 非 object 时忽略；同名键覆盖
+
+private:
+    Type type_ = Type::Null;
+    bool bool_ = false;
+    double number_ = 0.0;
+    std::string string_;
+    std::vector<JsonValue> array_;                              // Type::Array
+    std::vector<std::pair<std::string, JsonValue>> object_;     // Type::Object（保序）
+};
+
+struct JsonOptions {
+    std::size_t max_depth = 64;        // 嵌套深度上限（数组/对象各算一层）
+    std::size_t max_bytes = 16u * 1024u * 1024u;  // 输入长度上限
+};
+
+// 解析 JSON 文本为 JsonValue。顶层必须是完整值（对象/数组/标量均可），
+// 尾部只允许空白。失败返回错误码，可选地把首个诊断写到 out_diagnostic。
+[[nodiscard]] TERMCHART_API Result<JsonValue> parse_json(
+    std::string_view source, const JsonOptions& options = {},
+    ParseDiagnostic* out_diagnostic = nullptr);
 
 }  // namespace termchart::dsl
 

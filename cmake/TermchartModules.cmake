@@ -26,6 +26,7 @@ set(TERMCHART_MODULE_LAYERS
     "image=5"
     "raster=6"
     "term=7"
+    "network=7"
     "document=8"
     "protocol=9"
     "canvas=10"

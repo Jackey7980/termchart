@@ -166,8 +166,12 @@ add_executable(termchart_tests
     unit/dsl/test_dsl_dot.cpp
     unit/dsl/test_dsl_plantuml.cpp
     unit/dsl/test_dsl_csv.cpp
+    unit/dsl/test_dsl_json.cpp
     unit/dsl/test_dsl_fixtures.cpp
     unit/dsl/test_dsl_d2.cpp
+
+    # ── network ──
+    unit/network/test_network.cpp
 
     # ── 跨模块不变量 ──
     unit/test_contracts.cpp
