@@ -110,6 +110,30 @@
 
 ---
 
+## P5 — `chart/geo` 地图与地图数据链（2026-10-18 新登记）
+
+> 触发点：67/68/69 三个示例从"文本格 + `?`"改为真 GeoJSON 栅格化时，暴露出"能出图但契约不严"的一批问题。
+> 逐条总览在 `docs/reference/backlog.md` 第六节，这里只记质量证据与改法。
+
+- [ ] **数据生成器没有回归测试**（最高优先）：`tools/topojson_to_geojson.py::stitch_arc` 曾同时错两处——
+  负索引用 `arcs[idx]`（Python 从尾部取数）、反向弧在差分解码**前** `reverse`（增量被当绝对值累加），
+  产物是合法 JSON、坐标却在 `[-218°, -119°]`。这类错误**不会抛异常**，只能靠"形状像不像地球"发现。
+  改法：`tests/` 下加最小 TopoJSON 夹具（含 1 条 `~idx` 反向弧）+ 用例，断言"feature 数不变、环闭合、
+  坐标在 ±180/±90 内"；验收＝改回 `idx` 立即变红。
+- [ ] **公共 Options 里不能有死字段**：`show_graticule`（零消费者）、`width` / `height`（从未被读）写在
+  `geo_map.hpp` 公共头里，用户设了毫无反应，类型系统也拦不住。建议加一条
+  `tools/check_options.py`（扫 `include/**/*options*.hpp` / `*Options` 结构的字段名，检查是否在 `src/`
+  出现），把"设了没用"变成 CI 可见。
+- [ ] **`bins` 语义在两条出口下不一致**：`draw()` 按级量化、`rasterize()` / `render_bitmap()` 连续映射，
+  同一份数据换出口颜色就变。改法：抽出 `quantize(value, min, max, bins)` 三处共用。
+- [x] **`feature_names()` 输出去重**（2026-10-18）：MultiPolygon 拆成多个 entry，`--list` 原样输出成
+  `Tianjin / Tianjin / Hebei ×4`（63 行）。已按首次出现顺序去重（35 行），用例
+  `geo_map::feature_names dedups MultiPolygon pieces`。**已知残留**：同名不同 feature 会被合并。
+- [x] **`render_bitmap` 的 `int → uint8_t` 窄化**（2026-10-18）：`over()` 的通道参数改 `std::uint8_t`，
+  GCC `-Wconversion` 在该文件清零。
+
+---
+
 ## 收口待办（与体检无关，pending）
 
 - [x] **`route_metro` 严格测试与 `metro.cpp` 锚点候选对修复**（2026-10-13）：二者已在工作区
@@ -124,3 +148,4 @@
 2. **P2 的"一行出图入口"**（最容易显著提升"好用"）
 3. **P1**（接口统一需先拍板方向，影响面大）
 4. **P3 / P4**（加分项与算法增强，按精力排）
+5. **P5**（geo 地图：先清"死字段 + topojson 回归 + bins 不一致"三条会静默出错的，再谈图例与 hit_region）

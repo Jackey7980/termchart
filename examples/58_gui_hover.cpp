@@ -251,16 +251,18 @@ Chart build_chart() {
 
     // 5) 登记命中区域：后登记者在上 → margin→cost→revenue，让 revenue marker
     //    在重叠处优先响应（topmost_hit 取最后命中者）。
-    for (int i = 0; i < kPointCount; ++i) {
-        add_hit(chart, margin[i], point_label("Margin", kMonths[i], mar_v[i]));
+    for (std::size_t i = 0; i < kPointCount; ++i) {
+        add_hit(chart, margin[i],
+                point_label("Margin", kMonths[i], mar_v[i]));
     }
-    for (int i = 0; i < kPointCount; ++i) {
+    for (std::size_t i = 0; i < kPointCount; ++i) {
         add_hit(chart, cost[i], point_label("Cost", kMonths[i], cst_v[i]));
     }
-    for (int i = 0; i < kPointCount; ++i) {
-        add_hit(chart, revenue[i], point_label("Revenue", kMonths[i], rev_v[i]));
+    for (std::size_t i = 0; i < kPointCount; ++i) {
+        add_hit(chart, revenue[i],
+                point_label("Revenue", kMonths[i], rev_v[i]));
     }
-    chart.key_point = revenue[6];
+    chart.key_point = revenue[static_cast<std::size_t>(6)];
 
     // 6) 图例：实心色块 + 系列名。
     struct LegendEntry {

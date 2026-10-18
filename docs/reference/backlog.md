@@ -80,10 +80,40 @@
   第一节 `widget`/`plugin`/`app` 三行由"空"改为真实内容；开篇数字口径、示例索引标题同步。
 - [x] `ROADMAP.md` 现状节"未落地"清单：`dsl`/`widget`/`plugin`/`app` 改为"已落地"。
 - [x] 阶段 0 任务清单与出口条件：ci.yml / 格式化配置 / shell 封装三项勾选状态已与真实情况对齐。
+- [ ] **`capability_matrix.md` / `ROADMAP.md` 未登记 `chart/geo`**（2026-10-18）：两处全文无 `GeoMap`，
+  而实际已有 `GeoMap`（4 投影 / 3 条高清出口 / 位图）+ `examples/67–69` + `assets/maps/`。
+  需补：`capability_matrix` 第五节模块表加 `chart/geo` 行（5 个图种）、示例索引加 67–69；
+  `ROADMAP` 修订记录加一行。`docs/charts/geo.md` 已在本轮同步更新（口径从"库不做投影/不带数据"改为现状）。
 
 ## 五、GUI 平行项目（不阻塞库本体）
 
 - [ ] `termchart_gui`（`结构.md` 标为平行项目）：`include/termchart_gui/` + `src_gui/` 共 25 文件未开工（GUI 复用 `scene` 及以下 L0–L4，`widget`/`app`/`plugin` 在 GUI 下重写）。详见 `capability_matrix.md` 第六节。**进展（2026-10-14）**：渲染核心以 `include/termchart/gui/`（层 22）先期落地——`font` + `scene_renderer`（Scene→Bitmap，3× 超采样 AA）+ `hover_chart`（悬停出数据，`examples/58`）+ `examples/55`；widget_tree/native_loop/layout/backend_tk 的骨架已在平行栈 `include/termchart_gui/` 落地（真实 tk 后端未接）。
+
+## 六、地理图（`chart/geo`）与地图数据链（2026-10-18 登记）
+
+> 背景：`examples/67_world_map` / `68_cn_province` / `69_city_plot` 原先是"96×28 文本格 + 非 ASCII 全变 `?` + 丢 Style"，
+> 本轮改为真 GeoJSON 栅格化（盲文 2×4 / 象限 / 半块三条出口 + 分级着色 + 位图/PNG）。过程中修掉
+> `tools/topojson_to_geojson.py::stitch_arc` 的两处解码错误（负索引必须取 `~idx`；必须**先**差分解码**再**反序），
+> 世界地图从"乱色块"恢复为可辨认形态。下列是这次改造暴露、但本轮**没做**的项。
+
+- [ ] **TopoJSON 缝合没有离线回归（优先）**：`stitch_arc` 的两个错误都**不报错、只产出合法 JSON**，
+  肉眼只能看出"地图不像地球"。目前唯一防线是 `fetch_map_data.py` 抓完立刻自检（要联网、只覆盖当下那份数据）。
+  应加一份最小夹具（1 条负索引反向弧 + 1 条正向弧、2 个 feature）与用例；验收＝把 `~idx` 改回 `idx` 后测试必须变红。
+- [ ] **`GeoMapOptions` 三个死字段**：`show_graticule` 全仓零消费者；`width` / `height` 在 `geo_map.cpp` 里
+  没有任何 `options_.width` 读取（实际尺寸只认 `DrawContext` / `rasterize` 入参）。要么接上（画经纬网、
+  作为 `draw()` 覆盖值），要么删字段并写进 CHANGELOG。验收＝`grep -r show_graticule src/ examples/` 有真实用途，否则字段消失。
+- [ ] **分级 `bins` 只在高清路径之外生效**：`draw()` 按 `options_.bins` 量化，`rasterize()` /
+  `render_bitmap()` 是连续映射（全文只有 `draw()` 里那两处 `bins`）。高清是主打出口，应把"值 → 级 → 色"
+  抽成一个函数三处共用，并补"同一份值在两种出口取到同一级色"的用例。
+- [ ] **没有图例 / 色标**：`bins` 分级没有 legend，看不出颜色含义。`layout/legend` 已有能力可直接复用：
+  字符格出口追加几行"级 → 颜色 + 区间"，位图出口在 `--png` 右侧留白。
+- [ ] **没有 `HitRegion` 出口**：GeoMap 不产出 `chart/hit_region.hpp` 的命中区域，`interaction` 的 tooltip /
+  `legend_toggle` 接不上（69 的城市气泡目前无法悬停出数值）。
+- [ ] **安装包不带地图数据**：`assets/maps/{world,cn,cities}.json` 已进 git，但 `CMakeLists.txt` 只有
+  `install(DIRECTORY include/ ...)`，没有 `share/termchart/maps`。要么补安装规则 + `maps_dir()` 查询，
+  要么在文档里明确"数据不入安装包，取样请跑 `tools/fetch_map_data.py`"——二选一，不能两头空。
+- [ ] **`feature_names()` 去重是有损的**：同名不同 feature（多份图层叠加）会合并成一个名字，`set_value`
+  无法分别赋值。当前三份数据无同名冲突，够用；但要在头注释写明限制，避免以后有人拿它当"唯一键"。
 
 ---
 

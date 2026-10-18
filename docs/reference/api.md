@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **333 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **341 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -13,7 +13,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | （顶层头） | — | 6 |
 | detail | L-1 | 9 |
 | core | L0 | 13 |
-| util | L1 | 15 |
+| util | L1 | 21 |
 | color | L2 | 6 |
 | scale | L3 | 10 |
 | scene | L4 | 6 |
@@ -24,11 +24,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | protocol | L9 | 7 |
 | canvas | L10 | 8 |
 | layout | L11 | 11 |
-| chart | L12 | 78 |
+| chart | L12 | 79 |
 | graph | L13 | 46 |
 | render | L14 | 5 |
 | interaction | L15 | 18 |
-| backend | L16 | 14 |
+| backend | L16 | 15 |
 | dsl | L17 | 14 |
 | widget | L18 | 17 |
 | plugin | L19 | 4 |
@@ -408,6 +408,67 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
+### `util/data/aggregate.hpp`
+
+> util/data/aggregate.hpp —— 聚合（group by + reducer）
+>
+> 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
+> 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
+> 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
+> "分组键"由第一列决定（或显式指定 key column）。
+>
+> 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
+>
+> 约束：单线程；不抛异常；空输入返回空结果。
+
+- `struct DataView`
+- `enum class Reducer : std::uint8_t`
+- `struct Group`
+- `struct MultiReduceResult`
+- `struct HistogramBin`
+- `struct Quartiles`
+
+### `util/data/fill_missing.hpp`
+
+> util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
+>
+> NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
+> 三种策略：
+> ForwardFill   ：沿用前一个非缺失值（适合时间序列）
+> LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
+> Drop          ：返回新 vector 仅含非缺失值
+>
+> 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
+
+- `enum class FillStrategy : std::uint8_t`
+
+### `util/data/resample.hpp`
+
+> util/data/resample.hpp —— 重采样（按规则桶聚合）
+>
+> 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
+> 输出每桶的聚合值（mean / sum / min / max / first / last）。
+>
+> 与 `aggregate::histogram` 的差异：resample 不要求等宽，
+> 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
+
+- `struct ResampleBin`
+
+### `util/data/rolling.hpp`
+
+> util/data/rolling.hpp —— 滚动窗口聚合
+>
+> 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
+> 中心约定：
+> * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
+> 前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
+> * min_periods：窗口内最少非缺失值，少于则输出 NaN。
+> * 支持：mean / sum / stddev / min / max / median。
+> * 不抛异常；空 vector 返回空 vector。
+
+- `enum class RollingStat : std::uint8_t`
+- `struct RollingOptions`
+
 ### `util/format.hpp`
 
 > format.hpp —— 轻量整数 / 浮点格式化
@@ -422,6 +483,44 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `TERMCHART_API void append_double(std::string& out, double value, int precision = 2)`
 - `TERMCHART_API std::string format_int(std::int64_t value)`
 - `TERMCHART_API std::string format_compact(double value, int precision = 1)`
+
+### `util/geo/geojson.hpp`
+
+> util/geo/geojson.hpp —— GeoJSON 解析（最小集，仅 FeatureCollection）
+>
+> GeoJSON 规范参考 RFC 7946。本文件只覆盖：
+> * FeatureCollection → 一组 Polygon / MultiPolygon（边界数据）；
+> * 每个 Feature 的 `properties` 全部拷成 std::string → std::string；
+> * `geometry.type == "Polygon" | "MultiPolygon"`（其他类型抛错并返回 false）；
+> * 坐标数组 [lon, lat] → Point（高度忽略）。
+>
+> 用途：把世界地图/中国省份/主要城市的边界从 assets/maps/*.json 读进 termchart，
+> 再走 util::geo::projection 投影到画布坐标系。
+>
+> 故意不写：
+> * GeometryCollection（用得少，Poly/MultiPoly 已覆盖 ≥99% 边界数据）；
+> * 弧线（RFC 7946 §3.1.6 弧线段，termchart 用直线段足够）；
+> * 跨子午线环（antimeridian cutting）—— caller 自己预处理。
+>
+> 错误：解析失败返回 false，错误信息通过 out_error 输出。
+
+- `struct GeoPolygon`
+- `struct GeoFeatureCollection`
+- `struct GeoBounds`
+
+### `util/geo/projection.hpp`
+
+> util/geo/projection.hpp —— 经纬度 → 平面投影
+>
+> 极简集：4 种最常用投影，纯函数、零依赖、终端坐标友好（aspect 由 caller 自定）。
+> 输入：纬度（-90..90）+ 经度（-180..180）→ 输出：平面 (x, y)（单位无定义，
+> 调用方决定 1 单位 = 多少字符格 / 多少像素）。
+>
+> 约定：y 向上为正（北向上）；调用方需要"y 向下"时自行取负。
+>
+> 边界：极点附近 Mercator / Equirectangular 输出趋于无穷，由 caller 钳制。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `util/geom.hpp`
 
@@ -2012,6 +2111,33 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct DotDensityRegion`
 - `struct DotDensityOptions`
 - `class DotDensity final : public Chart`
+
+### `chart/geo/geo_map.hpp`
+
+> chart/geo/geo_map.hpp —— 真地图图种（GeoJSON + 投影 + 区域着色）
+>
+> 区别于 Choropleth：
+> * Choropleth：调用方给字符格集合（cells）+ 值，本库只画"值 → 颜色"。
+> * GeoMap：本库读 GeoJSON → 经纬度多边形 → 投影 → 字符格画多边形 + 按值着色。
+>
+> 设计选择：
+> * 输入：assets/maps/*.json（GeoJSON FeatureCollection）+ 一组 "feature_id → value"
+> 映射（默认按 properties.name 匹配）；feature_id 与 name 都不匹配时该多边形灰显。
+> * 投影：等距矩形（默认）/ Mercator / 正射 / 兰勃特 —— enum 切换。
+> * 输出有三条，分辨率从低到高（共用同一份投影几何，不重复实现投影）：
+> 1. draw(DrawContext)     —— 字符格 Bresenham 描边，兼容旧调用方（最低清）
+> 2. rasterize(cols, rows) —— 子像素栅格化：盲文 2×4 / 象限 2×2 / 半块 1×2，
+> 逐格保留分级色（一次出图即有 8× 分辨率与颜色）
+> 3. render_bitmap(w, h)   —— 真彩色位图任意像素尺寸（GUI / PNG / sixel 的数据源）
+> 仍不直接 emit Scene：Scene 走 0..1 归一化坐标，而地图是"经纬度 ↔ 目标网格"的
+> 强契约，塞进归一化坐标就丢掉了栅格化时的子像素归属。
+
+- `enum class GeoProjection : std::uint8_t`
+- `struct GeoMapOptions`
+- `enum class GeoRasterStyle : std::uint8_t`
+- `struct GeoRasterOptions`
+- `struct GeoBitmapOptions`
+- `class GeoMap final : public Chart`
 
 ### `chart/geo/hexbin.hpp`
 
@@ -3655,6 +3781,29 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct LatexOptions`
 - `class LatexBackend final : public Backend`
+
+### `backend/vector/pdf_backend.hpp`
+
+> backend/vector/pdf_backend.hpp —— Scene → PDF（极简 PDF 1.4）
+>
+> 设计目标：与 svg_backend 同款接口形态（Options + render + bytes()/str()）。
+> 范围：
+> * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
+> TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）；
+> * 真彩 RGB（颜色类型 / PDF Color Operators rg/RG）；
+> * 内嵌 PNG（走 image::Bitmap → encode_png → /Filter /FlateDecode）；
+> * 单页（多页留给后续切片，初始只支持 1 页）；
+> * 文本流：仅 BaseFont / Helvetica（PDF 14 标准字体之一，零嵌入）。
+>
+> 故意不写：
+> * 圆弧 / 贝塞尔（PDF 支持但与 Scene 圆弧表示不一致，留 TODO）；
+> * 透明度 / 混合模式；
+> * 字体嵌入（用标准字体零成本，但 ASCII only）。
+>
+> 输出：完整 PDF 字节流（%PDF-1.4 + objects + xref + trailer），可在浏览器/Acrobat 打开。
+
+- `struct PdfOptions`
+- `class PdfBackend final : public VectorBackend`
 
 ### `backend/vector/svg_backend.hpp`
 

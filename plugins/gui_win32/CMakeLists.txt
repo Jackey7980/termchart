@@ -44,6 +44,16 @@ endif()
 set_target_properties(candlestick_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 
+# 熊猫：TermChart 的 Scene -> SceneRenderer -> TkCanvas::blit 全链路画一张插画，
+# 证明 GUI 栈不止能画图表。--png 无头出图，--shot 存窗口首帧。
+add_executable(panda_demo example/panda_demo.cpp)
+target_link_libraries(panda_demo PRIVATE termchart_gui_win32)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(panda_demo PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+set_target_properties(panda_demo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+
 # 城市生活气象看板：ChartWidget（万能插座）驱动 ComboRenderer —— 上半屏 24h 温度
 # （平滑折线+面积+最高温高亮），下半屏 7 天降水概率柱+最高/最低温折线。数据来自
 # Open-Meteo（免费、无 Key、HTTPS），后台线程 WinInet 拉取，失败回退内嵌真实样本。

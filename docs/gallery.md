@@ -68,4 +68,9 @@
 | `38_image_sixel` | 终端内显示图片（按能力选择 kitty / iterm2 / sixel / 半块） | [文本快照](gallery/38_image_sixel.txt) |
 | `40_advanced_master` | termchart 高级能力旗舰展示 | [文本快照](gallery/40_advanced_master.txt) |
 | `59_quick_plot` | matplotlib 式「一行出图」（api::plot / bar / scatter） | [文本快照](gallery/59_quick_plot.txt) |
+| `62_zoom_pan` | （源文件首行注释未写职责，待补） | [文本快照](gallery/62_zoom_pan.txt) |
+| `67_world_map` | （源文件首行注释未写职责，待补） | [文本快照](gallery/67_world_map.txt) |
+| `68_cn_province` | （源文件首行注释未写职责，待补） | [文本快照](gallery/68_cn_province.txt) |
+| `69_city_plot` | （源文件首行注释未写职责，待补） | [文本快照](gallery/69_city_plot.txt) |
+| `70_export_pdf` | （源文件首行注释未写职责，待补） | [文本快照](gallery/70_export_pdf.txt) |
 

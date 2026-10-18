@@ -47,11 +47,12 @@ def stitch_arc(arcs_list: list[list[int]], arcs: list[list[list[float]]],
         return []
     pts: list[list[float]] = []
     for idx in arcs_list:
+        # 负数索引在 TopoJSON 里表示"反向引用 ~idx"，不是 Python 的从尾取——
+        # 直接用 arcs[idx] 会读到完全不相干的弧。反序也必须放在**解码之后**：
+        # arcs 里的点是差分编码的，先 reverse 再累加会把增量当绝对坐标。
+        decoded = decode_arc(arcs[idx if idx >= 0 else ~idx], transform)
         if idx < 0:
-            arc_pts = list(reversed(arcs[~idx]))
-        else:
-            arc_pts = arcs[idx]
-        decoded = decode_arc(arc_pts, transform)
+            decoded.reverse()
         if pts and decoded:
             # TopoJSON 共享端点：跳过首点
             pts.extend(decoded[1:])

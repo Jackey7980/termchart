@@ -34,7 +34,7 @@ int main() {
     canvas::Canvas canvas(56, 12);
     const std::uint32_t panel = 18;  // 每个仪表的水平面板宽
 
-    for (std::size_t i = 0; i < gauges.size(); ++i) {
+    for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(gauges.size()); ++i) {
         chart::GaugeChart gauge;
         gauge.set_title(gauges[i].label);
         gauge.set_value(gauges[i].value);

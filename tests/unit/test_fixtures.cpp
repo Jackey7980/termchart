@@ -52,7 +52,10 @@ std::string read_fixture(const char* name) {
 // 码点数（簇数的上界）：切分永远不会把簇切得比码点还多。
 std::size_t codepoint_count(std::string_view text) {
     std::size_t n = 0;
-    for (const unsigned char byte : text) {
+    for (const char ch : text) {
+        // 先转 unsigned char 再比较：char 的符号性依平台而定，直接位运算会被
+        // -Wsign-conversion 拦下，且负值右移/比较会出错。
+        const auto byte = static_cast<unsigned char>(ch);
         // UTF-8 续字节形如 10xxxxxx
         if ((byte & 0xC0u) != 0x80u) {
             ++n;
