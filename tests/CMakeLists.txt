@@ -75,6 +75,7 @@ add_executable(termchart_tests
     unit/image/test_png_decode.cpp
     unit/image/test_image_convert.cpp
     unit/image/test_ttf_font.cpp
+    unit/image/test_bmp.cpp
 
     # ── raster ──
     unit/raster/test_raster_braille.cpp

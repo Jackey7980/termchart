@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "termchart/image/bmp.hpp"
 #include "termchart/image/png.hpp"
 
 namespace termchart::image {
@@ -62,6 +63,8 @@ Result<Bitmap> decode_image(const std::uint8_t* data, std::size_t size) {
     switch (sniff_image_format(data, size)) {
         case ImageFormat::Png:
             return decode_png(data, size);
+        case ImageFormat::Bmp:
+            return decode_bmp(data, size);
         case ImageFormat::Unknown:
             return Unexpected<ErrorCode>(ErrorCode::ParseError);
         default:
