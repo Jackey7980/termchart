@@ -76,6 +76,7 @@ add_executable(termchart_tests
     unit/image/test_image_convert.cpp
     unit/image/test_ttf_font.cpp
     unit/image/test_bmp.cpp
+    unit/image/test_stb_image.cpp
 
     # ── raster ──
     unit/raster/test_raster_braille.cpp
@@ -228,6 +229,13 @@ target_include_directories(termchart_tests
 target_include_directories(termchart_tests SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest
 )
+
+# stb 同样按 SYSTEM 引入；仅当启用 stb_image 才需要（测试直接引用 stb_image_write）。
+if(TERMCHART_HAVE_STB_IMAGE)
+    target_include_directories(termchart_tests SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/stb)
+    target_compile_definitions(termchart_tests PRIVATE TERMCHART_HAVE_STB_IMAGE=1)
+endif()
 
 termchart_set_warnings(termchart_tests)
 termchart_apply_sanitizers(termchart_tests)

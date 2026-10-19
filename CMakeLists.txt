@@ -79,6 +79,15 @@ if(TERMCHART_HAVE_UTF8PROC)
     target_compile_definitions(termchart PRIVATE TERMCHART_HAVE_UTF8PROC=1)
 endif()
 
+# vendored stb_image（可选）：JPEG/GIF/WebP 解码。头在 third_party/stb；实现 TU
+# src/image/stb_image_impl.cpp 用 STB_IMAGE_IMPLEMENTATION 单独编一份，受
+# TERMCHART_HAVE_STB_IMAGE 守卫（关闭时该 TU 为空，零代价、不引入符号）。
+if(TERMCHART_HAVE_STB_IMAGE)
+    target_include_directories(termchart SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+    target_compile_definitions(termchart PRIVATE TERMCHART_HAVE_STB_IMAGE=1)
+endif()
+
 # ── GUI 平行栈库（header-only，链接 termchart；复用 scene/color/image）──
 # 平行栈（widget_tree / native_loop / layout / backend_tk）与终端栈共享到
 # scene(L4) 为止，见 docs/design/gui_stack.md。渲染核心先期落地在 termchart::gui。

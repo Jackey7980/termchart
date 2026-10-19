@@ -8,6 +8,13 @@
 #include "termchart/image/bmp.hpp"
 #include "termchart/image/png.hpp"
 
+#ifdef TERMCHART_HAVE_STB_IMAGE
+// stb_image 是单头库：只在一个 TU 里定义 STB_IMAGE_IMPLEMENTATION 才生成实现。
+// 本文件即该唯一点（同时也是 decode_stb 的所在），受 TERMCHART_HAVE_STB_IMAGE 守卫。
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#endif
+
 namespace termchart::image {
 namespace {
 
@@ -15,6 +22,25 @@ bool matches(const std::uint8_t* data, std::size_t size, const char* magic,
              std::size_t length) noexcept {
     return size >= length && std::memcmp(data, magic, length) == 0;
 }
+
+#ifdef TERMCHART_HAVE_STB_IMAGE
+// 走 vendored stb_image 解码任意受支持格式为 RGBA。GIF 只取首帧（静态图库语义）。
+Result<Bitmap> decode_stb(const std::uint8_t* data, std::size_t size) {
+    int w = 0, h = 0, ch = 0;
+    stbi_uc* px = stbi_load_from_memory(data, static_cast<int>(size), &w, &h, &ch, 4);
+    if (px == nullptr || w <= 0 || h <= 0) {
+        return Unexpected<ErrorCode>(ErrorCode::ParseError);
+    }
+    Bitmap out(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h), 4);
+    const std::size_t bytes =
+        static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4u;
+    if (bytes > 0) {
+        std::memcpy(out.data(), px, bytes);  // stb 4 通道即 RGBA，与 Bitmap 布局一致
+    }
+    stbi_image_free(px);
+    return out;
+}
+#endif
 
 }  // namespace
 
@@ -65,6 +91,12 @@ Result<Bitmap> decode_image(const std::uint8_t* data, std::size_t size) {
             return decode_png(data, size);
         case ImageFormat::Bmp:
             return decode_bmp(data, size);
+#ifdef TERMCHART_HAVE_STB_IMAGE
+        case ImageFormat::Jpeg:
+        case ImageFormat::Gif:
+        case ImageFormat::WebP:
+            return decode_stb(data, size);
+#endif
         case ImageFormat::Unknown:
             return Unexpected<ErrorCode>(ErrorCode::ParseError);
         default:

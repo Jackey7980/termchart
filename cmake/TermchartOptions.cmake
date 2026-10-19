@@ -16,6 +16,7 @@ option(TERMCHART_MINIMAL_BUILD "只构建最小核心" OFF)
 # ── 可选依赖链（bền 只经 find_package，不 vendored 进构建图） ────────────
 option(TERMCHART_ENABLE_PNG "尝试引入 libpng/zlib（PNG 解码 / 编码）" OFF)
 option(TERMCHART_ENABLE_UTF8PROC "尝试引入 utf8proc（完整 Unicode 属性）" OFF)
+option(TERMCHART_ENABLE_STB_IMAGE "引入 vendored stb_image（JPEG/GIF/WebP 解码）；默认关，缺失即 Unsupported" OFF)
 option(TERMCHART_ENABLE_FUZZING "构建 fuzz 目标（需 clang 或 libFuzzer）" OFF)
 
 # 原生 GUI 后端插件（可选，默认关）：Win32 真实窗口后端需编译型平台代码 + 链
