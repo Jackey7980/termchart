@@ -71,7 +71,8 @@ foreach(example
         68_cn_province
         69_city_plot
         70_export_pdf
-        71_fetch_stb)
+        71_fetch_stb
+        72_3d)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE termchart)
     termchart_set_warnings(${example})

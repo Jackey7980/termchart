@@ -29,6 +29,11 @@ scale/band
 image/field
 image/bitmap
 image/convert
+math3d/vec3
+math3d/mat4
+math3d/camera
+chart3d/scatter
+chart3d/surface
 document/span
 document/table_model
 layout/box

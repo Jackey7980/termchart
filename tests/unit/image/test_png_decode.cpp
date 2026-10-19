@@ -286,7 +286,13 @@ TEST_CASE("image/decoder: 按魔数识别格式并分发") {
     // 认得出但没有解码器：Unsupported（不是 ParseError）
     const Result<Bitmap> unsupported = decode_image(jpeg, sizeof(jpeg));
     REQUIRE_FALSE(unsupported.has_value());
+#ifndef TERMCHART_HAVE_STB_IMAGE
     CHECK(unsupported.error() == ErrorCode::Unsupported);
+#else
+    // 启用 stb 后 JPG 认得出且有解码器，只是这段 JPEG 魔数不是合法图像体，
+    // 因此走到 stb 解码失败 → ParseError（不再是 Unsupported）。
+    CHECK(unsupported.error() == ErrorCode::ParseError);
+#endif
 
     // 认不出：ParseError
     const Result<Bitmap> unknown = decode_image(junk, sizeof(junk));

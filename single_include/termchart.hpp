@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 350 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 355 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -4565,6 +4565,262 @@ struct ResolvedStyle {
     const Style& style, const ResolveOptions& options = {}) noexcept;
 
 }  // namespace termchart::color
+
+// ===== include/termchart/math3d/vec3.hpp =====
+// vec3.hpp —— 三维向量（header-only）
+//
+// 仅放 3D 投影真正需要的那几个运算；依赖 <cmath>，不引入 eigen/glm。
+// 约定：行主序矩阵 × 列向量（见 mat4.hpp），本文件只负责向量代数。
+
+
+namespace termchart::math3d {
+
+struct Vec3 {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    constexpr Vec3() noexcept = default;
+    constexpr Vec3(double x_, double y_, double z_) noexcept : x(x_), y(y_), z(z_) {}
+
+    constexpr Vec3 operator+(const Vec3& o) const noexcept { return {x + o.x, y + o.y, z + o.z}; }
+    constexpr Vec3 operator-(const Vec3& o) const noexcept { return {x - o.x, y - o.y, z - o.z}; }
+    constexpr Vec3 operator-() const noexcept { return {-x, -y, -z}; }
+    constexpr Vec3 operator*(double s) const noexcept { return {x * s, y * s, z * s}; }
+    constexpr Vec3 operator/(double s) const noexcept { return {x / s, y / s, z / s}; }
+
+    constexpr double dot(const Vec3& o) const noexcept { return x * o.x + y * o.y + z * o.z; }
+    constexpr Vec3 cross(const Vec3& o) const noexcept {
+        return {y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x};
+    }
+    constexpr double length() const noexcept { return std::sqrt(x * x + y * y + z * z); }
+    constexpr Vec3 normalized() const noexcept {
+        const double l = length();
+        return l > 0.0 ? (*this) / l : Vec3{};
+    }
+    constexpr bool operator==(const Vec3& o) const noexcept {
+        return x == o.x && y == o.y && z == o.z;
+    }
+};
+
+}  // namespace termchart::math3d
+
+// ===== include/termchart/math3d/mat4.hpp =====
+// mat4.hpp —— 4×4 矩阵（header-only，行主序）
+//
+// 约定（与绝大多数图形教材一致）：矩阵 × 列向量。元素 m[r*4+c] 即第 r 行第 c 列。
+// `transform(p)` 计算 M·p（齐次 w=1）。投影链 = perspective · look_at，即
+// clip = perspective(look_at(p))。所有函数 constexpr，便于单测断言确定性结果。
+
+
+
+namespace termchart::math3d {
+
+struct Mat4 {
+    double m[16] = {};  // 行主序，初值全 0
+
+    constexpr Mat4() { identity(); }
+
+    constexpr void identity() noexcept {
+        for (int i = 0; i < 16; ++i) {
+            m[i] = (i % 5 == 0) ? 1.0 : 0.0;  // 对角线（index 0,5,10,15）
+        }
+    }
+
+    constexpr double& at(int r, int c) noexcept { return m[r * 4 + c]; }
+    constexpr double at(int r, int c) const noexcept { return m[r * 4 + c]; }
+
+    // M · (x,y,z,1)
+    constexpr Vec3 transform(const Vec3& p) const noexcept {
+        const double x = p.x, y = p.y, z = p.z, w = 1.0;
+        return {m[0] * x + m[1] * y + m[2] * z + m[3] * w,
+                m[4] * x + m[5] * y + m[6] * z + m[7] * w,
+                m[8] * x + m[9] * y + m[10] * z + m[11] * w};
+    }
+
+    // 透视除法后的齐次 w（投影矩阵填在 m[11]，clip.w = -(view.z)）。
+    constexpr double clip_w(const Vec3& p) const noexcept {
+        const double x = p.x, y = p.y, z = p.z, w = 1.0;
+        return m[12] * x + m[13] * y + m[14] * z + m[15] * w;
+    }
+};
+
+constexpr Mat4 operator*(const Mat4& a, const Mat4& b) noexcept {
+    Mat4 r;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double s = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                s += a.at(i, k) * b.at(k, j);
+            }
+            r.at(i, j) = s;
+        }
+    }
+    return r;
+}
+
+constexpr Mat4 translate(double tx, double ty, double tz) noexcept {
+    Mat4 r;
+    r.at(0, 3) = tx;  // 平移量在最后一列（行主序下为 m[3]/m[7]/m[11]）
+    r.at(1, 3) = ty;
+    r.at(2, 3) = tz;
+    return r;
+}
+
+constexpr Mat4 scale(double sx, double sy, double sz) noexcept {
+    Mat4 r;
+    r.at(0, 0) = sx;
+    r.at(1, 1) = sy;
+    r.at(2, 2) = sz;
+    return r;
+}
+
+// 绕 X 轴旋转（右手系，正角逆时针看向 +X）。
+constexpr Mat4 rotate_x(double a) noexcept {
+    Mat4 r;
+    const double c = std::cos(a), s = std::sin(a);
+    r.at(1, 1) = c;
+    r.at(1, 2) = -s;
+    r.at(2, 1) = s;
+    r.at(2, 2) = c;
+    return r;
+}
+
+constexpr Mat4 rotate_y(double a) noexcept {
+    Mat4 r;
+    const double c = std::cos(a), s = std::sin(a);
+    r.at(0, 0) = c;
+    r.at(0, 2) = s;
+    r.at(2, 0) = -s;
+    r.at(2, 2) = c;
+    return r;
+}
+
+constexpr Mat4 rotate_z(double a) noexcept {
+    Mat4 r;
+    const double c = std::cos(a), s = std::sin(a);
+    r.at(0, 0) = c;
+    r.at(0, 1) = -s;
+    r.at(1, 0) = s;
+    r.at(1, 1) = c;
+    return r;
+}
+
+// 透视投影（右手系，相机看向 -Z）。fovy/near/far 单位为同一坐标空间。
+inline Mat4 perspective(double fovy_rad, double aspect, double near, double far) noexcept {
+    Mat4 r;  // 全 0
+    const double f = 1.0 / std::tan(fovy_rad / 2.0);
+    r.at(0, 0) = f / aspect;
+    r.at(1, 1) = f;
+    r.at(2, 2) = (far + near) / (near - far);
+    r.at(2, 3) = (2.0 * far * near) / (near - far);
+    r.at(3, 2) = -1.0;
+    return r;
+}
+
+// 视图矩阵：把世界坐标变换到以 eye 为原点、看向 center 的相机空间。
+// up 与视线近似平行时退化为 (0,0,1)，避免叉乘退化出零向量。
+inline Mat4 look_at(const Vec3& eye, const Vec3& center, const Vec3& up) noexcept {
+    const Vec3 z = (eye - center).normalized();
+    Vec3 up_used = up;
+    if (std::fabs(z.dot(up_used)) > 0.999) {
+        up_used = Vec3{0.0, 0.0, 1.0};
+    }
+    const Vec3 x = up_used.cross(z).normalized();
+    const Vec3 y = z.cross(x);
+    Mat4 r;
+    r.at(0, 0) = x.x;
+    r.at(0, 1) = x.y;
+    r.at(0, 2) = x.z;
+    r.at(0, 3) = -x.dot(eye);
+    r.at(1, 0) = y.x;
+    r.at(1, 1) = y.y;
+    r.at(1, 2) = y.z;
+    r.at(1, 3) = -y.dot(eye);
+    r.at(2, 0) = z.x;
+    r.at(2, 1) = z.y;
+    r.at(2, 2) = z.z;
+    r.at(2, 3) = -z.dot(eye);
+    r.at(3, 3) = 1.0;
+    return r;
+}
+
+}  // namespace termchart::math3d
+
+// ===== include/termchart/math3d/camera.hpp =====
+// camera.hpp —— 轨道相机 + 透视投影到画布坐标（header-only）
+//
+// 设计取舍：3D 渲染**不**自造 z-buffer/终端光栅器，而是把 3D 点投影到 2D 画布坐标
+// 后，作为 Scene 图元交给已有的 Scene→Canvas（braille/halfblock）管线。深度只用来
+// 决定着色（近亮远暗），得到可辨识的立体感而不重复造轮子。
+//
+// project() 返回的屏幕坐标即画布格坐标（左上为原点，y 向下），直接喂给 Scene 的
+// MoveTo/LineTo/RectOp 即可被 render_scene 消费。
+
+
+namespace termchart::math3d {
+
+constexpr double kDeg2Rad = 0.017453292519943295769;  // π/180
+
+struct Projected {
+    double x = 0.0;   // 画布列坐标
+    double y = 0.0;   // 画布行坐标
+    double depth = 0.0;  // 归一化深度：0=最近，1=最远，供着色
+    bool visible = false;  // 在视锥内且位于相机前方
+};
+
+struct Camera {
+    Vec3 eye{0.0, 0.0, 5.0};
+    Vec3 target{0.0, 0.0, 0.0};
+    Vec3 up{0.0, 1.0, 0.0};
+    double fovy_deg = 55.0;
+    double aspect = 1.0;  // vw / vh
+    double near = 0.1;
+    double far = 100.0;
+
+    // 以 target 为中心、按方位角/仰角/距离摆放 eye。
+    void orbit(double azimuth_deg, double elevation_deg, double distance) noexcept {
+        const double az = azimuth_deg * kDeg2Rad;
+        const double el = elevation_deg * kDeg2Rad;
+        const double ce = std::cos(el);
+        eye = target + Vec3{ce * std::sin(az), std::sin(el), ce * std::cos(az)} * distance;
+    }
+
+    // 世界坐标 → 画布坐标。vw/vh 为画布尺寸（格）。
+    Projected project(const Vec3& world, double vw, double vh) const noexcept {
+        const Mat4 view = look_at(eye, target, up);
+        const Mat4 proj = perspective(fovy_deg * kDeg2Rad, aspect, near, far);
+        const Mat4 vp = proj * view;
+
+        const Vec3 clip = vp.transform(world);
+        const double w = vp.clip_w(world);  // 透视矩阵的 clip.w = -z_view
+        if (w <= 0.0) {
+            return {};  // 相机后方
+        }
+        const double invw = 1.0 / w;
+        const double ndcx = clip.x * invw;
+        const double ndcy = clip.y * invw;
+        const double ndcz = clip.z * invw;
+        if (ndcz < -1.0 || ndcz > 1.0) {
+            return {};  // 超出近/远裁剪面
+        }
+
+        const double sx = (ndcx * 0.5 + 0.5) * vw;
+        const double sy = (1.0 - (ndcy * 0.5 + 0.5)) * vh;
+
+        const Vec3 viewp = view.transform(world);
+        const double span = far - near;
+        const double t = (span > 0.0) ? clamp_d(((-viewp.z) - near) / span, 0.0, 1.0) : 0.0;
+        return {sx, sy, t, true};
+    }
+
+private:
+    static constexpr double clamp_d(double v, double lo, double hi) noexcept {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+};
+
+}  // namespace termchart::math3d
 
 // ===== include/termchart/scale/auto_domain.hpp =====
 // auto_domain.hpp —— 由数据范围反推「好看」的值域
@@ -11223,6 +11479,228 @@ private:
 };
 
 }  // namespace termchart::chart
+
+// ===== include/termchart/chart3d/scatter.hpp =====
+// scatter.hpp —— 3D 散点图：把三维点云投影成 Scene（header-only）
+//
+// 不做终端专属渲染：产出的是与 2D 图表同构的 scene::Scene，交给已有的
+// render_scene → Canvas → Renderer 管线，复用 braille/halfblock 光栅化。深度只用于
+// 着色（近亮远暗），立体感由此而来，无需自造 z-buffer。
+
+
+
+namespace termchart::chart3d {
+
+struct Scatter3dOpts {
+    double cols = 72.0;        // 画布宽（格）
+    double rows = 28.0;        // 画布高（格）
+    double azimuth_deg = 35.0;   // 轨道方位角
+    double elevation_deg = 22.0; // 轨道仰角
+    double fovy_deg = 55.0;       // 垂直视场角
+    double point_size = 0.9;      // 每个点在画布上的边长（格）
+    bool axes = true;             // 是否画 X/Y/Z 轴
+};
+
+// 深度 t（0=近，1=远）→ 颜色：近处暖亮、远处冷暗。
+inline Color shade(double t) noexcept {
+    const double k = util::clamp<double>(t, 0.0, 1.0);
+    const auto lerp_u8 = [](int a, int b, double kk) {
+        return static_cast<std::uint8_t>(a + (b - a) * kk);
+    };
+    return Color::rgb(lerp_u8(255, 40, k), lerp_u8(210, 70, k), lerp_u8(80, 150, k));
+}
+
+// 自动取景：按点云包围盒居中、按半径定距离与近/远裁剪面。
+inline math3d::Camera make_camera(double cols, double rows, double azimuth_deg,
+                                  double elevation_deg, double fovy_deg,
+                                  const math3d::Vec3& center, double radius) noexcept {
+    math3d::Camera cam;
+    cam.aspect = cols / rows;
+    cam.fovy_deg = fovy_deg;
+    const double fovy = fovy_deg * math3d::kDeg2Rad;
+    const double dist = radius / std::tan(fovy / 2.0) * 1.8;
+    cam.near = std::max(0.01, dist - radius * 1.5);
+    cam.far = dist + radius * 1.5;
+    cam.target = center;
+    cam.orbit(azimuth_deg, elevation_deg, dist);
+    return cam;
+}
+
+inline void bounding(const std::vector<math3d::Vec3>& pts, math3d::Vec3& minv,
+                     math3d::Vec3& maxv, math3d::Vec3& center, double& radius) noexcept {
+    if (pts.empty()) {
+        return;
+    }
+    minv = maxv = pts.front();
+    for (const auto& p : pts) {
+        minv.x = std::min(minv.x, p.x);
+        minv.y = std::min(minv.y, p.y);
+        minv.z = std::min(minv.z, p.z);
+        maxv.x = std::max(maxv.x, p.x);
+        maxv.y = std::max(maxv.y, p.y);
+        maxv.z = std::max(maxv.z, p.z);
+    }
+    center = (minv + maxv) * 0.5;
+    radius = (maxv - minv).length() * 0.5;
+    if (!(radius > 0.0)) {
+        radius = 1.0;
+    }
+}
+
+inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatter3dOpts& o = {}) {
+    scene::Scene s;
+    if (pts.empty()) {
+        return s;
+    }
+
+    math3d::Vec3 minv, maxv, center;
+    double radius = 0.0;
+    bounding(pts, minv, maxv, center, radius);
+
+    const math3d::Camera cam =
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+
+    // 坐标轴：从包围盒最小角沿三轴方向各画一条，颜色固定 X红/Y绿/Z蓝。
+    if (o.axes) {
+        const math3d::Vec3 axes[3] = {math3d::Vec3{maxv.x, minv.y, minv.z},
+                                      math3d::Vec3{minv.x, maxv.y, minv.z},
+                                      math3d::Vec3{minv.x, minv.y, maxv.z}};
+        const char* labels[3] = {"X", "Y", "Z"};
+        const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
+                                     Color::rgb(90, 140, 230)};
+        for (int a = 0; a < 3; ++a) {
+            const auto p0 = cam.project(minv, o.cols, o.rows);
+            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            if (!p0.visible || !p1.visible) {
+                continue;
+            }
+            s.push(scene::StrokeOp{axis_color[a], 1.0});
+            s.push(scene::MoveTo{Point{p0.x, p0.y}});
+            s.push(scene::LineTo{Point{p1.x, p1.y}});
+            s.push(scene::TextOp{Point{p1.x, p1.y}, std::string(labels[a]), Style{}});
+        }
+    }
+
+    // 点：每个点一个填充小方块，颜色随深度变化。
+    const double h = o.point_size / 2.0;
+    for (const auto& p : pts) {
+        const auto pr = cam.project(p, o.cols, o.rows);
+        if (!pr.visible) {
+            continue;
+        }
+        s.push(scene::FillOp{shade(pr.depth)});
+        s.push(scene::RectOp{Rect{pr.x - h, pr.y - h, o.point_size, o.point_size}});
+    }
+    return s;
+}
+
+}  // namespace termchart::chart3d
+
+// ===== include/termchart/chart3d/surface.hpp =====
+// surface.hpp —— 3D 曲面/网格图：把 z=f(x,y) 投影成 Scene 线框（header-only）
+//
+// 与 scatter 同构：只产出 scene::Scene，复用现有终端光栅管线。曲面以**线框**呈现
+// （每行/每列相邻的网格点连线），连线颜色按平均深度着色；这也是 3D 曲面最易辨识、
+// 最稳的画法，避免在终端上赌多边形填充的清晰度。
+
+
+
+namespace termchart::chart3d {
+
+struct Surface3dOpts {
+    double cols = 72.0;
+    double rows = 28.0;
+    double azimuth_deg = 35.0;
+    double elevation_deg = 25.0;
+    double fovy_deg = 55.0;
+    int res_x = 24;  // 网格列数
+    int res_y = 24;  // 网格行数
+    bool axes = true;
+};
+
+inline scene::Scene surface3d(const std::function<double(double, double)>& f, double x0, double x1,
+                              double y0, double y1, const Surface3dOpts& o = {}) {
+    scene::Scene s;
+    const std::size_t nx = static_cast<std::size_t>(std::max(1, o.res_x));
+    const std::size_t ny = static_cast<std::size_t>(std::max(1, o.res_y));
+
+    // 采样网格，记录包围盒以自动取景。
+    std::vector<std::vector<math3d::Vec3>> grid(ny + 1, std::vector<math3d::Vec3>(nx + 1));
+    math3d::Vec3 minv{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
+                      std::numeric_limits<double>::infinity()};
+    math3d::Vec3 maxv{-std::numeric_limits<double>::infinity(),
+                      -std::numeric_limits<double>::infinity(),
+                      -std::numeric_limits<double>::infinity()};
+    for (std::size_t j = 0; j <= ny; ++j) {
+        const double yy = util::lerp(y0, y1, static_cast<double>(j) / static_cast<double>(ny));
+        for (std::size_t i = 0; i <= nx; ++i) {
+            const double xx = util::lerp(x0, x1, static_cast<double>(i) / static_cast<double>(nx));
+            const double zz = f(xx, yy);
+            const math3d::Vec3 p{xx, yy, zz};
+            grid[j][i] = p;
+            minv.x = std::min(minv.x, p.x);
+            minv.y = std::min(minv.y, p.y);
+            minv.z = std::min(minv.z, p.z);
+            maxv.x = std::max(maxv.x, p.x);
+            maxv.y = std::max(maxv.y, p.y);
+            maxv.z = std::max(maxv.z, p.z);
+        }
+    }
+
+    const math3d::Vec3 center = (minv + maxv) * 0.5;
+    double radius = (maxv - minv).length() * 0.5;
+    if (!(radius > 0.0)) {
+        radius = 1.0;
+    }
+
+    const math3d::Camera cam =
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+
+    if (o.axes) {
+        const math3d::Vec3 axes[3] = {math3d::Vec3{maxv.x, minv.y, minv.z},
+                                      math3d::Vec3{minv.x, maxv.y, minv.z},
+                                      math3d::Vec3{minv.x, minv.y, maxv.z}};
+        const char* labels[3] = {"X", "Y", "Z"};
+        const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
+                                     Color::rgb(90, 140, 230)};
+        for (int a = 0; a < 3; ++a) {
+            const auto p0 = cam.project(minv, o.cols, o.rows);
+            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            if (!p0.visible || !p1.visible) {
+                continue;
+            }
+            s.push(scene::StrokeOp{axis_color[a], 1.0});
+            s.push(scene::MoveTo{Point{p0.x, p0.y}});
+            s.push(scene::LineTo{Point{p1.x, p1.y}});
+            s.push(scene::TextOp{Point{p1.x, p1.y}, std::string(labels[a]), Style{}});
+        }
+    }
+
+    // 线框：逐行、逐列相邻点连线，颜色按平均深度着色。
+    const auto seg = [&](const math3d::Vec3& a, const math3d::Vec3& b) {
+        const auto pa = cam.project(a, o.cols, o.rows);
+        const auto pb = cam.project(b, o.cols, o.rows);
+        if (!pa.visible || !pb.visible) {
+            return;
+        }
+        s.push(scene::StrokeOp{shade((pa.depth + pb.depth) * 0.5), 1.0});
+        s.push(scene::MoveTo{Point{pa.x, pa.y}});
+        s.push(scene::LineTo{Point{pb.x, pb.y}});
+    };
+    for (std::size_t j = 0; j <= ny; ++j) {
+        for (std::size_t i = 0; i < nx; ++i) {
+            seg(grid[j][i], grid[j][i + 1]);
+        }
+    }
+    for (std::size_t i = 0; i <= nx; ++i) {
+        for (std::size_t j = 0; j < ny; ++j) {
+            seg(grid[j][i], grid[j + 1][i]);
+        }
+    }
+    return s;
+}
+
+}  // namespace termchart::chart3d
 
 // ===== include/termchart/graph/attributes.hpp =====
 // attributes.hpp —— 节点/边的键值元数据（header-only 值类型）
