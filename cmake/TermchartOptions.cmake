@@ -8,6 +8,7 @@
 option(TERMCHART_BUILD_TESTS "构建测试（doctest）" ON)
 option(TERMCHART_BUILD_EXAMPLES "构建 examples/" ON)
 option(TERMCHART_BUILD_BENCH "构建 bench/（性能基线，零外部依赖）" ON)
+option(TERMCHART_BUILD_PYTHON "构建 Python 绑定（pybind11，可选）" OFF)
 option(TERMCHART_BUILD_SHARED "构建共享库（默认静态）" OFF)
 option(TERMCHART_ENABLE_COVERAGE "构建覆盖率插桩" OFF)
 option(TERMCHART_WARNINGS_AS_ERRORS "把警告当错误（CI 用）" OFF)

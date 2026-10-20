@@ -4,20 +4,19 @@
 //   * find_package(pybind11 QUIET) 成功
 //   * 编译期定义 TERMCHART_HAVE_PYBIND11
 //
-// 暴露 API（薄壳，与 C++ 一一对应，不重新设计）：
-//   termchart.plot(x, y, title="")          ← quick::plot
-//   termchart.scatter(x, y, title="")       ← quick::scatter
-//   termchart.bar(labels, values, title="") ← quick::bar
-//   termchart.version()                     ← "0.1.0"
+// 暴露 API（薄壳，与 C++ 高层入口一一对应，不重新设计）：
+//   termchart.plot(x, y, title="")          ← api::render_plot
+//   termchart.scatter(x, y, title="")       ← api::render_scatter
+//   termchart.bar(labels, values, title="") ← api::render_bar
+//   termchart.version()                     ← TERMCHART_VERSION_STRING
 //
 // 故意不暴露：
-//   * render_chart / print_chart（依赖 stdout；Python 端该走 plot/scatter/bar）
+//   * plot/scatter/bar（写 stdout 的变体；Python 端该走 render_* 拿字符串）
 //   * 所有 chart 子类（按用户的"一行出图 + 高级扩展点最后露面"取向）
-//
-// 编译：见 bindings/python/CMakeLists.txt（外部用户通过 pip install 路径消费）
 
 #ifdef TERMCHART_HAVE_PYBIND11
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -31,31 +30,43 @@ namespace py = pybind11;
 
 namespace {
 
+termchart::api::PlotOpts make_opts(const std::string& title) {
+    termchart::api::PlotOpts o;
+    o.title = title;
+    return o;
+}
+
 std::string py_plot(const std::vector<double>& x, const std::vector<double>& y,
                     const std::string& title) {
-    return termchart::api::quick::plot(x, y, title);
+    auto r = termchart::api::render_plot(x, y, make_opts(title));
+    if (!r.has_value()) throw std::runtime_error("termchart: render_plot failed");
+    return std::move(r.value());
 }
 
 std::string py_scatter(const std::vector<double>& x, const std::vector<double>& y,
                        const std::string& title) {
-    return termchart::api::quick::scatter(x, y, title);
+    auto r = termchart::api::render_scatter(x, y, make_opts(title));
+    if (!r.has_value()) throw std::runtime_error("termchart: render_scatter failed");
+    return std::move(r.value());
 }
 
 std::string py_bar(const std::vector<std::string>& labels,
-                   const std::vector<double>& values,
-                   const std::string& title) {
-    return termchart::api::quick::bar(labels, values, title);
+                   const std::vector<double>& values, const std::string& title) {
+    auto r = termchart::api::render_bar(values, labels, make_opts(title));
+    if (!r.has_value()) throw std::runtime_error("termchart: render_bar failed");
+    return std::move(r.value());
 }
 
 }  // namespace
 
 PYBIND11_MODULE(termchart, m) {
     m.doc() = "termchart Python bindings (one-liner plotting API)";
-    m.def("version", &termchart::version, "termchart version string");
+    m.def("version", []() { return std::string(TERMCHART_VERSION_STRING); },
+          "termchart version string");
 
     m.def("plot",    &py_plot,    py::arg("x"), py::arg("y"),
           py::arg("title") = std::string{},
-          "Plot a line chart. Returns the rendered text (terminal cells).");
+          "Plot a line chart. Returns the rendered ANSI text (terminal cells).");
     m.def("scatter", &py_scatter, py::arg("x"), py::arg("y"),
           py::arg("title") = std::string{},
           "Plot a scatter chart.");

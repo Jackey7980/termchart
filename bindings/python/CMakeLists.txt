@@ -1,15 +1,14 @@
 # bindings/python/CMakeLists.txt —— pybind11 Python 绑定（可选插件）
 #
 # 构建规则：
-#   * 默认 TERMCHART_BUILD_PYTHON=OFF
-#   * 开启后调用 find_package(pybind11 QUIET)；缺失时 **fail-loud**
-#     （用户明确要求"可选扩展显式报错不静默降级"，故不复用
-#      FindTermchartDeps 的"缺依赖只降级"约定）
-#   * 产出 Python 模块 `termchart`，链接 termchart::termchart
+#   * 选项 TERMCHART_BUILD_PYTHON（定义在 cmake/TermchartOptions.cmake）默认 OFF
+#   * 开启后调用 find_package(pybind11 REQUIRED)；缺失时 **fail-loud**
+#     （用户明确要求"可选扩展显式报错不静默降级"）
+#   * 产出 Python 模块 `termchart`：目标名用 termchart_pybind（避免与核心库目标
+#     termchart 冲突），但 OUTPUT_NAME 强制为 termchart，使 `import termchart` 命中文件
+#   * 链接 termchart::termchart；Windows 下静态链接 MinGW 运行时，使 .pyd 自包含
 
-option(TERMCHART_BUILD_PYTHON "构建 Python 绑定（pybind11，可选）" OFF)
-
-if(NOT TERCHART_BUILD_PYTHON)
+if(NOT TERMCHART_BUILD_PYTHON)
     return()
 endif()
 
@@ -18,9 +17,14 @@ find_package(pybind11 REQUIRED)
 pybind11_add_module(termchart_pybind
     termchart_pybind.cpp
 )
+set_target_properties(termchart_pybind PROPERTIES OUTPUT_NAME termchart)
 
 target_link_libraries(termchart_pybind PRIVATE termchart::termchart)
 target_compile_definitions(termchart_pybind PRIVATE TERMCHART_HAVE_PYBIND11=1)
 termchart_set_warnings(termchart_pybind)
 
-# Python 用户从 site-packages 拿到 termchart.so 后可 `import termchart`
+if(WIN32)
+    target_link_options(termchart_pybind PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
+# Python 用户从 site-packages 拿到 termchart.pyd 后可 `import termchart`
