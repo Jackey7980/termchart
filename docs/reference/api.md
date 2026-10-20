@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **357 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **362 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -16,6 +16,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | util | L1 | 21 |
 | color | L2 | 6 |
 | math3d | L3 | 3 |
+| math4d | L3 | 3 |
 | scale | L3 | 10 |
 | scene | L4 | 6 |
 | image | L5 | 8 |
@@ -28,6 +29,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | layout | L11 | 11 |
 | chart | L12 | 79 |
 | chart3d | L12 | 4 |
+| chart4d | L12 | 2 |
 | graph | L13 | 46 |
 | render | L14 | 5 |
 | interaction | L15 | 18 |
@@ -798,6 +800,50 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 约定：行主序矩阵 × 列向量（见 mat4.hpp），本文件只负责向量代数。
 
 - `struct Vec3`
+
+## math4d（L3）
+
+### `math4d/camera4.hpp`
+
+> camera4.hpp —— 4D→3D 透视投影（header-only，"除以 W"的齐次除法）
+>
+> 这是 4D 管线第一阶段的世界→3D 相机：把 4D 相机架在第 4 轴（W）上、看向
+> 原点，对一个 Vec4 做透视除法，产出 math3d::Vec3（交给下游 chart3d 的 3D
+> 轨道相机做第二阶段 3D→2D）。与 math3d::Camera 的关系：后者吃 Vec3 出画布
+> 坐标，本结构吃 Vec4 出 Vec3——两者串起来就是完整的 4D→2D 链。
+>
+> 之所以返回 math3d::Vec3 而不是 math4d 自有类型：3D 向量的语义归 math3d，
+> 且下游（chart4d）本来就要把它喂给 math3d 的相机；math4d 与 math3d 同为 L3，
+> 该依赖方向被层号允许。
+
+- `struct Projected4`
+- `struct Camera4`
+
+### `math4d/mat5.hpp`
+
+> mat5.hpp —— 5×5 矩阵（header-only，行主序，4D 齐次坐标）
+>
+> 约定与 mat4.hpp 一致：矩阵 × 列向量。用 5×5（而非 4×4）是为了容纳 4D
+> 齐次坐标 (x,y,z,w,1)：`transform(p)` 计算 M·(x,y,z,w,1) 并取前四个分量，
+> 于是平移也落进同一个矩阵（与 mat4 的 w=1 齐次平移同思路）。所有函数
+> constexpr，便于单测断言确定性结果。
+>
+> 4D 旋转与 3D 的本质区别：3D 只有 3 个坐标轴、旋转发生在**轴正交的平面**里
+> （XY/XZ/YZ）；4D 有 4 个轴，任取两轴张成一个旋转平面，共 C(4,2)=6 个：
+> XY(0,1) XZ(0,2) XW(0,3) YZ(1,2) YW(1,3) ZW(2,3)。
+> 每个都是在对应二维子平面上嵌一个标准 2D 旋转、其余对角线为 1。
+
+- `struct Mat5`
+
+### `math4d/vec4.hpp`
+
+> vec4.hpp —— 四维向量（header-only）
+>
+> math3d::Vec3 的 4D 对应物。仅放 4D 投影真正需要的运算；依赖 <cmath>，
+> 不引入 eigen/glm。约定与 vec3.hpp 一致：行主序矩阵 × 列向量（见 mat5.hpp），
+> 本文件只负责向量代数。4D 没有叉积的直推（那是 7D 才有），故不提供 cross。
+
+- `struct Vec4`
 
 ## scale（L3）
 
@@ -2848,6 +2894,36 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 最稳的画法，避免在终端上赌多边形填充的清晰度。
 
 - `struct Surface3dOpts`
+
+## chart4d（L12）
+
+### `chart4d/projector4d.hpp`
+
+> projector4d.hpp —— 4D 投影器：实现 chart3d::IProjector，串起两阶段 4D→2D
+>
+> 数据流（用户口径："Vec4 -> Projector4D -> Vec3 -> Projector3D -> Vec2"）：
+> 阶段一（math4d，本类持有）：Vec4 经 4D 旋转（6 平面组合）→ 透视除以 W → Vec3；
+> 阶段二（内层 IProjector，通常是 chart3d::Projector3D）：Vec3 → 画布 Projected。
+> 两个阶段各自可替换：换旋转/换 4D 相机只动阶段一；换 3D 视图（正交、弱透视、
+> 自定义轨道相机）只换内层 IProjector——这正是当初把 chart3d 抽成 IProjector 的目的。
+>
+> 为什么继承 IProjector 却又多一个 Vec4 入口：IProjector::project 的入参是
+> Vec3（3D 缝），4D 点无法穿过它。故本类：
+> * 新增 project(const Vec4&, ...) —— 真正的两阶段 4D 入口（线框/超立方体走这条）；
+> * 覆写 project(const Vec3&, ...) —— 满足 IProjector：喂 3D 点时等价于内层
+> 投影器（4D 旋转/透视不参与），使本类也能直接插进 scatter3d/surface3d。
+
+- `class TERMCHART_API Projector4D final : public chart3d::IProjector`
+
+### `chart4d/wire.hpp`
+
+> wire.hpp —— 4D 线框/点云 → scene::Scene（header-only，chart3d 的 4D 对应物）
+>
+> 与 chart3d/scatter.hpp 同构：发射器只管几何与图元，视图全权委托 Projector4D
+> （两阶段 4D→2D）。每条边的两端经投影器落到画布，两端均可见才画；顶点可选画
+> 成按深度着色的小方块。边按两端平均深度着色，给旋转中的 4D 形体以深度提示。
+
+- `struct Wire4dOpts`
 
 ## graph（L13）
 

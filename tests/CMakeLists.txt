@@ -79,7 +79,9 @@ add_executable(termchart_tests
     unit/image/test_bmp.cpp
     unit/image/test_stb_image.cpp
     unit/math3d/test_math3d.cpp
+    unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp
+    unit/chart4d/test_chart4d.cpp
 
     # ── raster ──
     unit/raster/test_raster_braille.cpp

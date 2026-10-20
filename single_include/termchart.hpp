@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 357 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 362 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -4821,6 +4821,205 @@ private:
 };
 
 }  // namespace termchart::math3d
+
+// ===== include/termchart/math4d/vec4.hpp =====
+// vec4.hpp —— 四维向量（header-only）
+//
+// math3d::Vec3 的 4D 对应物。仅放 4D 投影真正需要的运算；依赖 <cmath>，
+// 不引入 eigen/glm。约定与 vec3.hpp 一致：行主序矩阵 × 列向量（见 mat5.hpp），
+// 本文件只负责向量代数。4D 没有叉积的直推（那是 7D 才有），故不提供 cross。
+
+
+namespace termchart::math4d {
+
+struct Vec4 {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double w = 0.0;
+
+    constexpr Vec4() noexcept = default;
+    constexpr Vec4(double x_, double y_, double z_, double w_) noexcept
+        : x(x_), y(y_), z(z_), w(w_) {}
+
+    constexpr Vec4 operator+(const Vec4& o) const noexcept {
+        return {x + o.x, y + o.y, z + o.z, w + o.w};
+    }
+    constexpr Vec4 operator-(const Vec4& o) const noexcept {
+        return {x - o.x, y - o.y, z - o.z, w - o.w};
+    }
+    constexpr Vec4 operator-() const noexcept { return {-x, -y, -z, -w}; }
+    constexpr Vec4 operator*(double s) const noexcept { return {x * s, y * s, z * s, w * s}; }
+    constexpr Vec4 operator/(double s) const noexcept { return {x / s, y / s, z / s, w / s}; }
+
+    constexpr double dot(const Vec4& o) const noexcept {
+        return x * o.x + y * o.y + z * o.z + w * o.w;
+    }
+    constexpr double length() const noexcept { return std::sqrt(x * x + y * y + z * z + w * w); }
+    constexpr Vec4 normalized() const noexcept {
+        const double l = length();
+        return l > 0.0 ? (*this) / l : Vec4{};
+    }
+    constexpr bool operator==(const Vec4& o) const noexcept {
+        return x == o.x && y == o.y && z == o.z && w == o.w;
+    }
+};
+
+}  // namespace termchart::math4d
+
+// ===== include/termchart/math4d/camera4.hpp =====
+// camera4.hpp —— 4D→3D 透视投影（header-only，"除以 W"的齐次除法）
+//
+// 这是 4D 管线第一阶段的世界→3D 相机：把 4D 相机架在第 4 轴（W）上、看向
+// 原点，对一个 Vec4 做透视除法，产出 math3d::Vec3（交给下游 chart3d 的 3D
+// 轨道相机做第二阶段 3D→2D）。与 math3d::Camera 的关系：后者吃 Vec3 出画布
+// 坐标，本结构吃 Vec4 出 Vec3——两者串起来就是完整的 4D→2D 链。
+//
+// 之所以返回 math3d::Vec3 而不是 math4d 自有类型：3D 向量的语义归 math3d，
+// 且下游（chart4d）本来就要把它喂给 math3d 的相机；math4d 与 math3d 同为 L3，
+// 该依赖方向被层号允许。
+
+
+
+namespace termchart::math4d {
+
+constexpr double kDeg2Rad = 0.017453292519943295769;  // π/180（与 math3d::kDeg2Rad 同值）
+
+// 4D→3D 投影结果。xyz 即投影到的 3D 点；w_view 是相机空间深度
+// （distance - w，越大越远），供着色/调试；visible 表示位于相机前方且
+// 不在近裁剪面之内。
+struct Projected4 {
+    math3d::Vec3 xyz{};
+    double w_view = 0.0;
+    bool visible = false;
+};
+
+struct Camera4 {
+    double distance = 3.0;  // 4D 相机置于 +W 轴、距原点 distance，看向 -W（朝原点）
+    double focal = 2.0;     // W 向焦距：投影缩放 = focal / w_view（越大视野越窄）
+    double near = 0.1;      // 近裁剪：w_view 的下界（含）以外的点不可见
+
+    // 透视除以 W：先把点移到相机前方深度 w_view = distance - p.w，再按
+    // focal / w_view 缩放 xyz。w_view <= near（相机处、后方或太近）→ 不可见，
+    // 避免除出巨大/负值坐标（与 math3d::Camera 的 w<=0 早退同思路）。
+    Projected4 project(const Vec4& p) const noexcept {
+        Projected4 r;
+        const double w_view = distance - p.w;
+        if (!(w_view > near)) {
+            return r;  // NaN 也走这里：!(NaN>near) 为真
+        }
+        const double k = focal / w_view;
+        r.xyz = math3d::Vec3{p.x * k, p.y * k, p.z * k};
+        r.w_view = w_view;
+        r.visible = true;
+        return r;
+    }
+};
+
+// 由 W 向垂直视场角推焦距：f = 1 / tan(fov/2)，与 math3d 透视的 f 同式。
+// fov_deg 越视野小、焦距越大（放大）；60° → ≈1.732。
+inline double focal_from_fov_deg(double fov_deg) noexcept {
+    return 1.0 / std::tan(fov_deg * kDeg2Rad / 2.0);
+}
+
+}  // namespace termchart::math4d
+
+// ===== include/termchart/math4d/mat5.hpp =====
+// mat5.hpp —— 5×5 矩阵（header-only，行主序，4D 齐次坐标）
+//
+// 约定与 mat4.hpp 一致：矩阵 × 列向量。用 5×5（而非 4×4）是为了容纳 4D
+// 齐次坐标 (x,y,z,w,1)：`transform(p)` 计算 M·(x,y,z,w,1) 并取前四个分量，
+// 于是平移也落进同一个矩阵（与 mat4 的 w=1 齐次平移同思路）。所有函数
+// constexpr，便于单测断言确定性结果。
+//
+// 4D 旋转与 3D 的本质区别：3D 只有 3 个坐标轴、旋转发生在**轴正交的平面**里
+// （XY/XZ/YZ）；4D 有 4 个轴，任取两轴张成一个旋转平面，共 C(4,2)=6 个：
+//   XY(0,1) XZ(0,2) XW(0,3) YZ(1,2) YW(1,3) ZW(2,3)。
+// 每个都是在对应二维子平面上嵌一个标准 2D 旋转、其余对角线为 1。
+
+
+
+namespace termchart::math4d {
+
+struct Mat5 {
+    double m[25] = {};  // 行主序，初值全 0
+
+    constexpr Mat5() { identity(); }
+
+    constexpr void identity() noexcept {
+        for (int i = 0; i < 25; ++i) {
+            m[i] = (i % 6 == 0) ? 1.0 : 0.0;  // 对角线（index 0,6,12,18,24）
+        }
+    }
+
+    constexpr double& at(int r, int c) noexcept { return m[r * 5 + c]; }
+    constexpr double at(int r, int c) const noexcept { return m[r * 5 + c]; }
+
+    // M · (x,y,z,w,1)，取前 4 行（第 5 行是齐次占位，恒为 (0,0,0,0,1)·= 1）。
+    constexpr Vec4 transform(const Vec4& p) const noexcept {
+        const double x = p.x, y = p.y, z = p.z, w = p.w, t = 1.0;
+        return {m[0] * x + m[1] * y + m[2] * z + m[3] * w + m[4] * t,
+                m[5] * x + m[6] * y + m[7] * z + m[8] * w + m[9] * t,
+                m[10] * x + m[11] * y + m[12] * z + m[13] * w + m[14] * t,
+                m[15] * x + m[16] * y + m[17] * z + m[18] * w + m[19] * t};
+    }
+};
+
+constexpr Mat5 operator*(const Mat5& a, const Mat5& b) noexcept {
+    Mat5 r;
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 5; ++j) {
+            double s = 0.0;
+            for (int k = 0; k < 5; ++k) {
+                s += a.at(i, k) * b.at(k, j);
+            }
+            r.at(i, j) = s;
+        }
+    }
+    return r;
+}
+
+// 4D 平移：平移量落在最后一列（行主序下为 m[4]/m[9]/m[14]/m[19]）。
+constexpr Mat5 translate(double tx, double ty, double tz, double tw) noexcept {
+    Mat5 r;
+    r.at(0, 4) = tx;
+    r.at(1, 4) = ty;
+    r.at(2, 4) = tz;
+    r.at(3, 4) = tw;
+    return r;
+}
+
+constexpr Mat5 scale(double sx, double sy, double sz, double sw) noexcept {
+    Mat5 r;
+    r.at(0, 0) = sx;
+    r.at(1, 1) = sy;
+    r.at(2, 2) = sz;
+    r.at(3, 3) = sw;
+    return r;
+}
+
+// 绕 (i,j) 坐标平面的旋转（i,j ∈ {0,1,2,3}，对应 x,y,z,w），符号约定与
+// mat4::rotate_x 一致（plane(1,2) 即 rotate_x）：at(i,i)=c at(i,j)=-s
+// at(j,i)=s at(j,j)=c。正角把第 i 轴转向第 j 轴。
+constexpr Mat5 rotate_plane(int i, int j, double a) noexcept {
+    Mat5 r;
+    const double c = std::cos(a), s = std::sin(a);
+    r.at(i, i) = c;
+    r.at(i, j) = -s;
+    r.at(j, i) = s;
+    r.at(j, j) = c;
+    return r;
+}
+
+// 4D 的 6 个旋转平面（见文件头注释）。rotate_xy(90°) 把 e_x 送到 e_y，余类推。
+constexpr Mat5 rotate_xy(double a) noexcept { return rotate_plane(0, 1, a); }
+constexpr Mat5 rotate_xz(double a) noexcept { return rotate_plane(0, 2, a); }
+constexpr Mat5 rotate_xw(double a) noexcept { return rotate_plane(0, 3, a); }
+constexpr Mat5 rotate_yz(double a) noexcept { return rotate_plane(1, 2, a); }
+constexpr Mat5 rotate_yw(double a) noexcept { return rotate_plane(1, 3, a); }
+constexpr Mat5 rotate_zw(double a) noexcept { return rotate_plane(2, 3, a); }
+
+}  // namespace termchart::math4d
 
 // ===== include/termchart/scale/auto_domain.hpp =====
 // auto_domain.hpp —— 由数据范围反推「好看」的值域
@@ -11779,6 +11978,107 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
 }
 
 }  // namespace termchart::chart3d
+
+// ===== include/termchart/chart4d/projector4d.hpp =====
+// projector4d.hpp —— 4D 投影器：实现 chart3d::IProjector，串起两阶段 4D→2D
+//
+// 数据流（用户口径："Vec4 -> Projector4D -> Vec3 -> Projector3D -> Vec2"）：
+//   阶段一（math4d，本类持有）：Vec4 经 4D 旋转（6 平面组合）→ 透视除以 W → Vec3；
+//   阶段二（内层 IProjector，通常是 chart3d::Projector3D）：Vec3 → 画布 Projected。
+// 两个阶段各自可替换：换旋转/换 4D 相机只动阶段一；换 3D 视图（正交、弱透视、
+// 自定义轨道相机）只换内层 IProjector——这正是当初把 chart3d 抽成 IProjector 的目的。
+//
+// 为什么继承 IProjector 却又多一个 Vec4 入口：IProjector::project 的入参是
+// Vec3（3D 缝），4D 点无法穿过它。故本类：
+//   * 新增 project(const Vec4&, ...) —— 真正的两阶段 4D 入口（线框/超立方体走这条）；
+//   * 覆写 project(const Vec3&, ...) —— 满足 IProjector：喂 3D 点时等价于内层
+//     投影器（4D 旋转/透视不参与），使本类也能直接插进 scatter3d/surface3d。
+
+
+
+namespace termchart::chart4d {
+
+class TERMCHART_API Projector4D final : public chart3d::IProjector {
+public:
+    Projector4D(math4d::Mat5 rotation, math4d::Camera4 camera,
+                std::shared_ptr<chart3d::IProjector> inner) noexcept;
+
+    // 4D 入口——真正的两阶段流程：
+    //   Vec4 --(4D 旋转 rotation_)--> Vec4 --(透视除 W camera_)--> Vec3
+    //        --(内层 inner_->project)--> 画布 Projected。
+    // 内层为空或阶段一判定不可见（相机后方/近裁剪）→ 返回 visible=false。
+    [[nodiscard]] math3d::Projected project(const math4d::Vec4& world, double vw,
+                                            double vh) const noexcept;
+
+    // 实现 IProjector：直接喂 3D 点时等价于内层投影器（4D 阶段不参与）。
+    [[nodiscard]] math3d::Projected project(const math3d::Vec3& world, double vw,
+                                            double vh) const noexcept override;
+
+private:
+    math4d::Mat5 rotation_;
+    math4d::Camera4 camera_;
+    std::shared_ptr<chart3d::IProjector> inner_;
+};
+
+}  // namespace termchart::chart4d
+
+// ===== include/termchart/chart4d/wire.hpp =====
+// wire.hpp —— 4D 线框/点云 → scene::Scene（header-only，chart3d 的 4D 对应物）
+//
+// 与 chart3d/scatter.hpp 同构：发射器只管几何与图元，视图全权委托 Projector4D
+// （两阶段 4D→2D）。每条边的两端经投影器落到画布，两端均可见才画；顶点可选画
+// 成按深度着色的小方块。边按两端平均深度着色，给旋转中的 4D 形体以深度提示。
+
+
+
+namespace termchart::chart4d {
+
+struct Wire4dOpts {
+    double cols = 72.0;       // 画布宽（格）
+    double rows = 28.0;       // 画布高（格）
+    double point_size = 0.9;  // 顶点方块边长（格）
+    bool draw_vertices = true;  // 是否在边之外叠加顶点标记
+};
+
+// 一条边 = 顶点索引对（超立方体等线框模型的边表即为此型的 vector）。
+using Edge = std::pair<std::uint32_t, std::uint32_t>;
+
+// 把 4D 顶点集 + 边表发射成 Scene。越界索引被跳过（不抛异常）；两端投影后
+// 任一不可见（4D 相机后方/近裁剪，或 3D 相机视锥外）的边被整段丢弃。
+inline scene::Scene wire4d(const std::vector<math4d::Vec4>& verts,
+                           const std::vector<Edge>& edges, const Wire4dOpts& o,
+                           const Projector4D& projector) {
+    scene::Scene s;
+    const double h = o.point_size / 2.0;
+
+    for (const auto& e : edges) {
+        if (e.first >= verts.size() || e.second >= verts.size()) {
+            continue;
+        }
+        const auto p0 = projector.project(verts[e.first], o.cols, o.rows);
+        const auto p1 = projector.project(verts[e.second], o.cols, o.rows);
+        if (!p0.visible || !p1.visible) {
+            continue;
+        }
+        s.push(scene::StrokeOp{chart3d::shade((p0.depth + p1.depth) * 0.5), 1.0});
+        s.push(scene::MoveTo{Point{p0.x, p0.y}});
+        s.push(scene::LineTo{Point{p1.x, p1.y}});
+    }
+
+    if (o.draw_vertices) {
+        for (const auto& v : verts) {
+            const auto p = projector.project(v, o.cols, o.rows);
+            if (!p.visible) {
+                continue;
+            }
+            s.push(scene::FillOp{chart3d::shade(p.depth)});
+            s.push(scene::RectOp{Rect{p.x - h, p.y - h, o.point_size, o.point_size}});
+        }
+    }
+    return s;
+}
+
+}  // namespace termchart::chart4d
 
 // ===== include/termchart/graph/attributes.hpp =====
 // attributes.hpp —— 节点/边的键值元数据（header-only 值类型）

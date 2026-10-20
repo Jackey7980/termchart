@@ -32,9 +32,13 @@ image/convert
 math3d/vec3
 math3d/mat4
 math3d/camera
+math4d/vec4
+math4d/mat5
+math4d/camera4
 chart3d/common
 chart3d/scatter
 chart3d/surface
+chart4d/wire
 document/span
 document/table_model
 layout/box

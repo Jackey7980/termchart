@@ -10,6 +10,7 @@
 | 2 | color | ≤1 |
 | 3 | scale | ≤2 |
 | 3 | math3d | ≤2 |
+| 3 | math4d | ≤2 |
 | 4 | scene | ≤3 |
 | 5 | image | ≤4 |
 | 6 | raster | ≤5 |
@@ -21,6 +22,7 @@
 | 11 | layout | ≤10 |
 | 12 | chart | ≤11 |
 | 12 | chart3d | ≤11 |
+| 12 | chart4d | ≤11 |
 | 13 | graph | ≤12 |
 | 14 | render | ≤13 |
 | 15 | interaction | ≤14 |
