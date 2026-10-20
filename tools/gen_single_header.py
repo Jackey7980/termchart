@@ -33,7 +33,11 @@ from _genutil import ROOT, emit, wants_check
 SRC = ROOT / "include" / "termchart"
 OUT = ROOT / "single_include" / "termchart.hpp"
 
-RE_INTERNAL = re.compile(r'^\s*#include\s+"termchart/[^"]+"\s*$')
+# 内部引用：全文已在此前拼入，剥掉恒安全。注意要容忍行尾的 `//` 注释
+# （例如 `#include "termchart/util/math.hpp"  // clamp, max`）—— 否则这类带注释的
+# 内部 include 不会被剥除，会作为活动 #include 再次拉入真实头，与已内联的内容形成
+# 重复定义（example_42 单头用法会编译失败）。
+RE_INTERNAL = re.compile(r'^\s*#include\s+"termchart/[^"]+"\s*(?://[^\n]*)?\s*$')
 RE_SYSTEM = re.compile(r"^\s*#include\s*<([^>]+)>\s*$")
 RE_IF = re.compile(r"^\s*#\s*(?:if|ifdef|ifndef)\b")
 RE_ENDIF = re.compile(r"^\s*#\s*endif\b")

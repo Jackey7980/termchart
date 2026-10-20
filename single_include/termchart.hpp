@@ -11487,10 +11487,6 @@ private:
 // （make_camera）。抽到独立头，保证 scatter.hpp / surface.hpp 都能独立 include。
 
 
-#include "termchart/core/style.hpp"    // Color
-#include "termchart/math3d/camera.hpp"  // Camera, kDeg2Rad
-#include "termchart/math3d/vec3.hpp"    // Vec3
-#include "termchart/util/math.hpp"      // clamp, max
 
 namespace termchart::chart3d {
 
