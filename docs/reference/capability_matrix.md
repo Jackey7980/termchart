@@ -8,10 +8,10 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径（2026-10-13 实测）：`include/termchart/**/*.hpp`（310 个）、`src/**/*.cpp`（271 个）、
-`examples/`（57 个源，规格示例 01–54 齐备）、`tests/`（126 个源）、golden 9 份。
-`ctest` **65 项**（5 套件 + 57 示例 + 3 bench 冒烟；开 fuzz 后为 73 项，
-即 `ctest --preset fuzz` 另加 8 条 fuzz 自检），doctest **900 用例 / 192306 断言**。
+数字口径（2026-10-20 实测）：`include/termchart/**/*.hpp`（359 个）、`src/**/*.cpp`（282 个）、
+`examples/`（63 个源）、`tests/`（132 个源）、golden 14 份。
+`ctest` **74 项**（5 套件 + 63 示例 + 3 bench 冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
+doctest：**termchart_tests 单套件 1053 用例 / 194246 断言**；含 golden/render/core/util 共 5 套件。
 改动后请重跑下列命令再更新本文件。
 
 ```bash
@@ -37,10 +37,12 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `scene` | 4 | 可用 | 矢量 IR（命令变体 + 访问者 + SceneBuilder）、**`bounds`（几何包围盒，GUI 决定画布/无效区时需要）** | — |
 | `canvas` | 10 | 可用 | 画布、图元、`Scene → Canvas` 桥接、**扫描线填充**（横向精确覆盖 + 纵向超采样）、**路径**（曲线自适应细分、四段贝塞尔圆）、**图层合成**（Overlay/Replace/Tint + 最小重绘包围盒）、**2D 仿射变换**（含字符宽高比补偿）、**裁剪**（矩形精确 / 凸多边形 / 非凸明确不支持多边形裁剪） | `ImageOp` 仍是阴影块占位（Scene 无像素源） |
 | `scale` | 3 | 可用 | 线性/对数/nice/刻度/自动域 + **注册表** | 规格的 `time` `category` `band` 未实现 |
-| `image` | 5 | 可用 | `Bitmap`（RGBA，含 `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）、`FloatField`（标量场）、`convert`（位图 ↔ 标量场：Rec.601 亮度、阈值双色）、`encode_png`（自包含 PNG 编码）、**`png` 解码**（自带完整 inflate：stored/固定/动态 Huffman + 五种滤波 + 颜色类型 0/2/3/4/6 + 1/2/4/8/16 位深 + tRNS）、**`decoder`**（按魔数识别格式并分发） | 不支持 Adam7 隔行（报 `Unsupported`）；16 位取样到高字节；仅 PNG 有解码器（JPEG/GIF/BMP/WebP 报 `Unsupported`） |
+| `math3d` | 3 | **新增（本会话）** | 3D 数学原语（header-only，L3 与 `scale` 同层）：`vec3`（向量运算）、`mat4`（行主序，矩阵×列向量）、`camera`（轨道相机 + 透视投影到画布坐标，返回深度供着色） | — |
+| `image` | 5 | 可用 | `Bitmap`（RGBA，含 `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）、`FloatField`（标量场）、`convert`（位图 ↔ 标量场：Rec.601 亮度、阈值双色）、`encode_png`（自包含 PNG 编码）、**`png` 解码**（自带完整 inflate：stored/固定/动态 Huffman + 五种滤波 + 颜色类型 0/2/3/4/6 + 1/2/4/8/16 位深 + tRNS）、`bmp` 解码（原生零依赖：1/4/8/24/32 位深、bottom-up/top-down、BITFIELDS）、**`decoder`**（按魔数识别格式并分发；PNG/BMP 原生，JPEG/GIF/WebP 经 vendored `stb_image`（可选，默认 OFF、缺失即 `Unsupported`）） | 不支持 Adam7 隔行（报 `Unsupported`）；16 位取样到高字节；**JPEG/GIF/WebP 需 `TERMCHART_ENABLE_STB_IMAGE=ON` 才解码，否则 `Unsupported`** |
 | `raster` | 6 | 可用 | 盲文/半块/象限/竖条/密度字符 + 注册表 + 自动选择 | `sextant`（U+1FBxx 新区块，终端支持度低）显式推迟 |
 | `layout` | 11 | 可用 | `PlotArea`、轴/网格/图例/标题/标签、**`facet`（纯几何矩形划分，不认识 chart）**、**`auto_margin`（由标签宽度/标题/图例反推四边留白）**、**`label_avoid`（通用避让，graph 侧转引同一实现）**、**`annotation`（参考线/区域高亮/标注，一律裁剪在绘图区内）** | — （规格 11 个文件全部落地） |
 | `chart` | 12 | **可用（9 子目录规格齐备，68 文件）** | 基类 + 系列 + 注册表 + `context`（绘制开关）+ `dataset`；**cartesian 23/23**（在既有 7 个之上补齐 bubble/candlestick/boxplot/violin/contour/errorbar/waterfall/gantt/dumbbell/ridgeline/parallel/mosaic/qq/bullet/streamgraph）；**polar 8/8**（pie/donut/rose/radar/gauge/polar_bar/polar_line/polar_heat）；**statistical 11/11**（distribution/ecdf/corr/pca/regression/roc/forest/survival/autocorr/seasonal/bland_altman）；**hierarchical 6+1**（treemap/sunburst/dendrogram/pack/icicle/tree_view + node 辅助）；**financial 7/7**（depth/volume/renko/kagi/point_figure/yield_curve/drawdown）；**flow 2/2**（funnel/stream）；**geo 4/4**（choropleth/tile_grid/hexbin/dot_density）；**text 4/4**（wordcloud/tag_cloud/table/progress）；**indicator 5/5**（gauge_kpi/progress_ring/star_rating/status_light/thermometer）。测试：九个子目录测试文件全部接入（ctest 全绿，739 用例 / 190594 断言） | 各图种多系列/堆叠变体未做 |
+| `chart3d` | 12 | **新增（本会话）** | 3D 图表（header-only，L12 与 `chart` 同层）：`scatter3d`（点云投影成 `scene::Scene`）、`surface3d`（线框曲面）；**复用 `render_scene → Canvas → Renderer` 终端管线**，深度→颜色着色，不另造 z-buffer | — |
 | `document` | 8 | 可用 | Document/Block/Span/TableModel IR | — |
 | `graph` | 13 | 部分 | 节点/边/元数据/占用栅格/箭头/端口/标签避让/交叉计数（判定复用 `util/geom`）；布局（网格/分层/根树/力导向/**径向/圆周**——径向按子树扇区均分、半径按层递增，圆周按外接圆判据推半径保证不重叠；**`metro` 地铁 45°（链分解 + 之字 + 锚点候选对栅格路由）**/ **`cluster` 聚类**）；路由（直线/正交/**样条 `spline`**/**弧线 `arc`**/**`bundling` 边捆绑**/**`obstacle` 障碍避让**）；**形状八种**；图种（流程图/状态机图/思维导图/**组织架构图**/节点-连线/**`dag`（含环检测）**/**`dependency`**） | `sugiyama`（分层已覆盖其分层部分）`kamada_kawai`；`18_uml_sequence` 示例（等序列渲染） |
 | `interaction` | 15 | **可用** | 输入解析（ANSI/UTF-8/SGR 鼠标流式，未完成序列有 **256 KiB 缓冲上限**）、事件、命中测试、分发、焦点、**视口缩放/平移**（`Viewport`：锚点缩放 + 双向夹取；`PanGesture`：纯几何拖拽状态机）、**悬停读数层 `crosshair`**（横/纵准线 + 轴侧读数，默认只改样式保留数据字符）、**浮层 `tooltip`**（边框 + 自动翻边 + 宽字符按 2 列算 + 超长截断）；后两者的核心不变量都是**`clear()` 逐格逐属性精确还原**（覆盖层不得永久污染画布）；**`highlight`**（高亮放大：锚点居中、跨度 /magnify）、**`select`**（框选状态机 begin/update/end/cancel，矩形归一化 + payloads_inside 保序）、**`brush`**（半径吸附刷选，首次顺序去重）、**`legend_toggle`**（id→可见性，payload 0 永不生效，click_at 复用 topmost_hit）、**`immediate`**（Event 流→Viewport/BoxSelect 的路由粘合层）。各配单测；`examples/30` 锁图例语义 | 序列图/表格的交互绑定（等渲染侧落地） |
@@ -89,6 +91,9 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `36_export_json` | 文件 | `CellBuffer` → `snapshot/json` | 逐格 cp/颜色/属性 |
 | `38_image_sixel` | 终端 | `protocol`（kitty / iterm2 / sixel / 半块自动降级） | 本机无图像协议时输出提示；`TERMCHART_ITERM2=1` 可强制走 iTerm2 内联 |
 | `40_advanced_master` | 终端 | `canvas` + `raster` + `colormap` | 旗舰展示：盲文折线 / Turbo 渐变柱 / 真彩热力图同屏（并行会话新增） |
+| `70_export_pdf` | 文件 | `backend`（PDF 后端） | PDF 矢量导出（与 SVG/HTML/JSON 同构，走 Document IR） |
+| `71_fetch_stb` | 网络 | `network`（HTTP/1.1 + schannel） | 用库自带 net 后端拉取 vendored stb 头到 `third_party/stb/`；默认离线，`--fetch` 才联网 |
+| `72_3d` | 终端 | `chart3d` → `scene` → `render_scene` | 3D 曲面/散点：z=f(x,y) 投影成 `Scene`，走 braille/halfblock 出图，深度着色 |
 
 **重要澄清（避免再踩 R12 的坑）**：`chart`/`graph`/`layout` 这些"高级 API"示例
 **本来就直连 `canvas.draw_line`/`draw_text` + 显式字符**，从不经过 `scene::Scene`，
@@ -114,13 +119,14 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 **314 头**，`src/` **271 个 `.cpp`**。
-  规格具名头文件约 336–338 个，故**尚缺约 26–28 个**（两种数法差 2，故写作区间）；
-  `dsl/ widget/ plugin/ app/` 四个目录**均已落地**（此前为零代码），只剩 `termchart_gui/`
-  属于 GUI 平行栈、刻意未开工。
-- `examples/`：规格 60 个，实存 **57 个源**（规格编号示例 01–54 全部齐备；
+- 按 `结构.md` 的具名文件表核对：`include/` 现有 **359 头**，`src/` **282 个 `.cpp`**。
+  规格具名头文件约 336–338 个，**本会话新增 `math3d`（3 头）+ `chart3d`（2 头）后已超规格
+  （359 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
+  （此前为零代码），`termchart_gui/` 属于 GUI 平行栈、刻意未开工。
+- `examples/`：规格 60 个，实存 **63 个源**（规格编号示例 01–54 全部齐备；
   `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`、`07_fractal`、
-  `08_fractal_levels`、`40_advanced_master` 等为规格外补充，部分来自并行会话）。
+  `08_fractal_levels`、`40_advanced_master`、`71_fetch_stb`、`72_3d` 等为规格外补充，
+  部分来自并行会话）。
 - `bench/` **3 条基线**（`bench_sugiyama` / `bench_force` / `bench_mermaid_parse`），
   零外部依赖、`--quick` 进 ctest 冒烟。
 - `tests/fuzz/` **8 个目标**，`--self-test` 已进 ctest（`ctest --preset fuzz`），
@@ -134,7 +140,9 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
   `layout/internal.hpp` 的占位线格字符），其余为文档化阶段占位或正常渲染逻辑。
   `image/{png,png_encode,decoder}` 与 `protocol/iterm2_inline` 曾在此清单里，现已实现：
   PNG 编码器用 Python 参考 zlib 校验过输出，解码器用 `tools/gen_png_samples.py` 造的
-  12 个样本（滤波 1–4、动态 Huffman、调色板 4/8 位、16 位灰度、坏 CRC、Adam7）交叉验证。
+  12 个样本（滤波 1–4、动态 Huffman、调色板 4/8 位、16 位灰度、坏 CRC、Adam7）交叉验证；
+  **BMP 解码器（原生零依赖）本会话落地**，`JPEG/GIF/WebP` 经 vendored `stb_image`
+  （可选，`TERMCHART_ENABLE_STB_IMAGE`，默认 OFF、缺失即 `Unsupported`）补齐。
 - 单头发布**已建立**：`single_include/termchart.hpp` 由 `tools/gen_single_header.py` 生成
   （进 `check_generated`），示例 `examples/42_single_header` 在 ctest 里冒烟。
 - **平台现实（不是代码问题）**：本机 MinGW-w64 GCC 15.2 **不带 `libasan` / `libubsan` / `libtsan`**，

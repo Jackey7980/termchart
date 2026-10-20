@@ -14,6 +14,7 @@
 
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/chart3d/common.hpp"
 #include "termchart/math3d/camera.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/scene/command.hpp"

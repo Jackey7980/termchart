@@ -73,4 +73,6 @@
 | `68_cn_province` | （源文件首行注释未写职责，待补） | [文本快照](gallery/68_cn_province.txt) |
 | `69_city_plot` | （源文件首行注释未写职责，待补） | [文本快照](gallery/69_city_plot.txt) |
 | `70_export_pdf` | （源文件首行注释未写职责，待补） | [文本快照](gallery/70_export_pdf.txt) |
+| `71_fetch_stb` | 用 termchart 自己的 network 后端拉取 vendored STB 头文件 | [文本快照](gallery/71_fetch_stb.txt) |
+| `72_3d` | 3D 曲面/散点（规格外补充示例） | [文本快照](gallery/72_3d.txt) |
 

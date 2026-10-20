@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 355 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 356 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -11480,6 +11480,47 @@ private:
 
 }  // namespace termchart::chart
 
+// ===== include/termchart/chart3d/common.hpp =====
+// common.hpp —— chart3d 模块共享的 3D 着色/取景辅助（header-only）
+//
+// scatter3d 与 surface3d 都用得到：深度→颜色着色（shade）与按包围盒自动取景
+// （make_camera）。抽到独立头，保证 scatter.hpp / surface.hpp 都能独立 include。
+
+
+#include "termchart/core/style.hpp"    // Color
+#include "termchart/math3d/camera.hpp"  // Camera, kDeg2Rad
+#include "termchart/math3d/vec3.hpp"    // Vec3
+#include "termchart/util/math.hpp"      // clamp, max
+
+namespace termchart::chart3d {
+
+// 深度 t（0=近，1=远）→ 颜色：近处暖亮、远处冷暗。
+inline Color shade(double t) noexcept {
+    const double k = util::clamp<double>(t, 0.0, 1.0);
+    const auto lerp_u8 = [](int a, int b, double kk) {
+        return static_cast<std::uint8_t>(a + (b - a) * kk);
+    };
+    return Color::rgb(lerp_u8(255, 40, k), lerp_u8(210, 70, k), lerp_u8(80, 150, k));
+}
+
+// 自动取景：按点云/曲面包围盒居中、按半径定距离与近/远裁剪面。
+inline math3d::Camera make_camera(double cols, double rows, double azimuth_deg,
+                                  double elevation_deg, double fovy_deg,
+                                  const math3d::Vec3& center, double radius) noexcept {
+    math3d::Camera cam;
+    cam.aspect = cols / rows;
+    cam.fovy_deg = fovy_deg;
+    const double fovy = fovy_deg * math3d::kDeg2Rad;
+    const double dist = radius / std::tan(fovy / 2.0) * 1.8;
+    cam.near = std::max(0.01, dist - radius * 1.5);
+    cam.far = dist + radius * 1.5;
+    cam.target = center;
+    cam.orbit(azimuth_deg, elevation_deg, dist);
+    return cam;
+}
+
+}  // namespace termchart::chart3d
+
 // ===== include/termchart/chart3d/scatter.hpp =====
 // scatter.hpp —— 3D 散点图：把三维点云投影成 Scene（header-only）
 //
@@ -11500,31 +11541,6 @@ struct Scatter3dOpts {
     double point_size = 0.9;      // 每个点在画布上的边长（格）
     bool axes = true;             // 是否画 X/Y/Z 轴
 };
-
-// 深度 t（0=近，1=远）→ 颜色：近处暖亮、远处冷暗。
-inline Color shade(double t) noexcept {
-    const double k = util::clamp<double>(t, 0.0, 1.0);
-    const auto lerp_u8 = [](int a, int b, double kk) {
-        return static_cast<std::uint8_t>(a + (b - a) * kk);
-    };
-    return Color::rgb(lerp_u8(255, 40, k), lerp_u8(210, 70, k), lerp_u8(80, 150, k));
-}
-
-// 自动取景：按点云包围盒居中、按半径定距离与近/远裁剪面。
-inline math3d::Camera make_camera(double cols, double rows, double azimuth_deg,
-                                  double elevation_deg, double fovy_deg,
-                                  const math3d::Vec3& center, double radius) noexcept {
-    math3d::Camera cam;
-    cam.aspect = cols / rows;
-    cam.fovy_deg = fovy_deg;
-    const double fovy = fovy_deg * math3d::kDeg2Rad;
-    const double dist = radius / std::tan(fovy / 2.0) * 1.8;
-    cam.near = std::max(0.01, dist - radius * 1.5);
-    cam.far = dist + radius * 1.5;
-    cam.target = center;
-    cam.orbit(azimuth_deg, elevation_deg, dist);
-    return cam;
-}
 
 inline void bounding(const std::vector<math3d::Vec3>& pts, math3d::Vec3& minv,
                      math3d::Vec3& maxv, math3d::Vec3& center, double& radius) noexcept {

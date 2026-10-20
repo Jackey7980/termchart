@@ -11,6 +11,7 @@
 
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/chart3d/common.hpp"
 #include "termchart/math3d/camera.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/scene/command.hpp"
@@ -28,31 +29,6 @@ struct Scatter3dOpts {
     double point_size = 0.9;      // 每个点在画布上的边长（格）
     bool axes = true;             // 是否画 X/Y/Z 轴
 };
-
-// 深度 t（0=近，1=远）→ 颜色：近处暖亮、远处冷暗。
-inline Color shade(double t) noexcept {
-    const double k = util::clamp<double>(t, 0.0, 1.0);
-    const auto lerp_u8 = [](int a, int b, double kk) {
-        return static_cast<std::uint8_t>(a + (b - a) * kk);
-    };
-    return Color::rgb(lerp_u8(255, 40, k), lerp_u8(210, 70, k), lerp_u8(80, 150, k));
-}
-
-// 自动取景：按点云包围盒居中、按半径定距离与近/远裁剪面。
-inline math3d::Camera make_camera(double cols, double rows, double azimuth_deg,
-                                  double elevation_deg, double fovy_deg,
-                                  const math3d::Vec3& center, double radius) noexcept {
-    math3d::Camera cam;
-    cam.aspect = cols / rows;
-    cam.fovy_deg = fovy_deg;
-    const double fovy = fovy_deg * math3d::kDeg2Rad;
-    const double dist = radius / std::tan(fovy / 2.0) * 1.8;
-    cam.near = std::max(0.01, dist - radius * 1.5);
-    cam.far = dist + radius * 1.5;
-    cam.target = center;
-    cam.orbit(azimuth_deg, elevation_deg, dist);
-    return cam;
-}
 
 inline void bounding(const std::vector<math3d::Vec3>& pts, math3d::Vec3& minv,
                      math3d::Vec3& maxv, math3d::Vec3& center, double& radius) noexcept {

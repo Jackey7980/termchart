@@ -32,6 +32,7 @@ image/convert
 math3d/vec3
 math3d/mat4
 math3d/camera
+chart3d/common
 chart3d/scatter
 chart3d/surface
 document/span
