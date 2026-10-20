@@ -1,0 +1,46 @@
+name: docs
+
+# 文档站点：在 main/master 推送时重生成模块图与 API 文档，部署 docs/ 到 GitHub Pages。
+# 与 ci 的 guardrails 共用同一套生成器；不手改产物（生成器 --check 已在 ci 守住）。
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 重生成模块图与 API 文档
+        run: |
+          python tools/gen_module_graph.py
+          python tools/gen_api_docs.py
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

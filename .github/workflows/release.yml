@@ -1,0 +1,36 @@
+name: release
+
+# 在打 tag（v*）时打包可分发产物并发布到 GitHub Release：
+#   * single_include/termchart.hpp —— 单头分发（与 ci 同款生成器重生成，保证一致）
+#   * 源码 tarball（include/ src/ CMakeLists.txt cmake/ single_include/）
+# 不引入第三方发布动作之外的依赖；token 用默认 GITHUB_TOKEN。
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: 打包单头分发 + 源码
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 生成单头分发（与 ci 同款生成器）
+        run: python tools/gen_single_header.py
+      - name: 打包源码 tarball
+        run: tar -czf "termchart-${GITHUB_REF_NAME}.tar.gz" include src CMakeLists.txt cmake single_include
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            single_include/termchart.hpp
+            termchart-${{ github.ref_name }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
