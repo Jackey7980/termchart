@@ -8,14 +8,17 @@
 //     → app::HeadlessSession::frame() 出**差分增量帧**（首帧全量，之后只重画变化格）
 //   共 60 帧，绕 XW 与 YZ 两个旋转平面同时自动旋转。
 //
-// 与 26_realtime_stream 同属"注入确定时钟"的家族：这里帧角 = 帧号 × 定步长，
-// 不依赖真实时间、不 sleep，因此 headless/CI 下输出确定、跑完即退（可整段重定向
-// 到文件逐帧复盘）。想在真终端里"看见"旋转，可自行在写帧之间加节流。
+// 与 26_realtime_stream 同属"注入确定时钟"的家族：帧角 = 帧号 × 定步长，视角
+// 不依赖真实时间。节流按 stdout 是否 tty 门控（term::Terminal::stdout_is_tty）：
+// 真终端上每帧睡 ~40ms 看得见旋转；piped/CI/headless 下不 sleep，输出确定、
+// 跑完即退（可整段重定向到文件逐帧复盘）。
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "termchart/api/print.hpp"
@@ -30,6 +33,7 @@
 #include "termchart/math4d/camera4.hpp"
 #include "termchart/math4d/mat5.hpp"
 #include "termchart/math4d/vec4.hpp"
+#include "termchart/term/terminal.hpp"  // term::Terminal::stdout_is_tty（节流门控）
 
 namespace {
 using namespace termchart;
@@ -39,6 +43,7 @@ constexpr std::uint32_t kRows = 34;
 constexpr int kFrames = 60;
 constexpr double kStepXW = 0.11;  // XW 平面每帧角增量（弧度）
 constexpr double kStepYZ = 0.07;  // YZ 平面每帧角增量（弧度）
+constexpr int kFrameDelayMs = 40;  // 真终端上的帧间隔（仅 stdout 为 tty 时节流）
 
 // 16 个超立方体顶点：4 个坐标各取 ±1。
 std::vector<math4d::Vec4> hypercube_vertices() {
@@ -89,6 +94,8 @@ int main() {
     wo.draw_vertices = true;
 
     app::HeadlessSession session(kCols, kRows);  // 差分重绘会话（保留 prev）
+    // 仅在真终端上节流：piped/CI/headless 下不 sleep，保持输出确定、跑完即退。
+    const bool paced = term::Terminal::stdout_is_tty();
     bool ok = true;
 
     for (int f = 0; f < kFrames; ++f) {
@@ -105,6 +112,10 @@ int main() {
         const std::string bytes = session.frame();  // 差分增量帧（首帧全量）
         if (!bytes.empty() && api::write_stdout(bytes) != ErrorCode::Ok) {
             ok = false;
+        }
+        if (paced) {
+            (void)api::flush_stdout();  // 先刷出本帧再睡，真终端才看得见旋转
+            std::this_thread::sleep_for(std::chrono::milliseconds(kFrameDelayMs));
         }
     }
     (void)api::flush_stdout();
