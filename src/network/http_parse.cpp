@@ -43,6 +43,18 @@ bool is_header_controlled(std::string_view name) noexcept {
     return lower == "host" || lower == "connection";
 }
 
+// 头部字段（名与值）与 path 里不允许出现的控制字符：CR/LF 是请求走私的
+// 客户端侧源头，NUL 会截断 C 风格处理。拒绝而非转义——本库不做转义猜测。
+bool has_control_chars(std::string_view text) noexcept {
+    for (const char ch : text) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (uch <= 0x1F || uch == 0x7F) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::size_t hex_digits_value(std::string_view digits, bool& ok) noexcept {
     std::size_t value = 0;
     for (const char ch : digits) {
@@ -127,6 +139,11 @@ Result<Uri> Uri::parse(std::string_view text) noexcept {
     if (uri.host.empty()) {
         return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
     }
+    // path 控制字符（CR/LF/NUL 等）= 请求行注入面，Uri 层直接拒（serialize 也会
+    // 再查一遍，双保险：Uri 自洽 + 出口校验）。
+    if (has_control_chars(uri.path)) {
+        return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+    }
     if (!port_part.empty()) {
         std::uint32_t port = 0;
         for (const char ch : port_part) {
@@ -156,9 +173,26 @@ std::uint16_t Uri::default_port() const noexcept {
 // ── Response 访问器 ──────────────────────────────────────────────────────────
 
 std::string_view Response::header(std::string_view name) const noexcept {
-    const std::string lower = to_lower(name);
+    // 零分配大小写不敏感比较：头部名是 ASCII token，逐字符比即可，
+    // 不必为每次查询分配一份小写副本（重定向/大响应场景查询频繁）。
+    const auto ci_equal = [](std::string_view a, std::string_view b) noexcept {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const auto ca = static_cast<unsigned char>(a[i]);
+            const auto cb = static_cast<unsigned char>(b[i]);
+            const auto lower = [](unsigned char ch) {
+                return (ch >= 'A' && ch <= 'Z') ? static_cast<unsigned char>(ch - 'A' + 'a') : ch;
+            };
+            if (lower(ca) != lower(cb)) {
+                return false;
+            }
+        }
+        return true;
+    };
     for (const auto& [key, value] : headers) {
-        if (to_lower(key) == lower) {
+        if (ci_equal(key, name)) {
             return value;
         }
     }
@@ -187,7 +221,18 @@ std::string_view Response::content_type() const noexcept {
 
 // ── 串行化 ──────────────────────────────────────────────────────────────────
 
-std::string serialize_request(const Request& request) noexcept {
+Result<std::string> serialize_request(const Request& request) noexcept {
+    // 注入防护先行：method / path / 每个头的名与值都不得含控制字符。
+    if (has_control_chars(request.method) || has_control_chars(request.uri.path) ||
+        has_control_chars(request.uri.host)) {
+        return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+    }
+    for (const auto& [key, value] : request.headers) {
+        if (has_control_chars(key) || has_control_chars(value)) {
+            return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+        }
+    }
+
     std::string out;
     out.reserve(128 + request.body.size());
     out += request.method;

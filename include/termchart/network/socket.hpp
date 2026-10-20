@@ -5,8 +5,11 @@
 //
 // 契约：
 //   * 不抛异常：失败返回 Result（IoError / PlatformError / InvalidArgument）；
-//   * 阻塞 IO + 超时：connect_timeout_ms / io_timeout_ms 经 setsockopt 实现；
-//   * DNS 解析（域名 → 地址）在 connect 内完成，调用方无需自己 getaddrinfo；
+//   * connect 超时由 poll/select **显式实现**（非阻塞 connect + 等待 + 恢复阻塞）
+//     ——SO_SNDTIMEO 在 Linux 上对 connect() 无效，不能靠它；
+//   * 单次读/写超时经 SO_RCVTIMEO / SO_SNDTIMEO 实现；
+//   * DNS 解析（域名 → 地址）在 connect 内完成（进程级 TTL 缓存，见
+//     src/network/dns_cache.cpp），调用方无需自己 getaddrinfo；
 //   * 移动语义（PIMPL），拷贝删除——一个 socket 只有一份底层句柄。
 #ifndef TERMCHART_NETWORK_SOCKET_HPP
 #define TERMCHART_NETWORK_SOCKET_HPP
@@ -26,6 +29,14 @@ namespace termchart::network {
 struct SocketOptions {
     std::uint32_t connect_timeout_ms = 10000;  // 连接超时
     std::uint32_t io_timeout_ms = 30000;      // 单次读/写超时
+    // 关 Nagle（TCP_NODELAY）。默认开：HTTP 请求-响应是"写请求→等响应"的
+    // 两段式，不开会让小请求包与后续包在 40ms 级的 delayed-ACK/Nagle 交互里
+    // 干等。需要批量吞吐的上层可关掉自行拼包。
+    bool tcp_nodelay = true;
+    // 开 SO_KEEPALIVE：io_timeout 长的连接可在半开（对端宕机）时被内核探针
+    // 收敛，否则read/write 的超时要等满 io_timeout_ms 才报。默认关（探针周期
+    // 以小时计，图表库的短连接等不到它）。
+    bool keepalive = false;
 };
 
 // 已连接的 TCP socket。默认构造为无效句柄（valid() == false）。

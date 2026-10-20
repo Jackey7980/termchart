@@ -12,6 +12,7 @@
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/chart3d/common.hpp"
+#include "termchart/chart3d/projector.hpp"
 #include "termchart/math3d/camera.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/scene/command.hpp"
@@ -23,9 +24,9 @@ namespace termchart::chart3d {
 struct Scatter3dOpts {
     double cols = 72.0;        // 画布宽（格）
     double rows = 28.0;        // 画布高（格）
-    double azimuth_deg = 35.0;   // 轨道方位角
-    double elevation_deg = 22.0; // 轨道仰角
-    double fovy_deg = 55.0;       // 垂直视场角
+    double azimuth_deg = 35.0;   // 轨道方位角（projector=nullptr 时生效）
+    double elevation_deg = 22.0; // 轨道仰角（projector=nullptr 时生效）
+    double fovy_deg = 55.0;       // 垂直视场角（projector=nullptr 时生效）
     double point_size = 0.9;      // 每个点在画布上的边长（格）
     bool axes = true;             // 是否画 X/Y/Z 轴
 };
@@ -51,7 +52,11 @@ inline void bounding(const std::vector<math3d::Vec3>& pts, math3d::Vec3& minv,
     }
 }
 
-inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatter3dOpts& o = {}) {
+// projector 为 nullptr 时按 opts 的 azimuth/elevation/fovy 现算 Projector3D
+// （既有行为，逐字节不变）；非空则全权委托注入的投影器（opts 里的三个视角
+// 参数被忽略——视图归投影器所有），为 Projector4D 等留出注入缝。
+inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatter3dOpts& o = {},
+                              const IProjector* projector = nullptr) {
     scene::Scene s;
     if (pts.empty()) {
         return s;
@@ -61,8 +66,9 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
     double radius = 0.0;
     bounding(pts, minv, maxv, center, radius);
 
-    const math3d::Camera cam =
-        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+    const Projector3D default_projector{
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius)};
+    const IProjector& proj = (projector != nullptr) ? *projector : default_projector;
 
     // 坐标轴：从包围盒最小角沿三轴方向各画一条，颜色固定 X红/Y绿/Z蓝。
     if (o.axes) {
@@ -73,8 +79,8 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
         const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
                                      Color::rgb(90, 140, 230)};
         for (int a = 0; a < 3; ++a) {
-            const auto p0 = cam.project(minv, o.cols, o.rows);
-            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            const auto p0 = proj.project(minv, o.cols, o.rows);
+            const auto p1 = proj.project(axes[a], o.cols, o.rows);
             if (!p0.visible || !p1.visible) {
                 continue;
             }
@@ -88,7 +94,7 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
     // 点：每个点一个填充小方块，颜色随深度变化。
     const double h = o.point_size / 2.0;
     for (const auto& p : pts) {
-        const auto pr = cam.project(p, o.cols, o.rows);
+        const auto pr = proj.project(p, o.cols, o.rows);
         if (!pr.visible) {
             continue;
         }

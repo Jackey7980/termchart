@@ -31,8 +31,10 @@ PLATFORM_SUFFIXES = ("_posix", "_win32", "_darwin", "_linux", "_macos")
 
 # src/ 内部私有实现单元（有 src/xxx.hpp 私有声明表、不对应 include/ 公开头的
 # .cpp）。先例：src/term/platform_internal.hpp 系列；network/http_parse 是
-# 同类——把 HTTP 线格式解析做成纯函数 TU，测试直接 include 私有头咬分支。
-SRC_INTERNAL_CXX = ("network/http_parse",)
+# 同类——把 HTTP 线格式解析做成纯函数 TU，测试直接 include 私有头咬分支；
+# network/dns_cache 同理：进程级 TTL 缓存是对 connect 路径的透明优化，
+# 不属于公开 API 面（公开面只有 socket.hpp 的选项与行为）。
+SRC_INTERNAL_CXX = ("network/http_parse", "network/dns_cache")
 
 
 def read_header_only() -> set[str]:

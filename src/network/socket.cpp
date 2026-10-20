@@ -8,6 +8,13 @@
 #include "src/network/platform_internal.hpp"
 
 namespace termchart::network {
+namespace {
+
+// DNS 名的实际上限（RFC 1035：253 字符的呈现形式）。超长输入直接拒，不劳驾
+// getaddrinfo——既快也免去各平台对病态 host 的行为差异。
+constexpr std::size_t kMaxHostLength = 253;
+
+}  // namespace
 
 struct TcpSocket::Impl {
     platform::Handle fd = platform::kInvalidHandle;
@@ -32,7 +39,7 @@ TcpSocket& TcpSocket::operator=(TcpSocket&& other) noexcept {
 
 Result<TcpSocket> TcpSocket::connect(std::string_view host, std::uint16_t port,
                                      const SocketOptions& options) noexcept {
-    if (host.empty()) {
+    if (host.empty() || host.size() > kMaxHostLength) {
         return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
     }
     const Result<platform::Handle> fd = platform::connect(host, port, options);

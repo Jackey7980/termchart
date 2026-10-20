@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 356 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 357 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -6491,8 +6491,11 @@ public:
 //
 // 契约：
 //   * 不抛异常：失败返回 Result（IoError / PlatformError / InvalidArgument）；
-//   * 阻塞 IO + 超时：connect_timeout_ms / io_timeout_ms 经 setsockopt 实现；
-//   * DNS 解析（域名 → 地址）在 connect 内完成，调用方无需自己 getaddrinfo；
+//   * connect 超时由 poll/select **显式实现**（非阻塞 connect + 等待 + 恢复阻塞）
+//     ——SO_SNDTIMEO 在 Linux 上对 connect() 无效，不能靠它；
+//   * 单次读/写超时经 SO_RCVTIMEO / SO_SNDTIMEO 实现；
+//   * DNS 解析（域名 → 地址）在 connect 内完成（进程级 TTL 缓存，见
+//     src/network/dns_cache.cpp），调用方无需自己 getaddrinfo；
 //   * 移动语义（PIMPL），拷贝删除——一个 socket 只有一份底层句柄。
 
 
@@ -6502,6 +6505,14 @@ namespace termchart::network {
 struct SocketOptions {
     std::uint32_t connect_timeout_ms = 10000;  // 连接超时
     std::uint32_t io_timeout_ms = 30000;      // 单次读/写超时
+    // 关 Nagle（TCP_NODELAY）。默认开：HTTP 请求-响应是"写请求→等响应"的
+    // 两段式，不开会让小请求包与后续包在 40ms 级的 delayed-ACK/Nagle 交互里
+    // 干等。需要批量吞吐的上层可关掉自行拼包。
+    bool tcp_nodelay = true;
+    // 开 SO_KEEPALIVE：io_timeout 长的连接可在半开（对端宕机）时被内核探针
+    // 收敛，否则read/write 的超时要等满 io_timeout_ms 才报。默认关（探针周期
+    // 以小时计，图表库的短连接等不到它）。
+    bool keepalive = false;
 };
 
 // 已连接的 TCP socket。默认构造为无效句柄（valid() == false）。
@@ -11517,6 +11528,51 @@ inline math3d::Camera make_camera(double cols, double rows, double azimuth_deg,
 
 }  // namespace termchart::chart3d
 
+// ===== include/termchart/chart3d/projector.hpp =====
+// projector.hpp —— chart3d 的投影缝：3D 世界坐标 → 画布坐标的多态接口
+//
+// 为什么抽接口：scatter3d / surface3d 原先直接持有 math3d::Camera（Mat4
+// 视图×投影），把"怎么看"焊死在"画什么"里。抽 IProjector 之后：
+//   * Projector3D：现有 Camera 的薄封装（默认实现，行为逐字节不变）；
+//   * 未来 Projector4D：4D→3D 投影产出 Vec3 序列，再经本接口完成
+//     3D→2D——两阶段各自可替换，scatter/surface 与 chart4d 都不用改；
+//   * 其他投影算法（正交 / 弱透视 / 自定义相机）同样只实现本接口即可注入。
+//
+// 注入方式：scatter3d / surface3d 的可选尾参数 `projector`，nullptr =
+// 按 opts 的 azimuth/elevation/fovy 现算 Projector3D（既有调用方零改动，
+// opts 里的视角参数在注入投影器时被忽略——视图归投影器所有）。
+
+
+namespace termchart::chart3d {
+
+class TERMCHART_API IProjector {
+public:
+    // 类内只声明、src/chart3d/projector.cpp 内定义（key function 惯用法）：
+    // vtable/typeinfo 只在这一个 TU 发强符号。
+    virtual ~IProjector();
+
+    // 世界坐标 → 画布坐标。vw/vh 为画布尺寸（格，左上原点、y 向下）。
+    // 返回值语义与 math3d::Camera::project 一致：depth 归一化（0=近、
+    // 1=远，供着色），visible 表示在视锥内且位于相机前方。
+    [[nodiscard]] virtual math3d::Projected project(const math3d::Vec3& world, double vw,
+                                                    double vh) const noexcept = 0;
+};
+
+// 默认实现：把 math3d::Camera（轨道相机 + 透视投影 + 视锥裁剪）包一层。
+// 按值持有 Camera（拷贝便宜：三个 Vec3 + 5 个 double），投影原样转发。
+class TERMCHART_API Projector3D final : public IProjector {
+public:
+    explicit Projector3D(math3d::Camera camera) noexcept;
+
+    [[nodiscard]] math3d::Projected project(const math3d::Vec3& world, double vw,
+                                            double vh) const noexcept override;
+
+private:
+    math3d::Camera camera_;
+};
+
+}  // namespace termchart::chart3d
+
 // ===== include/termchart/chart3d/scatter.hpp =====
 // scatter.hpp —— 3D 散点图：把三维点云投影成 Scene（header-only）
 //
@@ -11531,9 +11587,9 @@ namespace termchart::chart3d {
 struct Scatter3dOpts {
     double cols = 72.0;        // 画布宽（格）
     double rows = 28.0;        // 画布高（格）
-    double azimuth_deg = 35.0;   // 轨道方位角
-    double elevation_deg = 22.0; // 轨道仰角
-    double fovy_deg = 55.0;       // 垂直视场角
+    double azimuth_deg = 35.0;   // 轨道方位角（projector=nullptr 时生效）
+    double elevation_deg = 22.0; // 轨道仰角（projector=nullptr 时生效）
+    double fovy_deg = 55.0;       // 垂直视场角（projector=nullptr 时生效）
     double point_size = 0.9;      // 每个点在画布上的边长（格）
     bool axes = true;             // 是否画 X/Y/Z 轴
 };
@@ -11559,7 +11615,11 @@ inline void bounding(const std::vector<math3d::Vec3>& pts, math3d::Vec3& minv,
     }
 }
 
-inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatter3dOpts& o = {}) {
+// projector 为 nullptr 时按 opts 的 azimuth/elevation/fovy 现算 Projector3D
+// （既有行为，逐字节不变）；非空则全权委托注入的投影器（opts 里的三个视角
+// 参数被忽略——视图归投影器所有），为 Projector4D 等留出注入缝。
+inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatter3dOpts& o = {},
+                              const IProjector* projector = nullptr) {
     scene::Scene s;
     if (pts.empty()) {
         return s;
@@ -11569,8 +11629,9 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
     double radius = 0.0;
     bounding(pts, minv, maxv, center, radius);
 
-    const math3d::Camera cam =
-        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+    const Projector3D default_projector{
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius)};
+    const IProjector& proj = (projector != nullptr) ? *projector : default_projector;
 
     // 坐标轴：从包围盒最小角沿三轴方向各画一条，颜色固定 X红/Y绿/Z蓝。
     if (o.axes) {
@@ -11581,8 +11642,8 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
         const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
                                      Color::rgb(90, 140, 230)};
         for (int a = 0; a < 3; ++a) {
-            const auto p0 = cam.project(minv, o.cols, o.rows);
-            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            const auto p0 = proj.project(minv, o.cols, o.rows);
+            const auto p1 = proj.project(axes[a], o.cols, o.rows);
             if (!p0.visible || !p1.visible) {
                 continue;
             }
@@ -11596,7 +11657,7 @@ inline scene::Scene scatter3d(const std::vector<math3d::Vec3>& pts, const Scatte
     // 点：每个点一个填充小方块，颜色随深度变化。
     const double h = o.point_size / 2.0;
     for (const auto& p : pts) {
-        const auto pr = cam.project(p, o.cols, o.rows);
+        const auto pr = proj.project(p, o.cols, o.rows);
         if (!pr.visible) {
             continue;
         }
@@ -11622,16 +11683,20 @@ namespace termchart::chart3d {
 struct Surface3dOpts {
     double cols = 72.0;
     double rows = 28.0;
-    double azimuth_deg = 35.0;
-    double elevation_deg = 25.0;
-    double fovy_deg = 55.0;
+    double azimuth_deg = 35.0;   // projector=nullptr 时生效
+    double elevation_deg = 25.0;  // projector=nullptr 时生效
+    double fovy_deg = 55.0;       // projector=nullptr 时生效
     int res_x = 24;  // 网格列数
     int res_y = 24;  // 网格行数
     bool axes = true;
 };
 
+// projector 为 nullptr 时按 opts 现算 Projector3D（既有行为，逐字节不变）；
+// 非空则全权委托注入的投影器（opts 里的视角参数被忽略），为 Projector4D
+// 等留出注入缝。
 inline scene::Scene surface3d(const std::function<double(double, double)>& f, double x0, double x1,
-                              double y0, double y1, const Surface3dOpts& o = {}) {
+                              double y0, double y1, const Surface3dOpts& o = {},
+                              const IProjector* projector = nullptr) {
     scene::Scene s;
     const std::size_t nx = static_cast<std::size_t>(std::max(1, o.res_x));
     const std::size_t ny = static_cast<std::size_t>(std::max(1, o.res_y));
@@ -11665,8 +11730,9 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
         radius = 1.0;
     }
 
-    const math3d::Camera cam =
-        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+    const Projector3D default_projector{
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius)};
+    const IProjector& proj = (projector != nullptr) ? *projector : default_projector;
 
     if (o.axes) {
         const math3d::Vec3 axes[3] = {math3d::Vec3{maxv.x, minv.y, minv.z},
@@ -11676,8 +11742,8 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
         const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
                                      Color::rgb(90, 140, 230)};
         for (int a = 0; a < 3; ++a) {
-            const auto p0 = cam.project(minv, o.cols, o.rows);
-            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            const auto p0 = proj.project(minv, o.cols, o.rows);
+            const auto p1 = proj.project(axes[a], o.cols, o.rows);
             if (!p0.visible || !p1.visible) {
                 continue;
             }
@@ -11690,8 +11756,8 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
 
     // 线框：逐行、逐列相邻点连线，颜色按平均深度着色。
     const auto seg = [&](const math3d::Vec3& a, const math3d::Vec3& b) {
-        const auto pa = cam.project(a, o.cols, o.rows);
-        const auto pb = cam.project(b, o.cols, o.rows);
+        const auto pa = proj.project(a, o.cols, o.rows);
+        const auto pb = proj.project(b, o.cols, o.rows);
         if (!pa.visible || !pb.visible) {
             return;
         }
@@ -17843,28 +17909,56 @@ const char* version_string() noexcept;
 }
 
 // ===== include/termchart/gui/font.hpp =====
-// font.hpp —— GUI 位图字体的唯一文本出口
+// font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）
 //
-// 为什么自带点阵字体、而不是接系统字体（TTF / fontconfig / DirectWrite）？
-// 1. 零外部依赖是本仓库的硬约束：接系统字体意味着每个平台一套枚举、加载与
-//    回退代码，还要为"字体缺失"设计错误路径——与全库"零强制依赖、缺失只
-//    降级不失败"的约定直接冲突。
-// 2. 终端图表的文本是**等宽语义**：列数由 util 的显示宽度决定（CJK 占 2 列），
-//    每格 advance 恒等于 cell_w。点阵字形天然等宽步进，量宽是纯乘法，不需要
-//    shaping / hinting，也不存在字距把布局挤歪的问题。
-// 3. Scene 不建模排版（没有字体、字形、行盒的概念），TextOp 只带一段 UTF-8
-//    与一个锚点；把排版塞进 Scene 属于层次污染。这里把"一格一字符"渲染成
-//    像素点阵，是与该模型自洽的最简文本出口。
+// 渲染后端分工（接口不变，底层实现见 font.cpp）：
+//   * ASCII 0x20..0x7E：内置 5×7 点阵。零成本、零外部依赖，且"ASCII 字形
+//     落像素"的像素契约由测试钉住；
+//   * 其余码点（CJK / Latin-1 扩展 / 全角符号…）：惰性加载系统 TTF 字体
+//     （Windows 自动尝试 C:/Windows/Fonts/msyh.ttc、simhei.ttf 等；可用
+//     环境变量 TERMCHART_GUI_FONT 显式指定字体文件路径），找不到字体或
+//     解析失败时 fail-safe 退回点阵占位框——不抛异常、不崩溃。
+//   等宽语义不变：列数由 util 的显示宽度决定（CJK 占 2 列），每格 advance
+//   恒等于 cell_w；TTF 只决定格内像素，不参与排版步进（无 shaping/hinting，
+//   不存在字距把布局挤歪的问题）。
 //
 // 字形是 5×7 列位点阵（数据与位序约定见 font.cpp 的 kFont5x7），渲染时映射进
 // cell_w×cell_h 的整数格：字形画在前 5/6 格宽、前 7/8 格高（末列/末行留作
-// 字距），保证 advance == cell_w 整数对齐。缺字码点画"虚线占位框"而不是
-// 留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
+// 字距），保证 advance == cell_w 整数对齐。TTF 也没有覆盖到的码点画"虚线
+// 占位框"而不是留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
 namespace termchart::gui {
 
 struct TextMetrics { double width = 0.0; double height = 0.0; };
 
-// ASCII 0x20..0x7E 内置字形，其余返回 false。
+// 字体后端多态基类：gui/font 的唯一文本出口经它分派到具体字形来源。
+// 三个派生实现（5×7 点阵 / 系统 TTF / 二者组合的降级链）是
+// src/gui/font.cpp 的实现细节，不进公开头——加后端不改公开 API。
+//
+// 三条虚函数的契约：
+//   * has_glyph：本后端是否**可能**覆盖该码点（组合链的委派依据）。
+//     允许保守声明（宁可说覆盖、画时再判），因为组合链按 draw_glyph
+//     的返回值决定胜出，不依赖 has_glyph 的精确性；
+//   * measure_width：单码点像素宽度。等宽网格契约——列数由
+//     util::codepoint_width 决定（CJK=2 列），advance = 列数 × cell_w。
+//     后端不得自行改变步进，否则排版会因字体环境不同而漂移；
+//   * draw_glyph：画一个码点（占 columns 列，at 为格盒左上角）。返回
+//     true = 画出了内容；false = 本后端不覆盖，组合链继续问下一个，
+//     全不覆盖由 draw_text 画虚线占位框。
+class TERMCHART_API FontBackend {
+public:
+    // 类内只声明、font.cpp 内定义（key function 惯用法）：vtable/typeinfo
+    // 只在这一个 TU 发强符号，匿名 namespace 的派生类各自只发弱表。
+    virtual ~FontBackend();
+    [[nodiscard]] virtual bool has_glyph(char32_t codepoint) const noexcept = 0;
+    [[nodiscard]] virtual double measure_width(char32_t codepoint, double cell_w,
+                                               double cell_h) const noexcept = 0;
+    [[nodiscard]] virtual bool draw_glyph(image::Bitmap& bitmap, char32_t codepoint, Point at,
+                                          const Rgb& color, int columns, double cell_w,
+                                          double cell_h) const noexcept = 0;
+};
+
+// ASCII 0x20..0x7E 内置字形覆盖查询（**契约不变**：只回答内置点阵表，
+// 其余返回 false；TTF 命中不经过此查询，TTF 能力走 draw_text 组合链）。
 [[nodiscard]] TERMCHART_API bool has_glyph(char32_t codepoint) noexcept;
 
 // 文本像素尺寸：width = 列数 × cell_w（列数来自 util 的显示宽度，CJK=2 列），height = cell_h。

@@ -62,22 +62,22 @@ public:
 
     // ── ChunkSource ────────────────────────────────────────────────────────
     [[nodiscard]] Result<std::string> read_line() noexcept override {
-        std::size_t scan = 0;
+        std::size_t scan = pos_;  // 从消费点起扫（ avail = pending_[pos_:] ）
         for (;;) {
             const std::size_t nl = pending_.find('\n', scan);
             if (nl != std::string::npos) {
                 std::size_t end = nl;
-                if (end > 0 && pending_[end - 1] == '\r') {
+                if (end > pos_ && pending_[end - 1] == '\r') {
                     --end;
                 }
-                std::string line = pending_.substr(0, end);
-                pending_.erase(0, nl + 1);
+                std::string line = pending_.substr(pos_, end - pos_);
+                consume(nl + 1 - pos_);
                 return line;
             }
-            if (pending_.size() > kMaxLineBytes) {
+            if (pending_.size() - pos_ > kMaxLineBytes) {
                 return Unexpected<ErrorCode>(ErrorCode::OutOfRange);
             }
-            scan = pending_.empty() ? 0 : pending_.size() - 1;
+            scan = pending_.size() > pos_ ? pending_.size() - 1 : pos_;
             const Result<bool> more = pull();
             if (!more.has_value()) {
                 return Unexpected<ErrorCode>(more.error());
@@ -89,7 +89,7 @@ public:
     }
 
     [[nodiscard]] Result<std::string> take(std::size_t n) noexcept override {
-        while (pending_.size() < n) {
+        while (pending_.size() - pos_ < n) {
             const Result<bool> more = pull();
             if (!more.has_value()) {
                 return Unexpected<ErrorCode>(more.error());
@@ -98,26 +98,26 @@ public:
                 return Unexpected<ErrorCode>(ErrorCode::ParseError);  // EOF 截断
             }
         }
-        std::string out = pending_.substr(0, n);
-        pending_.erase(0, n);
+        std::string out = pending_.substr(pos_, n);
+        consume(n);
         return out;
     }
 
     // 读到 delim 出现为止（delim 计入返回）。超 max_bytes 或 EOF 先到 → 错误。
     [[nodiscard]] Result<std::string> read_until(std::string_view delim,
                                                  std::size_t max_bytes) noexcept {
-        std::size_t scan = 0;
+        std::size_t scan = pos_;
         for (;;) {
             const std::size_t at = pending_.find(delim, scan);
             if (at != std::string::npos) {
-                std::string out = pending_.substr(0, at + delim.size());
-                pending_.erase(0, at + delim.size());
+                std::string out = pending_.substr(pos_, at + delim.size() - pos_);
+                consume(at + delim.size() - pos_);
                 return out;
             }
-            if (pending_.size() > max_bytes) {
+            if (pending_.size() - pos_ > max_bytes) {
                 return Unexpected<ErrorCode>(ErrorCode::OutOfRange);
             }
-            scan = pending_.size() >= delim.size() ? pending_.size() - delim.size() : 0;
+            scan = pending_.size() >= delim.size() ? pending_.size() - delim.size() : pos_;
             const Result<bool> more = pull();
             if (!more.has_value()) {
                 return Unexpected<ErrorCode>(more.error());
@@ -131,7 +131,7 @@ public:
     // 读到 EOF 为止；超 max_bytes → OutOfRange。
     [[nodiscard]] Result<std::string> read_to_eof(std::size_t max_bytes) noexcept {
         for (;;) {
-            if (pending_.size() > max_bytes) {
+            if (pending_.size() - pos_ > max_bytes) {
                 return Unexpected<ErrorCode>(ErrorCode::OutOfRange);
             }
             const Result<bool> more = pull();
@@ -139,8 +139,10 @@ public:
                 return Unexpected<ErrorCode>(more.error());
             }
             if (!*more) {
+                compact();
                 std::string out = std::move(pending_);
                 pending_.clear();
+                pos_ = 0;
                 return out;
             }
         }
@@ -149,25 +151,46 @@ public:
 private:
     // 大小行/trailer 的合理上限：正常远小于此，超过即视为异常流。
     static constexpr std::size_t kMaxLineBytes = 64u * 1024u;
+    // 惰性 compaction 阈值：消费过半且绝对量够大才搬一次，避免每次 take/read_line
+    // 都 erase(0,n)（大 body 场景会把累计搬运量退化成 O(n²)）。
+    static constexpr std::size_t kCompactMinBytes = 64u * 1024u;
+
+    // 前移消费点；必要时一次性压实缓冲（保持 O(n) 累计搬运）。
+    void consume(std::size_t n) noexcept {
+        pos_ += n;
+        if (pos_ >= kCompactMinBytes && pos_ * 2 >= pending_.size()) {
+            compact();
+        }
+    }
+
+    void compact() noexcept {
+        if (pos_ == 0) {
+            return;
+        }
+        pending_.erase(0, pos_);
+        pos_ = 0;
+    }
 
     // 拉一批字节进 pending_；false = 对端关闭。网络错误上抛。
     [[nodiscard]] Result<bool> pull() noexcept {
-        std::vector<char> chunk(kIoChunk);
         const Result<std::size_t> n =
-            tls_ != nullptr ? tls_->read(socket_, chunk) : socket_.read(chunk);
+            tls_ != nullptr ? tls_->read(socket_, chunk_) : socket_.read(chunk_);
         if (!n.has_value()) {
             return Unexpected<ErrorCode>(n.error());
         }
         if (*n == 0) {
             return false;
         }
-        pending_.append(chunk.data(), *n);
+        pending_.append(chunk_.data(), *n);
         return true;
     }
 
     TcpSocket socket_;
     std::unique_ptr<tls::TlsBackend> tls_;
     std::string pending_;
+    std::size_t pos_ = 0;  // 已消费偏移（紧凑化前始终 ≤ pending_.size()）
+    // 复用读缓冲，免每轮堆分配（= 初始化：避开成员声明的 most-vexing-parse）。
+    std::vector<char> chunk_ = std::vector<char>(kIoChunk);
 };
 
 // 解析 TLS 后端选择：显式命名缺失 → Unsupported（fail-loud，绝不静默退回明文）；
@@ -326,8 +349,11 @@ Result<Response> execute(const Request& request, const HttpOptions& options) noe
         if (!conn.has_value()) {
             return Unexpected<ErrorCode>(conn.error());
         }
-        const std::string wire = serialize_request(current);
-        const Status written = conn->write_all(wire);
+        const Result<std::string> wire = serialize_request(current);
+        if (!wire.has_value()) {
+            return Unexpected<ErrorCode>(wire.error());
+        }
+        const Status written = conn->write_all(*wire);
         if (written != ErrorCode::Ok) {
             return Unexpected<ErrorCode>(written);
         }

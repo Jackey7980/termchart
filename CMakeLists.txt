@@ -102,6 +102,16 @@ if(TERMCHART_BUILD_GUI_WIN32 AND WIN32)
     add_subdirectory(plugins/gui_win32)
 endif()
 
+# 原生 Qt GUI 后端（可选插件，默认关）：Qt5/Qt6 Widgets，找不到即配置期报错。
+if(TERMCHART_BUILD_GUI_QT)
+    add_subdirectory(plugins/gui_qt)
+endif()
+
+# 原生 Tk GUI 后端（可选插件，默认关）：Tcl/Tk C API，找不到即配置期报错。
+if(TERMCHART_BUILD_GUI_TK)
+    add_subdirectory(plugins/gui_tk)
+endif()
+
 # Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart；缺 pybind11 即报错。
 if(TERMCHART_BUILD_PYTHON)
     add_subdirectory(bindings/python)

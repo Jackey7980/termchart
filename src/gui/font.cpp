@@ -1,14 +1,38 @@
-// font.cpp —— 5×7 列位点阵 + 整数格映射
+// font.cpp —— 字体后端多态：BitmapBackend（5×7 点阵）/ TtfBackend（系统
+// TTF）/ FallbackBackend（有序组合链），公开 API 经组合链单例分派
 //
 // 字形数据来源：经典公共域 5×7 "classic" 列位字体（Arduino / Adafruit GFX
 // glcdfont.c 采用的那套，源头是早期 HD44780 LCD 的公共域字模）。列位序：
 // 每字节一列，bit n 为字形第 n 行的点，只用低 7 位（5×7）；首列在左。
+//
+// 装配（进程内单例，首次绘制时惰性初始化）：
+//   FallbackBackend{ TtfBackend, BitmapBackend }
+//     * ASCII 0x20..0x7E：TtfBackend 主动让位（见其 draw_glyph 的策略
+//       注释），由 BitmapBackend 画——零成本、零外部依赖，且"ASCII 字形
+//       落像素"是既有测试钉住的像素契约；
+//     * 其余码点（CJK / Latin-1 扩展 / 全角符号…）：TtfBackend 用
+//       image::TtfFont 解析系统字体，在**格内**绘制——advance 仍是 util
+//       显示宽度的整格（CJK=2 列），TTF 只决定格内像素，不参与排版步进；
+//     * 任何一步失败（字体缺失 / 解析失败 / 码点无轮廓 / 格太小）：
+//       组合链继续下探，全不覆盖则由 draw_text 画 5×7 虚线占位框——
+//       fail-safe，不抛异常、不崩溃、不留白。
+//
+// 线程模型：单例的 function-local static 初始化由 C++11 保证线程安全；
+// 但 TtfFont::glyph() 的 cache 无锁（见 ttf_font.hpp 约定），故 TTF
+// 绘制路径要求单线程调用——GUI 主循环（native_loop dispatcher）本就单线程。
 #include "termchart/gui/font.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <vector>
 
+#include "termchart/image/ttf_font.hpp"
 #include "termchart/util/utf8.hpp"
 #include "termchart/util/wcwidth.hpp"
 
@@ -173,34 +197,355 @@ void draw_placeholder(image::Bitmap& bitmap, double x, double y, int cells, doub
     }
 }
 
+// 按覆盖率把一个字形像素混入目标位图（源 = 文字色，coverage 来自字形 alpha）。
+// 目标 3/4 通道都支持；4 通道时 alpha 置 255（画布不透明语义）。
+void blend_pixel(image::Bitmap& bitmap, std::uint32_t x, std::uint32_t y, const Rgb& color,
+                 std::uint8_t coverage) noexcept {
+    if (coverage == 0u) {
+        return;
+    }
+    if (x >= bitmap.width() || y >= bitmap.height()) {
+        return;
+    }
+    if (coverage == 255u) {
+        put_pixel(bitmap, static_cast<double>(x), static_cast<double>(y), color);
+        return;
+    }
+    const double a = static_cast<double>(coverage) / 255.0;
+    const double ia = 1.0 - a;
+    const auto mix = [a, ia](std::uint8_t dst, std::uint8_t src) noexcept {
+        const double v = static_cast<double>(src) * a + static_cast<double>(dst) * ia;
+        const double rounded = v + 0.5;
+        const long clamped =
+            rounded < 0.0 ? 0 : (rounded > 255.0 ? 255 : static_cast<long>(rounded));
+        return static_cast<std::uint8_t>(clamped);
+    };
+    bitmap.set(x, y, 0, mix(bitmap.at(x, y, 0), color.r));
+    bitmap.set(x, y, 1, mix(bitmap.at(x, y, 1), color.g));
+    bitmap.set(x, y, 2, mix(bitmap.at(x, y, 2), color.b));
+    if (bitmap.channels() == 4) {
+        bitmap.set(x, y, 3, 255);
+    }
+}
+
+// ── 后端一：BitmapBackend（内置 5×7 点阵）──────────────────────────
+// 覆盖 0x20..0x7E；其余码点返回 false，把决定权交回组合链。
+class BitmapBackend final : public FontBackend {
+public:
+    [[nodiscard]] bool has_glyph(char32_t codepoint) const noexcept override {
+        return codepoint >= kFirstCp && codepoint <= kLastCp;
+    }
+
+    [[nodiscard]] double measure_width(char32_t codepoint, double cell_w,
+                                       double cell_h) const noexcept override {
+        (void)cell_h;
+        return static_cast<double>(util::codepoint_width(codepoint)) * cell_w;
+    }
+
+    [[nodiscard]] bool draw_glyph(image::Bitmap& bitmap, char32_t codepoint, Point at,
+                                  const Rgb& color, int columns, double cell_w,
+                                  double cell_h) const noexcept override {
+        (void)columns;  // ASCII 恒占 1 列，格内缩放与 columns 无关
+        if (!has_glyph(codepoint)) {
+            return false;
+        }
+        const auto& glyph = kFont5x7[static_cast<std::size_t>(codepoint - kFirstCp)];
+        for (int col = 0; col < kGlyphCols; ++col) {
+            const std::uint8_t bits = glyph[static_cast<std::size_t>(col)];
+            if (bits == 0u) {
+                continue;  // 空列（如 '1' 的首尾列）直接跳过
+            }
+            // 字形画在前 5/6 格宽：格内偏移先取整，格间 advance == cell_w 整数对齐。
+            const double px = std::floor(at.x + static_cast<double>(col) * cell_w / 6.0);
+            for (int row = 0; row < kGlyphRows; ++row) {
+                if (((bits >> row) & 1u) != 0u) {
+                    const double py = std::floor(at.y + static_cast<double>(row) * cell_h / 8.0);
+                    put_pixel(bitmap, px, py, color);
+                }
+            }
+        }
+        return true;
+    }
+};
+
+// ── 后端二：TtfBackend（系统 TTF，封装 image::TtfFont）──────────────
+constexpr std::size_t kMaxFontFileBytes = 64u << 20;  // 字体文件体积上限（防病态大文件）
+
+// 平台常见 CJK 字体候选，按序取第一个能解析的。.ttc 集合由 TtfFont::load
+// 取首个字体（微软雅黑即 ttc）。路径全部 ASCII，窄字符串 ifstream 即可。
+#ifdef _WIN32
+constexpr const char* kSystemFontCandidates[] = {
+    "C:/Windows/Fonts/msyh.ttc",    // 微软雅黑（ttc 集合）
+    "C:/Windows/Fonts/simhei.ttf",  // 黑体
+    "C:/Windows/Fonts/msyh.ttf",
+    "C:/Windows/Fonts/simsun.ttc",  // 宋体
+};
+#elif defined(__APPLE__)
+constexpr const char* kSystemFontCandidates[] = {
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/Library/Fonts/Microsoft/msyh.ttc",
+};
+#else
+constexpr const char* kSystemFontCandidates[] = {
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+};
+#endif
+
+// 读整个文件；ifstream 默认不开异常，读写失败只置流状态，不会抛。
+[[nodiscard]] bool read_file_bytes(const char* path, std::vector<std::uint8_t>& out) noexcept {
+    out.clear();
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        return false;
+    }
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    if (size <= 0 || static_cast<std::uint64_t>(size) > kMaxFontFileBytes) {
+        return false;
+    }
+    file.seekg(0, std::ios::beg);
+    out.resize(static_cast<std::size_t>(size));
+    file.read(reinterpret_cast<char*>(out.data()), size);
+    return file.gcount() == static_cast<std::streamsize>(size);
+}
+
+class TtfBackend final : public FontBackend {
+public:
+    // 构造即做系统字体发现：环境变量 TERMCHART_GUI_FONT 优先，随后按平台
+    // 候选清单取第一个能解析的。任何一步失败都只留下 active_=false——
+    // 之后本后端对所有码点返回 false，组合链自然降级到点阵。
+    TtfBackend() noexcept {
+        try {
+            std::vector<std::uint8_t> bytes;
+            if (const char* env = std::getenv("TERMCHART_GUI_FONT");
+                env != nullptr && *env != '\0') {
+                if (read_file_bytes(env, bytes)) {
+                    if (auto loaded = image::TtfFont::load(bytes); loaded.has_value()) {
+                        font_ = std::move(*loaded);
+                        active_ = true;
+                        return;
+                    }
+                }
+            }
+            for (const char* path : kSystemFontCandidates) {
+                if (!read_file_bytes(path, bytes)) {
+                    continue;
+                }
+                if (auto loaded = image::TtfFont::load(bytes); loaded.has_value()) {
+                    font_ = std::move(*loaded);
+                    active_ = true;
+                    break;
+                }
+            }
+        } catch (...) {
+            active_ = false;  // OOM 等意外：退回点阵，绝不把异常带出 noexcept
+        }
+    }
+
+    [[nodiscard]] bool has_glyph(char32_t codepoint) const noexcept override {
+        // 保守声明：active 且非内置 ASCII。"这个码点有没有轮廓"要光栅化
+        // 才知道（TtfFont 无 cmap 覆盖查询），由 draw_glyph 的空轮廓判定
+        // 兜底；组合链按 draw 结果委派，不依赖本函数的精确性。
+        return active_ && !is_builtin_ascii(codepoint);
+    }
+
+    [[nodiscard]] double measure_width(char32_t codepoint, double cell_w,
+                                       double cell_h) const noexcept override {
+        (void)cell_h;
+        return static_cast<double>(util::codepoint_width(codepoint)) * cell_w;
+    }
+
+    [[nodiscard]] bool draw_glyph(image::Bitmap& bitmap, char32_t codepoint, Point at,
+                                  const Rgb& color, int columns, double cell_w,
+                                  double cell_h) const noexcept override {
+        // ASCII 区间让给点阵后端：零成本，且"ASCII 字形落像素"是既有测试
+        // 钉住的像素契约（点阵 16 点 vs 整格填充），TTF 抢走会让这批断言
+        // 失去意义。TTF 只做点阵之外的增量覆盖。
+        if (!active_ || is_builtin_ascii(codepoint) || columns <= 0) {
+            return false;
+        }
+        const double box_x = at.x;
+        const double box_y = at.y;
+        const double box_w = static_cast<double>(columns) * cell_w;
+        const double box_h = cell_h;
+        if (!(box_w > 0.0) || !(box_h > 0.0)) {
+            return false;
+        }
+        // 字号线盒 ≈ 格高；宽字符盒是 2 格宽，CJK 字形 ~0.9em 不会横向溢出。
+        double pixel_size = box_h * 0.92;
+        auto glyph = font_.glyph(codepoint, pixel_size);
+        if (!glyph.has_value()) {
+            return false;
+        }
+        // 窄盒里的宽 ink（全角符号、粗衬线）：按盒比例缩一档重取（cache 按
+        // 0.25px 量化，重取廉价且确定）。
+        const std::uint32_t gw = glyph->bitmap.width();
+        const std::uint32_t gh = glyph->bitmap.height();
+        if (gw != 0u &&
+            (static_cast<double>(gw) > box_w || static_cast<double>(gh) > box_h)) {
+            const double kw = box_w / static_cast<double>(gw);
+            const double kh = box_h / static_cast<double>(gh);
+            pixel_size *= std::min(kw, kh);
+            if (!(pixel_size >= 1.0)) {
+                return false;  // 盒子过小，缩到 1px 以下没有渲染意义
+            }
+            glyph = font_.glyph(codepoint, pixel_size);
+            if (!glyph.has_value()) {
+                return false;
+            }
+        }
+        const std::uint32_t w = glyph->bitmap.width();
+        const std::uint32_t h = glyph->bitmap.height();
+        if (w == 0u || h == 0u) {
+            return false;  // 空轮廓（.notdef 空白等）：交回组合链
+        }
+        const double tx = std::floor(box_x + (box_w - static_cast<double>(w)) / 2.0);
+        const double ty = std::floor(box_y + (box_h - static_cast<double>(h)) / 2.0);
+        const bool four_channel = glyph->bitmap.channels() == 4u;
+        const double max_x = static_cast<double>(bitmap.width());
+        const double max_y = static_cast<double>(bitmap.height());
+        for (std::uint32_t gy = 0; gy < h; ++gy) {
+            const double py = ty + static_cast<double>(gy);
+            if (!(py >= 0.0) || py >= max_y) {
+                continue;  // 负坐标/NaN/越界一律跳过（Bitmap 对越界写是丢弃语义）
+            }
+            for (std::uint32_t gx = 0; gx < w; ++gx) {
+                const double px = tx + static_cast<double>(gx);
+                if (!(px >= 0.0) || px >= max_x) {
+                    continue;
+                }
+                const std::uint8_t coverage =
+                    four_channel
+                        ? glyph->bitmap.at(gx, gy, 3)
+                        : ((glyph->bitmap.at(gx, gy, 0) | glyph->bitmap.at(gx, gy, 1) |
+                            glyph->bitmap.at(gx, gy, 2)) != 0u
+                               ? 255u
+                               : 0u);
+                if (coverage == 0u) {
+                    continue;
+                }
+                blend_pixel(bitmap, static_cast<std::uint32_t>(px),
+                            static_cast<std::uint32_t>(py), color, coverage);
+            }
+        }
+        return true;
+    }
+
+private:
+    [[nodiscard]] static bool is_builtin_ascii(char32_t cp) noexcept {
+        return cp >= kFirstCp && cp <= kLastCp;
+    }
+
+    mutable image::TtfFont font_;  // glyph() 写 cache：逻辑 const（memoization）
+    bool active_ = false;
+};
+
+// ── 后端三：FallbackBackend（有序组合链）───────────────────────────
+// 依次问每个孩子，第一个 draw_glyph 返回 true 的胜出；全不覆盖返回
+// false，由 draw_text 画占位框。典型装配：{ TtfBackend, BitmapBackend }
+// ——TTF 优先、点阵兜底（TTF 整体 inactive 时等价于纯点阵 + 占位框）。
+class FallbackBackend final : public FontBackend {
+public:
+    explicit FallbackBackend(std::vector<std::unique_ptr<FontBackend>> children) noexcept
+        : children_(std::move(children)) {}
+
+    [[nodiscard]] bool has_glyph(char32_t codepoint) const noexcept override {
+        for (const auto& child : children_) {
+            if (child->has_glyph(codepoint)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] double measure_width(char32_t codepoint, double cell_w,
+                                       double cell_h) const noexcept override {
+        // 等宽网格契约：宽度与后端无关（列数 × cell_w）。委派给第一个
+        // 声明覆盖的孩子；无人覆盖时用首节点——度量不许因字体缺失而漂移，
+        // 否则排版会因环境不同而歪。
+        for (const auto& child : children_) {
+            if (child->has_glyph(codepoint)) {
+                return child->measure_width(codepoint, cell_w, cell_h);
+            }
+        }
+        return children_.empty() ? 0.0 : children_.front()->measure_width(codepoint, cell_w,
+                                                                          cell_h);
+    }
+
+    [[nodiscard]] bool draw_glyph(image::Bitmap& bitmap, char32_t codepoint, Point at,
+                                  const Rgb& color, int columns, double cell_w,
+                                  double cell_h) const noexcept override {
+        for (const auto& child : children_) {
+            if (child->draw_glyph(bitmap, codepoint, at, color, columns, cell_w, cell_h)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    std::vector<std::unique_ptr<FontBackend>> children_;
+};
+
+using ChainPtr = std::unique_ptr<FontBackend>;
+
+// 进程内单例：组合链的唯一装配点。加/换后端只改这里，公开 API 与调用方
+// 零改动。构造只做小块分配，字体加载的异常已在 TtfBackend 构造内兜住；
+// 这里的 catch 是对分配失败的双保险（静态初始化抛异常会直接 terminate）。
+[[nodiscard]] FontBackend& font_chain() noexcept {
+    static const ChainPtr chain = []() noexcept {
+        try {
+            std::vector<std::unique_ptr<FontBackend>> children;
+            children.push_back(std::make_unique<TtfBackend>());
+            children.push_back(std::make_unique<BitmapBackend>());
+            return ChainPtr{std::make_unique<FallbackBackend>(std::move(children))};
+        } catch (...) {
+            return ChainPtr{std::make_unique<BitmapBackend>()};  // 极端 OOM：纯点阵
+        }
+    }();
+    return *chain;
+}
+
 }  // namespace
 
+// vtable/typeinfo 锚点：放 TU 内，匿名 namespace 的派生类各自只发弱表，
+// 这里出强表，避免每个包含头文件的 TU 都 emission 一份（key function 惯例）。
+FontBackend::~FontBackend() = default;
+
 bool has_glyph(char32_t codepoint) noexcept {
+    // 契约不变：只回答"内置点阵表是否覆盖"（0x20..0x7E）——TTF 命中不经
+    // 此查询（测试钉住的语义），TTF 能力走 draw_text 的组合链。
     return codepoint >= kFirstCp && codepoint <= kLastCp;
 }
 
 TextMetrics measure_text(std::string_view utf8_text, double cell_w, double cell_h) noexcept {
     const double cw = sane_extent(cell_w);
     const double ch = sane_extent(cell_h);
-    // 逐码点解码累加宽度，与 util::display_width 同口径（主码点决定宽度，
-    // 组合记号宽 0，非法字节按 U+FFFD 计 1 列）。
-    int cols = 0;
+    const FontBackend& chain = font_chain();
+    // 逐码点解码累加宽度：与 util::display_width 同口径（主码点决定宽度，
+    // 组合记号宽 0，非法字节按 U+FFFD 计 1 列）；高度与内容无关恒为 ch。
+    double width = 0.0;
     std::size_t pos = 0;
     while (pos < utf8_text.size()) {
         const util::Utf8Decode d = util::decode(utf8_text, pos);
         if (d.consumed == 0) {
             break;
         }
-        cols += util::codepoint_width(d.cp);
         pos += static_cast<std::size_t>(d.consumed);
+        width += chain.measure_width(d.cp, cw, ch);
     }
-    return TextMetrics{static_cast<double>(cols) * cw, ch};
+    return TextMetrics{width, ch};
 }
 
 double draw_text(image::Bitmap& bitmap, std::string_view utf8_text, Point at, Rgb color,
                  double cell_w, double cell_h) noexcept {
     const double cw = sane_extent(cell_w);
     const double ch = sane_extent(cell_h);
+    FontBackend& chain = font_chain();
     int cols = 0;  // 已消费的列数：当前码点所在格相对 at.x 的整格偏移
     std::size_t pos = 0;
     while (pos < utf8_text.size()) {
@@ -209,32 +554,16 @@ double draw_text(image::Bitmap& bitmap, std::string_view utf8_text, Point at, Rg
             break;
         }
         pos += static_cast<std::size_t>(d.consumed);
-        const int width = util::codepoint_width(d.cp);
-        if (has_glyph(d.cp)) {
-            const auto& glyph = kFont5x7[static_cast<std::size_t>(d.cp - kFirstCp)];
-            const double cell_x = at.x + static_cast<double>(cols) * cw;
-            for (int col = 0; col < kGlyphCols; ++col) {
-                const std::uint8_t bits = glyph[static_cast<std::size_t>(col)];
-                if (bits == 0u) {
-                    continue;  // 空列（如 '1' 的首尾列）直接跳过
-                }
-                // 字形画在前 5/6 格宽：格内偏移先取整，格间 advance == cw 整数对齐。
-                const double px = std::floor(cell_x + static_cast<double>(col) * cw / 6.0);
-                for (int row = 0; row < kGlyphRows; ++row) {
-                    if (((bits >> row) & 1u) != 0u) {
-                        const double py =
-                            std::floor(at.y + static_cast<double>(row) * ch / 8.0);
-                        put_pixel(bitmap, px, py, color);
-                    }
-                }
+        const int columns = util::codepoint_width(d.cp);
+        if (columns > 0) {
+            // 组合链：TTF 优先、点阵兜底；全不覆盖才画占位框（可见、可度量）。
+            const Point cell_at{at.x + static_cast<double>(cols) * cw, at.y};
+            if (!chain.draw_glyph(bitmap, d.cp, cell_at, color, columns, cw, ch)) {
+                draw_placeholder(bitmap, cell_at.x, cell_at.y, columns, cw, ch, color);
             }
-        } else if (width > 0) {
-            // 缺字（CJK / emoji / U+FFFD …）：按显示宽度画虚线占位框。
-            draw_placeholder(bitmap, at.x + static_cast<double>(cols) * cw, at.y, width, cw, ch,
-                             color);
         }
-        // width == 0（组合记号 / 控制字符）：不占格、不画，跟随前一字符。
-        cols += width;
+        // columns == 0（组合记号 / 控制字符）：不占格、不画，跟随前一字符。
+        cols += columns;
     }
     return static_cast<double>(cols) * cw;
 }

@@ -20,6 +20,11 @@ public:
     virtual void stroke_rect(const Rect& rect, Rgb color, double width) = 0;
     virtual void draw_text(double x, double y, std::string_view text, Rgb color) = 0;
 
+    // 文本度量（排版出口）：控件靠它算居中/裁剪/最小尺寸，不必知道字体细节。
+    // 返回 x = 整串 advance 宽度，y = 行高。口径由后端字体决定（点阵后端为
+    // 显示宽度：CJK 2 列 × advance），必须与该后端 draw_text 的推进一致。
+    [[nodiscard]] virtual Point text_size(std::string_view text) const noexcept = 0;
+
     // 把一张位图（左上角对齐 (x,y)）合成进画布：GUI 组合图表的出口——控件用 Scene
     // 拼好图、经 SceneRenderer 光栅化成 Bitmap，再 blit 上来（抗锯齿白拿）。
     // opacity∈[0,1]：整体缩放源 alpha（1=原样）。半透明合成在这里做——Scene IR 刻意

@@ -16,10 +16,18 @@ enum class EventType {
     MousePress,
     MouseRelease,
     MouseMove,
+    Wheel,        // 滚轮（图表缩放）；delta 为正=向上/向前
     KeyPress,
     Resize,
     Timer,        // 定时器到期
     Quit,
+};
+
+// 修饰键位（Event.modifiers）：对应主流工具包的 Shift/Ctrl/Alt。
+enum EventModifier : std::uint32_t {
+    kModShift = 1u << 0,
+    kModCtrl = 1u << 1,
+    kModAlt = 1u << 2,
 };
 
 struct Event {
@@ -28,6 +36,8 @@ struct Event {
     double x = 0.0;
     double y = 0.0;
     int button = 0;
+    double wheel_delta = 0.0;  // Wheel：格数或行数（后端约定，±120 制或 ±1 制）
+    std::uint32_t modifiers = 0;  // EventModifier 位组合
     // 键盘
     int key = 0;
     std::string text;

@@ -118,6 +118,11 @@ TEST_CASE("network/http: Uri 解析") {
         CHECK_FALSE(Uri::parse("http://host:99999/").has_value());   // 端口越界
         CHECK_FALSE(Uri::parse("http://user@host/").has_value());    // userinfo 不支持
         CHECK_FALSE(Uri::parse("http://[::1/x").has_value());        // IPv6 未闭合
+        CHECK_FALSE(Uri::parse("http://h.com/a\rb").has_value());    // path 控制字符（注入面）
+        // 注意：字符串字面量里的 \0 会被 string_view 的 const char* 构造按 strlen
+        // 截断（C++ 标准行为），要测"显式含 NUL 的 view"必须走 std::string。
+        const std::string nul_path = std::string{"http://h.com/a"} + '\0' + 'b';
+        CHECK_FALSE(Uri::parse(std::string_view{nul_path}).has_value());
         CHECK(Uri::parse("").error() == ErrorCode::InvalidArgument);
     }
 }
@@ -130,21 +135,56 @@ TEST_CASE("network/http: 请求串行化") {
                        {"Connection", "keep-alive"}};  // 后两项应被忽略
     request.body = "k=v";
 
-    const std::string wire = termchart::network::http::serialize_request(request);
-    CHECK(wire.starts_with("POST /submit HTTP/1.1\r\n"));
-    CHECK(wire.find("Host: example.com\r\n") != std::string::npos);
-    CHECK(wire.find("X-Token: abc\r\n") != std::string::npos);
-    CHECK(wire.find("Connection: close\r\n") != std::string::npos);
-    CHECK(wire.find("keep-alive") == std::string::npos);
-    CHECK(wire.find("evil.example") == std::string::npos);
-    CHECK(wire.find("Content-Length: 3\r\n") != std::string::npos);
-    CHECK(wire.ends_with("\r\n\r\nk=v"));
+    const Result<std::string> wire = termchart::network::http::serialize_request(request);
+    REQUIRE(wire.has_value());
+    CHECK(wire->starts_with("POST /submit HTTP/1.1\r\n"));
+    CHECK(wire->find("Host: example.com\r\n") != std::string::npos);
+    CHECK(wire->find("X-Token: abc\r\n") != std::string::npos);
+    CHECK(wire->find("Connection: close\r\n") != std::string::npos);
+    CHECK(wire->find("keep-alive") == std::string::npos);
+    CHECK(wire->find("evil.example") == std::string::npos);
+    CHECK(wire->find("Content-Length: 3\r\n") != std::string::npos);
+    CHECK(wire->ends_with("\r\n\r\nk=v"));
 
     SUBCASE("GET 无体不带 Content-Length") {
         Request get;
         get.uri = *Uri::parse("http://h.com/");
-        const std::string out = termchart::network::http::serialize_request(get);
-        CHECK(out.find("Content-Length") == std::string::npos);
+        const Result<std::string> out = termchart::network::http::serialize_request(get);
+        REQUIRE(out.has_value());
+        CHECK(out->find("Content-Length") == std::string::npos);
+    }
+
+    SUBCASE("头注入拒绝：CR/LF/NUL 一律 InvalidArgument") {
+        Request attack;
+        attack.uri = *Uri::parse("http://h.com/");
+        attack.headers = {{"X-Evil", "v\r\nX-Injected: 1"}};
+        CHECK_FALSE(termchart::network::http::serialize_request(attack).has_value());
+
+        Request name_attack;
+        name_attack.uri = *Uri::parse("http://h.com/");
+        name_attack.headers = {{"X-Bad\nName", "v"}};
+        const Result<std::string> out = termchart::network::http::serialize_request(name_attack);
+        CHECK_FALSE(out.has_value());
+        CHECK(out.error() == ErrorCode::InvalidArgument);
+
+        // 显式含 NUL 的头名（std::string → string_view 保留 NUL，不走 strlen）。
+        const std::string nul_name = std::string{"X-B"} + '\0';
+        Request nul_header;
+        nul_header.uri = *Uri::parse("http://h.com/");
+        nul_header.headers.push_back({std::string{nul_name}, std::string{"v"}});
+        CHECK_FALSE(termchart::network::http::serialize_request(nul_header).has_value());
+    }
+
+    SUBCASE("body 二进制安全：NUL 原样透传且 Content-Length 定长") {
+        Request bin;
+        bin.uri = *Uri::parse("http://h.com/");
+        bin.method = "POST";
+        bin.body = std::string{"a\0b", 3};  // 3 字节，含 NUL
+        const Result<std::string> out = termchart::network::http::serialize_request(bin);
+        REQUIRE(out.has_value());
+        CHECK(out->find("Content-Length: 3\r\n") != std::string::npos);
+        CHECK(out->size() >= 3);
+        CHECK(out->substr(out->size() - 3) == std::string{"a\0b", 3});
     }
 }
 

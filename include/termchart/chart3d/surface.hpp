@@ -15,6 +15,7 @@
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/chart3d/common.hpp"
+#include "termchart/chart3d/projector.hpp"
 #include "termchart/math3d/camera.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/scene/command.hpp"
@@ -26,16 +27,20 @@ namespace termchart::chart3d {
 struct Surface3dOpts {
     double cols = 72.0;
     double rows = 28.0;
-    double azimuth_deg = 35.0;
-    double elevation_deg = 25.0;
-    double fovy_deg = 55.0;
+    double azimuth_deg = 35.0;   // projector=nullptr 时生效
+    double elevation_deg = 25.0;  // projector=nullptr 时生效
+    double fovy_deg = 55.0;       // projector=nullptr 时生效
     int res_x = 24;  // 网格列数
     int res_y = 24;  // 网格行数
     bool axes = true;
 };
 
+// projector 为 nullptr 时按 opts 现算 Projector3D（既有行为，逐字节不变）；
+// 非空则全权委托注入的投影器（opts 里的视角参数被忽略），为 Projector4D
+// 等留出注入缝。
 inline scene::Scene surface3d(const std::function<double(double, double)>& f, double x0, double x1,
-                              double y0, double y1, const Surface3dOpts& o = {}) {
+                              double y0, double y1, const Surface3dOpts& o = {},
+                              const IProjector* projector = nullptr) {
     scene::Scene s;
     const std::size_t nx = static_cast<std::size_t>(std::max(1, o.res_x));
     const std::size_t ny = static_cast<std::size_t>(std::max(1, o.res_y));
@@ -69,8 +74,9 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
         radius = 1.0;
     }
 
-    const math3d::Camera cam =
-        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius);
+    const Projector3D default_projector{
+        make_camera(o.cols, o.rows, o.azimuth_deg, o.elevation_deg, o.fovy_deg, center, radius)};
+    const IProjector& proj = (projector != nullptr) ? *projector : default_projector;
 
     if (o.axes) {
         const math3d::Vec3 axes[3] = {math3d::Vec3{maxv.x, minv.y, minv.z},
@@ -80,8 +86,8 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
         const Color axis_color[3] = {Color::rgb(230, 80, 80), Color::rgb(90, 200, 110),
                                      Color::rgb(90, 140, 230)};
         for (int a = 0; a < 3; ++a) {
-            const auto p0 = cam.project(minv, o.cols, o.rows);
-            const auto p1 = cam.project(axes[a], o.cols, o.rows);
+            const auto p0 = proj.project(minv, o.cols, o.rows);
+            const auto p1 = proj.project(axes[a], o.cols, o.rows);
             if (!p0.visible || !p1.visible) {
                 continue;
             }
@@ -94,8 +100,8 @@ inline scene::Scene surface3d(const std::function<double(double, double)>& f, do
 
     // 线框：逐行、逐列相邻点连线，颜色按平均深度着色。
     const auto seg = [&](const math3d::Vec3& a, const math3d::Vec3& b) {
-        const auto pa = cam.project(a, o.cols, o.rows);
-        const auto pb = cam.project(b, o.cols, o.rows);
+        const auto pa = proj.project(a, o.cols, o.rows);
+        const auto pb = proj.project(b, o.cols, o.rows);
         if (!pa.visible || !pb.visible) {
             return;
         }

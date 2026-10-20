@@ -74,6 +74,14 @@ public:
         (void)termchart::gui::draw_text(bmp_, text, Point{x, y}, color, kCellW, kCellH);
     }
 
+    // 文本度量：复用渲染核心的 measure_text——它和 draw_text 是同一把尺
+    // （显示宽度口径，CJK = 2 列），不可在这里另起炉灶，否则排版与绘制会偏。
+    [[nodiscard]] Point text_size(std::string_view text) const noexcept override {
+        const termchart::gui::TextMetrics m =
+            termchart::gui::measure_text(text, kCellW, kCellH);
+        return Point{m.width, m.height};
+    }
+
     // 文本格尺寸：与 termchart::gui 点阵字体的 advance/格高约定一致（5×7 字形
     // 画在前 5/6 宽、7/8 高，末列/末行留作字距），供控件排版居中/量宽。
     static constexpr double kCellW = 6.0;

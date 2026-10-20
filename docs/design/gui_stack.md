@@ -40,5 +40,21 @@ GUI（窗口/位图渲染）与终端（字符格渲染）是**平行栈**，共
 widget/plugin/app 已在 `include/termchart/` 落地（终端栈使用）。GUI 平行栈的**渲染核心**已落地：
 `include/termchart/gui/`（层 22）提供 `font`（点阵等宽字体）与 `scene_renderer`（Scene → RGBA 位图，
 超采样抗锯齿），复用 `scene::StatefulVisitor` 时序与 `image/png_encode` 出图，可运行产物见
-`examples/55_gui_scene_png.cpp`。仍缺：GUI 侧 `widget_tree` / `native_loop` / `layout` / `backend_tk`
-（平行项目，进度见 `capability_matrix.md` 第六节与 ROADMAP）。
+`examples/55_gui_scene_png.cpp`。
+
+**平行栈本体**（`include/termchart_gui/`，独立顶层 header-only 库）已落地：`backend_tk`
+（抽象 + 无头/终端两种零依赖参考后端）、`layout`（约束/弹性/网格）、`widget_tree`
+（按钮/复选/滑块/进度条/标签/容器 + ChartWidget/CandlestickWidget 等组合图控件）、
+`native_loop`（事件循环抽象 + 定时器）、`render/style_map`。控件/布局/绘制只面向
+`TkCanvas` 抽象，换后端零改动。
+
+**真实后端矩阵**（均为可选插件，默认 OFF，遵循 fail-loud——缺依赖配置期报错）：
+
+| 后端 | 位置 | 依赖 | 状态 |
+| --- | --- | --- | --- |
+| Win32 | `plugins/gui_win32` | 系统 user32/gdi32 | 已编译验证（`--smoke` 实证） |
+| Qt | `plugins/gui_qt` | Qt5/Qt6 Widgets | 代码已写，本机无 Qt 未编译验证 |
+| Tk | `plugins/gui_tk` | Tcl/Tk 开发库 | 代码已写，本机无 Tcl/Tk 未编译验证 |
+
+接真实工具包 = 外部依赖 + 编译型平台代码，违背核心零强制依赖硬约束，故一律归为
+可选插件不进核心；`widget_tree/layout/native_loop` 对全部后端不变。

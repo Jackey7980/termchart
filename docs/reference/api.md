@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **341 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **357 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -15,22 +15,25 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | core | L0 | 13 |
 | util | L1 | 21 |
 | color | L2 | 6 |
+| math3d | L3 | 3 |
 | scale | L3 | 10 |
 | scene | L4 | 6 |
-| image | L5 | 6 |
+| image | L5 | 8 |
 | raster | L6 | 9 |
+| network | L7 | 5 |
 | term | L7 | 13 |
 | document | L8 | 4 |
 | protocol | L9 | 7 |
 | canvas | L10 | 8 |
 | layout | L11 | 11 |
 | chart | L12 | 79 |
+| chart3d | L12 | 4 |
 | graph | L13 | 46 |
 | render | L14 | 5 |
 | interaction | L15 | 18 |
 | backend | L16 | 15 |
-| dsl | L17 | 14 |
-| widget | L18 | 17 |
+| dsl | L17 | 15 |
+| widget | L18 | 18 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 4 |
@@ -761,6 +764,41 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct ResolveOptions`
 - `struct ResolvedStyle`
 
+## math3d（L3）
+
+### `math3d/camera.hpp`
+
+> camera.hpp —— 轨道相机 + 透视投影到画布坐标（header-only）
+>
+> 设计取舍：3D 渲染**不**自造 z-buffer/终端光栅器，而是把 3D 点投影到 2D 画布坐标
+> 后，作为 Scene 图元交给已有的 Scene→Canvas（braille/halfblock）管线。深度只用来
+> 决定着色（近亮远暗），得到可辨识的立体感而不重复造轮子。
+>
+> project() 返回的屏幕坐标即画布格坐标（左上为原点，y 向下），直接喂给 Scene 的
+> MoveTo/LineTo/RectOp 即可被 render_scene 消费。
+
+- `struct Projected`
+- `struct Camera`
+
+### `math3d/mat4.hpp`
+
+> mat4.hpp —— 4×4 矩阵（header-only，行主序）
+>
+> 约定（与绝大多数图形教材一致）：矩阵 × 列向量。元素 m[r*4+c] 即第 r 行第 c 列。
+> `transform(p)` 计算 M·p（齐次 w=1）。投影链 = perspective · look_at，即
+> clip = perspective(look_at(p))。所有函数 constexpr，便于单测断言确定性结果。
+
+- `struct Mat4`
+
+### `math3d/vec3.hpp`
+
+> vec3.hpp —— 三维向量（header-only）
+>
+> 仅放 3D 投影真正需要的那几个运算；依赖 <cmath>，不引入 eigen/glm。
+> 约定：行主序矩阵 × 列向量（见 mat4.hpp），本文件只负责向量代数。
+
+- `struct Vec3`
+
 ## scale（L3）
 
 ### `scale/auto_domain.hpp`
@@ -994,6 +1032,25 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class Bitmap`
 
+### `image/bmp.hpp`
+
+> bmp.hpp —— BMP 解码（自主实现，零依赖；输出 RGBA）
+>
+> 支持范围（**明确列出，避免"以为支持"**）：
+> ✅ 文件头 'BM' + BITMAPINFOHEADER（40 字节）与后续更长的 V4/V5 头；
+> ✅ 位深 1 / 4 / 8（调色板，BI_RGB）、24（BGR）、32（BGRX 或 BITFIELDS）、
+> 16（BITFIELDS 或默认 RGB555）；
+> ✅ 压缩 0（BI_RGB）与 3（BI_BITFIELDS，带 3~4 个 DWORD 掩码）；
+> ✅ 行序 bottom-up（height 为正）与 top-down（height 为负）；
+> ✅ 行 4 字节对齐、调色板缺省色表（bpp ≤ 8 且 ciColors 为 0 时按 2^bpp 项）；
+> ⛔ 不支持：RLE4/RLE8 压缩（返回 Unsupported）、OS/2 的 12 字节旧头
+> （返回 Unsupported）、每通道超过 8 位的 16bpp 掩码组合（按能处理的
+> 掩码解析，掩码不连续/不覆盖时返回 ParseError）。
+> 错误：头结构非法/尺寸越界/掩码不可解析 → ParseError；魔数或压缩不支持 →
+> Unsupported。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
 ### `image/convert.hpp`
 
 > convert.hpp —— 位图与标量场的互转（GUI 与终端共用）
@@ -1019,9 +1076,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 为什么先"识别再分发"：调用方拿到的常常是一段来路不明的字节（剪贴板、文件、
 > 网络），先嗅探格式再交给对应解码器，比让每个解码器各自试一遍要清楚。
 >
-> 目前**只有 PNG 有解码器**；其余格式如实返回 `ErrorCode::Unsupported`，
-> 不做"猜着解"这种事。等第二种格式落地时再引入解码器注册表（与 raster/chart
-> 同构），现在引入只会是空壳。
+> 目前 **PNG（自带 inflate）与 BMP（自带解析）是原生零依赖解码器**；JPEG / GIF /
+> WebP 走 vendored `stb_image`（可选依赖 `TERMCHART_ENABLE_STB_IMAGE`，默认关，
+> 关时如实 `Unsupported`）。所有"识别得出但无解码器"的情况都返回
+> `ErrorCode::Unsupported`，不做"猜着解"。解码器注册表等到第四种格式落地再引入
+> （与 raster/chart 同构），现在引入只会是空壳。
 
 - `enum class ImageFormat : std::uint8_t`
 
@@ -1074,6 +1133,30 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `TERMCHART_API std::uint32_t crc32(const std::uint8_t* data, std::size_t len) noexcept`
 - `TERMCHART_API std::uint32_t adler32(const std::uint8_t* data, std::size_t len) noexcept`
 - `TERMCHART_API std::string encode_png(const Bitmap& bitmap)`
+
+### `image/ttf_font.hpp`
+
+> ttf_font.hpp —— 自主 TTF 解析（sfnt 目录 + cmap + glyf/loca + hmtx + 二次
+> 贝塞尔轮廓光栅化 + glyph cache），输出 8-bit 灰度位图
+>
+> 支持范围（**明确列出，避免"以为支持"**）：
+> ✅ sfnt 版本 0x00010000（TrueType）与 'true' 变体；'ttcf' 集合取第一个字体；
+> ✅ cmap format 4（BMP，含代理对段）与 format 12（全 Unicode），平台子表
+> 选择序：(3,10) > (3,1) > (0,x) > 任意 format 4/12；
+> ✅ glyf 简单轮廓（on/off 曲线 + REPEAT 旗标 + 隐含中点）与复合轮廓
+> （ARGS_ARE_XY_VALUES / 缩放矩阵 / 分量变换，深度上限 8，循环引用防护）；
+> ✅ loca 短/长格式（head.indexToLocFormat）；hhea 行高度量；hmtx 步进宽；
+> ✅ 光栅化：二次贝塞尔自适应展平 → 扫描线非零环绕 → 4x4 超采样 → alpha；
+> ✅ glyph cache：按（码点, 0.25px 量化后的尺寸）缓存位图。
+> ⛔ 不执行 hinting 字节码（指令区正确跳过但不执行）；不解析可变字体
+> （fvar/gvar）；不解析位图字形表（EBDT/CBDT → 该字形回退 .notdef）；
+> 不解析 OpenType CFF（'CFF ' 轮廓，无 'glyf' → load 即 Unsupported）。
+> 错误：表缺失、目录/表体越界读取 → ParseError；'CFF ' 无 glyf → Unsupported；
+> 复合轮廓过深或表长度声明溢出 → OutOfRange。
+
+- `struct TtfMetrics`
+- `struct TtfGlyph`
+- `class TtfFont`
 
 ## raster（L6）
 
@@ -1176,6 +1259,98 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 位序约定：左上 0 / 左中 1 / 左下 2 / 右上 3 / 右中 4 / 右下 5）。
 
 - `class SextantRasterizer final : public Rasterizer`
+
+## network（L7）
+
+### `network/http.hpp`
+
+> http.hpp —— HTTP/1.1 客户端（network 模块，L7）
+>
+> 支持范围（**明确列出，避免"以为支持"**）：
+> ✅ http:// 明文与 https://（TLS 走 network/tls 注册表的后端，fail-loud）；
+> ✅ 请求：任意 method、自定义头、请求体（Content-Length 自动补）；
+> ✅ 响应：状态行 + 响应头 + 响应体；体长按 Content-Length / chunked /
+> 读到连接关闭三种规则解析（HEAD 与 204/304 按规范不收体）；
+> ✅ 重定向：301/302/303/307/308 跟 Location（默认上限 5 次；303 降为 GET）；
+> ✅ 每请求独立连接，发 `Connection: close`（库内不做连接池——图表库的
+> 拉取场景一次一个 URL，池化是纯负担）；
+> ⛔ 不支持：HTTP/2、Cookie 管理、代理、摘要认证、请求体流式分块上传、
+> 非 ASCII 头的原始字节透传（按 std::string 收）。
+> 错误：连接失败 IoError；TLS 后端缺失/握手失败 Unsupported / IoError；
+> 响应超限 OutOfRange；协议解析失败 ParseError。
+
+- `struct Uri`
+- `struct Request`
+- `struct Response`
+- `struct HttpOptions`
+
+### `network/socket.hpp`
+
+> socket.hpp —— 跨平台 TCP socket 抽象（network 模块，L7）
+>
+> 平台差异全部落在 src/network/socket_posix.cpp 与 socket_win32.cpp，
+> 公开头**没有任何 #ifdef**（与 term/terminal.hpp 同哲学）。
+>
+> 契约：
+> * 不抛异常：失败返回 Result（IoError / PlatformError / InvalidArgument）；
+> * connect 超时由 poll/select **显式实现**（非阻塞 connect + 等待 + 恢复阻塞）
+> ——SO_SNDTIMEO 在 Linux 上对 connect() 无效，不能靠它；
+> * 单次读/写超时经 SO_RCVTIMEO / SO_SNDTIMEO 实现；
+> * DNS 解析（域名 → 地址）在 connect 内完成（进程级 TTL 缓存，见
+> src/network/dns_cache.cpp），调用方无需自己 getaddrinfo；
+> * 移动语义（PIMPL），拷贝删除——一个 socket 只有一份底层句柄。
+
+- `struct SocketOptions`
+- `class TcpSocket`
+
+### `network/tls/backend.hpp`
+
+> backend.hpp —— TLS 后端抽象接口（network/tls，L7）
+>
+> 可插拔契约（与 raster/chart/scale 注册表同构，见 docs/design/registry.md）：
+> * 内置后端（network/tls/builtin/，自主实现）与第三方后端（BearSSL/mbedTLS…）
+> 实现同一接口，经 TlsRegistry 注册，调用方按名字取用；
+> * 命名项缺失时**显式报错**（fail-loud），不静默降级——请求 "builtin" 而
+> 未链接该后端即 Unsupported，绝不偷偷退回明文；
+> * 后端只做"客户端 TLS 记录层"：握手 + 加解密读写 + close_notify。
+> 证书链验证由后端负责（hostname 同时用于 SNI 与主机名校验）。
+
+- `class TlsBackend`
+
+### `network/tls/registry.hpp`
+
+> registry.hpp —— TLS 后端注册表（可扩展、构造期冻结）
+>
+> 与 raster/registry.hpp 同构（docs/design/registry.md 的口径）：
+> * instance() 一律 function-local static；
+> * 构造后只读（拷贝/赋值删除）；注册的唯一安全时机是 App 构造前；
+> * 注册的是**工厂**（每次 create 给新实例），不是原型；
+> * 查询：supports(name) / create(name)；未知名字返回 nullptr，
+> 由调用方显式报错（fail-loud，不静默降级——绝不偷偷退回明文）。
+
+- `class TlsRegistry`
+
+### `network/tls/schannel.hpp`
+
+> schannel.hpp —— Windows 原生 TLS 后端（SChannel / Schannel SSP）
+>
+> 平台后端之一（另一支是 OpenSSL，随可选依赖编译）：
+> * 实现 TlsBackend（握手 + 记录层加解密 + close_notify）；
+> * 一个后端实例服务**一条连接**（握手掌状态 CtxtHandle 在实例里）——
+> 每次 create() 拿新实例，勿跨连接复用；
+> * 证书链与主机名**手动验证**（SCH_CRED_MANUAL_CRED_VALIDATION +
+> CertGetCertificateChain / CertVerifyCertificateChainPolicy(SSL)），
+> 失败即握手失败，绝不接受"链错了但握手过了"的连接；
+> * 注册：registry.cpp 构造注册表时直接把本后端登记进去（显式引用
+> create_backend，避免"静态库里无人引用的 TU 被链接器丢弃"陷阱）；
+> register_backend() 留给需要显式控制注册时机的调用方。
+>
+> 已知环境限制：某些沙箱/策略加固的 Windows 上 AcquireCredentialsHandleW
+> 会一律返回 SEC_E_UNKNOWN_CREDENTIALS（0x8009030D，连带客户端证书也一样，
+> 而 NTLM/证书系统库正常）——那类机器上本后端 fail-loud 报 Unsupported，
+> 绝不静默退回明文。2026-10-19 在开发沙箱里实测命中该策略。
+
+- `TERMCHART_API void register_backend() noexcept`
 
 ## term（L7）
 
@@ -2625,6 +2800,55 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct WordcloudOptions`
 - `class Wordcloud final : public Chart`
 
+## chart3d（L12）
+
+### `chart3d/common.hpp`
+
+> common.hpp —— chart3d 模块共享的 3D 着色/取景辅助（header-only）
+>
+> scatter3d 与 surface3d 都用得到：深度→颜色着色（shade）与按包围盒自动取景
+> （make_camera）。抽到独立头，保证 scatter.hpp / surface.hpp 都能独立 include。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `chart3d/projector.hpp`
+
+> projector.hpp —— chart3d 的投影缝：3D 世界坐标 → 画布坐标的多态接口
+>
+> 为什么抽接口：scatter3d / surface3d 原先直接持有 math3d::Camera（Mat4
+> 视图×投影），把"怎么看"焊死在"画什么"里。抽 IProjector 之后：
+> * Projector3D：现有 Camera 的薄封装（默认实现，行为逐字节不变）；
+> * 未来 Projector4D：4D→3D 投影产出 Vec3 序列，再经本接口完成
+> 3D→2D——两阶段各自可替换，scatter/surface 与 chart4d 都不用改；
+> * 其他投影算法（正交 / 弱透视 / 自定义相机）同样只实现本接口即可注入。
+>
+> 注入方式：scatter3d / surface3d 的可选尾参数 `projector`，nullptr =
+> 按 opts 的 azimuth/elevation/fovy 现算 Projector3D（既有调用方零改动，
+> opts 里的视角参数在注入投影器时被忽略——视图归投影器所有）。
+
+- `class TERMCHART_API IProjector`
+- `class TERMCHART_API Projector3D final : public IProjector`
+
+### `chart3d/scatter.hpp`
+
+> scatter.hpp —— 3D 散点图：把三维点云投影成 Scene（header-only）
+>
+> 不做终端专属渲染：产出的是与 2D 图表同构的 scene::Scene，交给已有的
+> render_scene → Canvas → Renderer 管线，复用 braille/halfblock 光栅化。深度只用于
+> 着色（近亮远暗），立体感由此而来，无需自造 z-buffer。
+
+- `struct Scatter3dOpts`
+
+### `chart3d/surface.hpp`
+
+> surface.hpp —— 3D 曲面/网格图：把 z=f(x,y) 投影成 Scene 线框（header-only）
+>
+> 与 scatter 同构：只产出 scene::Scene，复用现有终端光栅管线。曲面以**线框**呈现
+> （每行/每列相邻的网格点连线），连线颜色按平均深度着色；这也是 3D 曲面最易辨识、
+> 最稳的画法，避免在终端上赌多边形填充的清晰度。
+
+- `struct Surface3dOpts`
+
 ## graph（L13）
 
 ### `graph/arrow.hpp`
@@ -3941,6 +4165,28 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct DotParseOptions`
 
+### `dsl/json.hpp`
+
+> json.hpp —— JSON 解析（L17）
+>
+> 支持范围（**明确列出，避免"以为支持"**）：
+> ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
+> ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
+> 会丢精度，如实记录而非假装精确）；
+> ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
+> ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
+> ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
+> 栈爆/内存爆；
+> ✅ 诊断：首个错误带行列与字节偏移（与 csv_sniff 同口径）。
+> ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
+> 控制字符未转义直出（按 JSON 规范拒绝）。
+>
+> 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
+> 可选地把**首个**诊断写到 out_diagnostic。
+
+- `class JsonValue`
+- `struct JsonOptions`
+
 ### `dsl/lexer.hpp`
 
 > lexer.hpp —— DSL 词法分析器（L17）
@@ -4173,6 +4419,24 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class Alignment`
 - `class Container : public Widget`
+
+### `widget/controls.hpp`
+
+> controls.hpp —— 无状态即时组件：下拉框 / 单行文本框 / 单选组
+>
+> 模型与 immediate_widget.hpp（按钮/复选框）完全一致：
+> * **不持有状态**：开合、高亮项、光标、选中项全部由调用方持有，每帧传入；
+> * **返回"意图"不返回"沿"**：hovered+pressed 即报告点击/提交；调用方比对
+> 自己上一帧收到的返回值即可得到沿；
+> * **事件与几何正交**：退化几何只跳过绘制，不影响返回值；
+> * 文本一律按 UTF-8 码点操作（光标按码点移动、退格删整个码点），
+> 宽度按主码点数估（宽字符按 1 格计）。
+
+- `enum class DropdownIntent : std::uint8_t`
+- `struct DropdownInput`
+- `struct DropdownResult`
+- `struct TextBoxInput`
+- `struct TextBoxResult`
 
 ### `widget/dock.hpp`
 
@@ -4576,25 +4840,26 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `gui/font.hpp`
 
-> font.hpp —— GUI 位图字体的唯一文本出口
+> font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）
 >
-> 为什么自带点阵字体、而不是接系统字体（TTF / fontconfig / DirectWrite）？
-> 1. 零外部依赖是本仓库的硬约束：接系统字体意味着每个平台一套枚举、加载与
-> 回退代码，还要为"字体缺失"设计错误路径——与全库"零强制依赖、缺失只
-> 降级不失败"的约定直接冲突。
-> 2. 终端图表的文本是**等宽语义**：列数由 util 的显示宽度决定（CJK 占 2 列），
-> 每格 advance 恒等于 cell_w。点阵字形天然等宽步进，量宽是纯乘法，不需要
-> shaping / hinting，也不存在字距把布局挤歪的问题。
-> 3. Scene 不建模排版（没有字体、字形、行盒的概念），TextOp 只带一段 UTF-8
-> 与一个锚点；把排版塞进 Scene 属于层次污染。这里把"一格一字符"渲染成
-> 像素点阵，是与该模型自洽的最简文本出口。
+> 渲染后端分工（接口不变，底层实现见 font.cpp）：
+> * ASCII 0x20..0x7E：内置 5×7 点阵。零成本、零外部依赖，且"ASCII 字形
+> 落像素"的像素契约由测试钉住；
+> * 其余码点（CJK / Latin-1 扩展 / 全角符号…）：惰性加载系统 TTF 字体
+> （Windows 自动尝试 C:/Windows/Fonts/msyh.ttc、simhei.ttf 等；可用
+> 环境变量 TERMCHART_GUI_FONT 显式指定字体文件路径），找不到字体或
+> 解析失败时 fail-safe 退回点阵占位框——不抛异常、不崩溃。
+> 等宽语义不变：列数由 util 的显示宽度决定（CJK 占 2 列），每格 advance
+> 恒等于 cell_w；TTF 只决定格内像素，不参与排版步进（无 shaping/hinting，
+> 不存在字距把布局挤歪的问题）。
 >
 > 字形是 5×7 列位点阵（数据与位序约定见 font.cpp 的 kFont5x7），渲染时映射进
 > cell_w×cell_h 的整数格：字形画在前 5/6 格宽、前 7/8 格高（末列/末行留作
-> 字距），保证 advance == cell_w 整数对齐。缺字码点画"虚线占位框"而不是
-> 留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
+> 字距），保证 advance == cell_w 整数对齐。TTF 也没有覆盖到的码点画"虚线
+> 占位框"而不是留白——中文标签掉成空白比掉成虚框更难排查，可见且可度量是底线。
 
 - `struct TextMetrics`
+- `class TERMCHART_API FontBackend`
 
 ### `gui/hover_chart.hpp`
 

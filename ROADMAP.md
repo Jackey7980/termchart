@@ -18,6 +18,15 @@
 
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
+| 2026-10-21 | **架构技术债偿还：字体后端与 3D 投影缝多态化**（本会话，尚未提交）。①`gui/font` 抽 `FontBackend` 纯虚基类（`has_glyph`/`measure_width`/`draw_glyph`，定义在 `include/termchart/gui/font.hpp`，vtable 锚点按 key function 惯用法落 `src/gui/font.cpp`）；`src/gui/font.cpp` 实现三派生——`BitmapBackend`（原 5×7 点阵，ASCII 像素契约原样）、`TtfBackend`（封装 `image::TtfFont`，系统字体发现：Windows 试 `msyh.ttc`/`simhei.ttf` 等 + `TERMCHART_GUI_FONT` 覆盖，ASCII 区间主动让位点阵以保像素契约）、`FallbackBackend`（有序组合链，进程内单例装配 `{TTF, 点阵}`，TTF 失败安静降级、全不覆盖才画占位框）。公开 API（`has_glyph`/`measure_text`/`draw_text`）签名与语义零变化。②`chart3d` 抽 `IProjector`（新头 `chart3d/projector.hpp` + `src/chart3d/projector.cpp`），现有 `Mat4`+`Camera` 封成 `Projector3D`；`scatter3d`/`surface3d` 增可选尾参 `const IProjector*`（nullptr = 按 opts 现算 `Projector3D`，既有调用方零改动、默认路径逐字节不变），为未来 `Projector4D`（4D→3D 产出 Vec3 再经本接口 3D→2D，两阶段各自可替换）铺路。**验证**：doctest **1059 用例 / 194415 断言 0 失败**（新增 4 个投影缝用例；字体契约 41 例全绿）、ctest **77/77**、护栏四件套全过（357 头 / 304 实现、392 头独立编译、生成物一致、分层过）、单头已重生成 | 8、12、22 |
+| 2026-10-21 | **gui/font 接系统 TTF：中文上屏**（本会话，尚未提交；TTF 路径随后被上一行的多态化重构吸收进 `TtfBackend`）。非 ASCII 码点改走 `image::TtfFont`：Windows 自动试 `C:/Windows/Fonts/msyh.ttc`（ttc 集合取首字体）/`simhei.ttf`；CJK 宽度仍按显示宽度占 2 列（TTF 只画格内像素，advance 不变）；字体缺失/解析失败/码点无轮廓一律 fail-safe 退回 5×7 虚线占位框，不崩不留白。示例 `examples/73_gui_cjk`：中文标题「中文测试」+ X 轴「一月/二月/三月」折线图导出 PNG。实机验证：msyh.ttc 命中、标题带 ink 446px（占位框仅 ~150px 量级）、当轮 doctest 全绿 | 8、22 |
+| 2026-10-20 | **单头生成器修复**（7127fda）。`gen_single_header.py` 的 `RE_INTERNAL` 要求 include 行尾仅空白，漏剥带尾随 `//` 注释的内部 include（`chart3d/common.hpp` 首例），活动 include 与已内联内容重复定义、example 42 单头用法编译失败；改为容忍行尾注释后重剥并 `--check` | 7 |
+| 2026-10-20 | **Python 跨语言绑定打通**（8530c3f，handoff ④① 收口）。修掉写坏的 pybind11 脚手架（原调用不存在的 `api::quick::*` 与 `termchart::version`），改接真实 API `api::render_plot/render_scatter/render_bar`（返回字符串、不写 stdout）+ `TERMCHART_VERSION_STRING`；`import termchart` 下 plot/scatter/bar/version 四入口验证可用，返回真实 ANSI 真彩图；pyproject.toml 走 scikit-build-core | 21 |
+| 2026-10-20 | **工程卫生补齐**（c190fa2，handoff ④④ 收口）。新增 `bench/bench_render`（`app::render_once` 在 80×24/120×40/200×60 的耗时）与 `bench/bench_svg_backend`（Scene→SVG 在 60/240/480 段），均 `--quick` 进 ctest 冒烟；新增 release.yml / docs.yml 两个 GitHub 工作流 | 0–8 |
+| 2026-10-20 | **3D 图表落地**（545d142 + c2bc7fa，handoff ④P1 收口）。新模块 `math3d`（L3，header-only：vec3 / mat4 行主序 / camera 轨道相机+透视投影+视锥裁剪，深度只供着色、刻意不另造 z-buffer）与 `chart3d`（L12，header-only：`scatter3d`/`surface3d` 产出 `scene::Scene`，复用 render_scene 终端管线与超采样位图）；示例 `72_3d`（马鞍面线框 + 散点叠绘）。层表登记 `math3d=3`/`chart3d=12`、header_only.txt 登记 6 头；单测覆盖矩阵乘法/平移缩放旋转/投影到画布中心/相机后方剔除。**已知边界**：曲面只到线框档，无实体填充/遮挡排序/轨道交互（投影缝已于 10-21 多态化，见上） | 8 |
+| 2026-10-19 | **image 解码扩容 + 自主 TTF 解析**（643f1e4 / e22bf8c / 454e172）。BMP 解码器原生零依赖落地（1/4/8 调色板、24/32/16-BITFIELDS、bottom-up/top-down、行 4 字节对齐；RLE4/RLE8、OS/2 12 字节旧头、尺寸/掩码越界显式拒绝）接入 `decoder.cpp` 分发；vendored `stb_image`（`third_party/stb/`，CMake 可选、默认 OFF）接入 JPEG/GIF/WebP，配套 `examples/71_fetch_stb` 用自带 network 后端拉取 STB 头（`--fetch` 才联网）；**自主 TTF 解析** `image/ttf_font`（sfnt 目录 / cmap format 4+12 / glyf 简单+复合轮廓 / loca 短长 / hmtx + 二次贝塞尔自适应展平→扫描线非零环绕→4×4 超采样 + glyph cache；CFF/OTTO 显式 Unsupported）。验证（454e172 轮）：doctest 1036 用例 194158 断言零回归、ctest 74/74、护栏四件套过、349 头独立编译 | 5、16 |
+| 2026-10-19 | **network 模块 + widget 控件三件 + dsl/JSON**（e8cef17 / 0c2808f / dc205d1）。`network`（L7）：TCP socket + HTTP/1.1 客户端（Uri 解析、chunked、HEAD/204-304 规则）+ TLS 注册表 + SChannel 后端（fail-loud，不静默降级）；`graph/route` 修 `bfs_around` 重复展开与绕行预算收口；dsl 增 JSON 解析；widget 即时控件三件（dropdown 键盘导航 / 文本框码点编辑 / radio 组），延续无状态即时模型 | 7、13、17、18 |
+| 2026-10-18 | **真地图 + 数据处理层 + PDF 导出**（bc8f005，三项此前的真实缺口同时收口）。`util/geo/geojson` 解析 + `chart/geo` 真地图图种（GeoJSON 投影，示例 67/68/69）；`util/data` 聚合与重采样（数据处理层从零到有）；`backend/vector/pdf_backend`（PDF 导出从零到有，示例 `70_export_pdf`）；顺带修路由缺陷与单头拼接 | 1、5、8、13、16 |
 | TBD | 初稿建立 | 全部 |
 | 2026-10-17 | **ChartWidget 窄窗适配 + demo 观测者效应修复**（用户实机截图驱动）。①**X 轴标签抽稀**：`build_base_scene` 按可用槽宽算步长 `lstep=ceil(44/slot)`，窄时隔 lstep 个画一个（保留首末），消除标签重叠成乱码块；②**图例窄窗隐藏**：plot 宽 <150px 不画图例；③**掉帧自诊断默认静默**：`paint_all>33ms` 告警原每掉帧 `fprintf` 到控制台，而往 PowerShell 刷屏比画图还慢 → 观测者效应越刷越卡，改仅 `--profile` 时打印；④**Win32 最小窗口尺寸**：`WM_GETMINMAXINFO` 设 `ptMinTrackSize=320×240`。**验证**：doctest 953/192680 绿、gui 30/30、`chart_demo --smoke` 默认静默 exit 0、零告警 | 8 |
 | 2026-10-17 | **Win32 上屏"拉伸旧图"消灭 resize 黑洞**。`Win32Backend` 增 `last_frame_`（上一帧）+ `canvas_fresh_` 标志：`resize_to` 在画布为已渲染帧时存旧图源并标记非新鲜；`present` 渲染完置新鲜；`blit`(WM_PAINT) 新鲜则画布 1:1 上屏，**否则把上一帧 `StretchDIBits` 拉伸铺满新客户区**（硬件级微秒拷贝，消除拖拽/最大化时暴露区涂黑与残影，画面死咬鼠标边缘）。平滑"对焦"由 ChartWidget 指数趋近动画承担，故不做交叉淡入/防抖（功能重叠、且动画已无跳变）。仅改 Win32 插件，核心/ChartWidget 零侵入。**验证**：doctest 953/192680 绿、`chart_demo --smoke` exit 0、零告警；拉伸路径需真机窗口观测（无头 smoke 只覆盖 1:1 新鲜路径） | 8 |
@@ -65,8 +74,11 @@
 
 ## 一、项目现状
 
-**一句话**（2026-10-13 重写，覆盖 2026-10-11 的旧口径）：规格完备；**L0–L21 全部 22 个模块都有真实实现**
-——阶段 5–7 已把曾经的零代码空洞 `dsl` / `widget` / `plugin` / `app` 全部填上（实测 333 头 / 282 实现）。
+**一句话**（2026-10-21 复核，覆盖 2026-10-13 的旧口径）：规格完备；**L0–L22 全部 25 个模块都有真实实现**
+——阶段 5–7 已把曾经的零代码空洞 `dsl` / `widget` / `plugin` / `app` 全部填上；10-18 之后又新增
+`math3d`(L3) / `chart3d`(L12) / `network`(L7) 三个模块（实测 **357 头 / 304 实现**）。
+3D 散点/曲面、PDF 导出、数据处理层（聚合/重采样）、BMP/JPEG/GIF/WebP 解码、自主 TTF 解析、
+Python 绑定均已落地；剩余缺口见 `docs/reference/backlog.md`。
 阶段 4 图可视化已接通：`graph` 根 + 布局（网格/分层/根树/力导向/**径向/圆周/metro/cluster/kamada_kawai**）
 + 路由（直线/正交/**样条/弧线/捆绑/障碍避让**）+ 形状八种 + 21 个图种，示例 13–20 跑通。
 **跨层缝 R12 已收口**：`canvas/scene_renderer.cpp` 描边走 braille 2×4、填充走 halfblock 1×2，

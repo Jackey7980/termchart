@@ -29,7 +29,9 @@ public:
 // 串行化请求为线上字节：请求行 + Host + 调用方头 + Connection: close
 // （+ 非 GET/HEAD 且带体时的 Content-Length）+ 空行 + 体。
 // 调用方 headers 里的 Host / Connection 被忽略（库统一给，避免分叉）。
-[[nodiscard]] std::string serialize_request(const Request& request) noexcept;
+// 安全：调用方头与 path 里出现 CR/LF/NUL 等控制字符 → InvalidArgument
+// （防请求行/头注入，即请求走私类攻击的客户端侧源头）。
+[[nodiscard]] Result<std::string> serialize_request(const Request& request) noexcept;
 
 // 解析**完整**响应字节（状态行 + 头 + 空行 + 完整响应体）。
 // 失败：ParseError（结构非法）/ OutOfRange（体超 max_body_bytes）。

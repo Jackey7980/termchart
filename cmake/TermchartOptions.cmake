@@ -24,6 +24,14 @@ option(TERMCHART_ENABLE_FUZZING "构建 fuzz 目标（需 clang 或 libFuzzer）
 # user32/gdi32，违背核心"零强制依赖、header-only"，故独立插件、仅 Windows、默认不编。
 option(TERMCHART_BUILD_GUI_WIN32 "构建原生 Win32 GUI 后端插件（可选，仅 Windows；默认关）" OFF)
 
+# 原生 Qt GUI 后端插件（可选，全平台；默认关）。显式开启但找不到 Qt5/Qt6
+# Widgets 时**配置期报错**（fail-loud，不静默跳过）。
+option(TERMCHART_BUILD_GUI_QT "构建原生 Qt GUI 后端插件（可选，需 Qt5/Qt6 Widgets；默认关）" OFF)
+
+# 原生 Tk GUI 后端插件（可选，全平台；默认关）。显式开启但找不到 Tcl/Tk 开发库
+# 时**配置期报错**（fail-loud，不静默跳过）。
+option(TERMCHART_BUILD_GUI_TK "构建原生 Tk GUI 后端插件（可选，需 Tcl/Tk 开发库；默认关）" OFF)
+
 # ── 模块开关：关掉即裁掉对应 src 目录 ─────────────────────────────────────
 #   上层模块的缺失不影响下层编译（分层规则保证单向依赖）。
 set(TERMCHART_MODULES

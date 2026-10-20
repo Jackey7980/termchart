@@ -49,6 +49,7 @@ add_executable(termchart_tests
     unit/gui/test_gui_font.cpp
     unit/gui/test_gui_scene_renderer.cpp
     unit/gui/test_gui_stack.cpp
+    unit/gui/test_gui_metrics.cpp
     unit/gui/test_gui_hover.cpp
 
     # ── canvas ──
