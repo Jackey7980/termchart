@@ -2,19 +2,24 @@
 
 ## 分层
 
-模块 = `include/termchart/` 下的一级目录，赋予层号 L0–L21（机器强制，规则唯一真源在
-`cmake/TermchartModules.cmake`，由 `tools/check_layers.py` 执行）：
+模块 = `include/termchart/` 下的一级目录，赋予层号 L0–L22（机器强制，规则唯一真源在
+`cmake/TermchartModules.cmake`，由 `tools/check_layers.py` 执行）。同层模块互不依赖：
 
 ```
-core(0) util(1) color(2) scale(3) scene(4) image(5) raster(6) term(7) document(8)
-protocol(9) canvas(10) layout(11) chart(12) graph(13) render(14) interaction(15)
-backend(16) dsl(17) widget(18) plugin(19) app(20) api(21)
+core(0) util(1) math(1) color(2) io(2) scale(3) math3d(3) math4d(3) scene(4)
+data(4) image(5) raster(6) term(7) network(7) document(8) protocol(9) canvas(10)
+layout(11) chart(12) chart3d(12) chart4d(12) graph(13) render(14) interaction(15)
+backend(16) dsl(17) widget(18) plugin(19) app(20) api(21) gui(22)
 ```
+
+规格外扩展（10-19 起）：`math3d`/`math4d`/`chart3d`/`chart4d`（高维图表）、
+`network`（TCP/HTTP/TLS）、`math`/`io`/`data`（数据管线，见
+[guide/data_pipeline.md](guide/data_pipeline.md)）。
 
 - 层号低 → 只能被高层依赖；`api`（L21）是唯一能碰所有模块的顶层。
 - 例外：`detail/` 层号 -1（任何层可 include）；顶层 `version/export/deprecate/fwd` 视为 core。
-- 关键禁止边：`backend > chart`、`chart > render`、`render > interaction`（细节见
-  [design/layering.md](design/layering.md) 与 [design/modularity.md](design/modularity.md)）。
+- 关键禁止边：`backend > chart`、`chart > render`、`render > interaction`、`gui > canvas/term/app`
+  （细节见 [design/layering.md](design/layering.md) 与 [design/modularity.md](design/modularity.md)）。
 
 ## 中枢与三条渲染路径
 

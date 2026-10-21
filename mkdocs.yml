@@ -28,6 +28,9 @@ nav:
       - 性能: guide/performance.md
       - 图像: guide/images.md
       - 背景数据: guide/background_data.md
+      - 数据管线: guide/data_pipeline.md
+      - 3D 与 4D: guide/three_d.md
+      - 网络: guide/network.md
       - 扩展点:
           - 自定义图表: guide/custom_chart.md
           - 自定义后端: guide/custom_backend.md

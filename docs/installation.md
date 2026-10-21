@@ -37,7 +37,7 @@ cmake -DTERMCHART_MINIMAL_BUILD=ON
 ### 方式二：单头使用
 
 `single_include/` 是聚合产物（由脚本生成，禁手改），用法与代价见
-[guide/single_header.md](../guide/single_header.md)。
+[guide/single_header.md](guide/single_header.md)。
 
 ### 方式三：CMake 子目录
 

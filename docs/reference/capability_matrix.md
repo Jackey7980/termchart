@@ -8,9 +8,9 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径（2026-10-20 实测）：`include/termchart/**/*.hpp`（359 个）、`src/**/*.cpp`（282 个）、
-`examples/`（63 个源）、`tests/`（132 个源）、golden 14 份。
-`ctest` **74 项**（5 套件 + 63 示例 + 3 bench 冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
+数字口径（2026-10-22 实测）：`include/termchart/**/*.hpp`（372 个）、`src/**/*.cpp`（309 个）、
+`examples/`（76 个源）、`tests/`（157 个源）、golden 14 份。
+`ctest` **80 项**（5 套件 + 76 示例 + 3 bench 冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
 doctest：**termchart_tests 单套件 1053 用例 / 194246 断言**；含 golden/render/core/util 共 5 套件。
 改动后请重跑下列命令再更新本文件。
 
@@ -38,11 +38,17 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `canvas` | 10 | 可用 | 画布、图元、`Scene → Canvas` 桥接、**扫描线填充**（横向精确覆盖 + 纵向超采样）、**路径**（曲线自适应细分、四段贝塞尔圆）、**图层合成**（Overlay/Replace/Tint + 最小重绘包围盒）、**2D 仿射变换**（含字符宽高比补偿）、**裁剪**（矩形精确 / 凸多边形 / 非凸明确不支持多边形裁剪） | `ImageOp` 仍是阴影块占位（Scene 无像素源） |
 | `scale` | 3 | 可用 | 线性/对数/nice/刻度/自动域 + **注册表** | 规格的 `time` `category` `band` 未实现 |
 | `math3d` | 3 | **新增* | 3D 数学原语（header-only，L3 与 `scale` 同层）：`vec3`（向量运算）、`mat4`（行主序，矩阵×列向量）、`camera`（轨道相机 + 透视投影到画布坐标，返回深度供着色） | — |
+| `math4d` | 3 | **新增** | 4D 数学原语（header-only，L3）：`vec4`；`mat5`（5×5 齐次，矩阵×列向量）；**4D 的 6 个旋转平面** XY/XZ/XW/YZ/YW/ZW（正角把第 i 轴送向第 j 轴）；4D 平移/缩放；`camera4`（4D→3D 透视投影——相机架在第 4 轴 +W，`scale=focal/w_view` 即“除以 W”的齐次除法，相机处/后方/近裁剪内不可见，`focal_from_fov_deg` 与 3D 同式） | — |
+| `math` | 1 | **新增（数据管线）** | header-only 数值内核：`stats`（mean/median/variance/stddev/covariance/pearson，Kahan 补偿 + Welford 单遍，NaN 跳过）、`interpolate`（`linear_at` + `CubicSpline` 自然三次样条，Thomas 三对角 O(N)，越界钳位不外推）、`fft`（radix-2 Cooley-Tukey 原地，逆变换缩放 1/N 往返恒等，非 2 幂 fail-loud）、`linalg`（稠密 n×n 行主序 multiply/inverse/solve/determinant，部分选主元，span+double 无模板）、`special`（gamma/ln_gamma/erf/erfc 统一 NaN 边界口径 + Bessel J0/J1/Jn 级数+Hankel 渐近） | PCHIP 单调样条未做 |
+| `io` | 2 | **新增（数据管线）** | `csv`（零拷贝 `string_view` 状态机 + `from_chars` 数值列；delimiter 自动嗅探/BOM/注释行/CRLF/引号转义；空与 NA 族 → NaN，非数字字段带行列诊断报错）、`json`（完整解析器——dsl/json 核心 git mv 下沉，`dsl/json.hpp` 留 using 别名 shim）、`stream`（`LineReader` 64KB 分块 + 超长行 compact/翻倍，GB 级不 OOM） | 与 `dsl/csv_sniff` 两份 CSV 解析并存（后者输出 `document::TableModel` L8，层号硬墙无法下沉；远期合并见 backlog） |
+| `data` | 4 | **新增（数据管线）** | `fill_missing`（ForwardFill/LinearInterp/Drop 三策略）、`rolling`（mean/sum/stddev/min/max/median + min_periods + 右对齐/居中；**`ema` O(N) 递推**，alpha=2/(window+1)）、`ohlc`（时间轴等宽分桶 → open/high/low/close，桶边界锚定首样本）、`resample`（显式桶边界聚合）、`aggregate`（histogram/quartiles/group_reduce，内部统计已收编 `math::stats`）；示例 `76_csv_to_chart`（CSV→LinearInterp→EMA→braille 双曲线→统计行，确定性） | 纯 SMA 的 O(N) 滑动求和化未做 |
 | `image` | 5 | 可用 | `Bitmap`（RGBA，含 `fill_rect`/`blit_over`/`scaled_to`/通道转换等合成原语）、`FloatField`（标量场）、`convert`（位图 ↔ 标量场：Rec.601 亮度、阈值双色）、`encode_png`（自包含 PNG 编码）、**`png` 解码**（自带完整 inflate：stored/固定/动态 Huffman + 五种滤波 + 颜色类型 0/2/3/4/6 + 1/2/4/8/16 位深 + tRNS）、`bmp` 解码（原生零依赖：1/4/8/24/32 位深、bottom-up/top-down、BITFIELDS）、**`decoder`**（按魔数识别格式并分发；PNG/BMP 原生，JPEG/GIF/WebP 经 vendored `stb_image`（可选，默认 OFF、缺失即 `Unsupported`）） | 不支持 Adam7 隔行（报 `Unsupported`）；16 位取样到高字节；**JPEG/GIF/WebP 需 `TERMCHART_ENABLE_STB_IMAGE=ON` 才解码，否则 `Unsupported`** |
 | `raster` | 6 | 可用 | 盲文/半块/象限/竖条/密度字符 + 注册表 + 自动选择 | `sextant`（U+1FBxx 新区块，终端支持度低）显式推迟 |
 | `layout` | 11 | 可用 | `PlotArea`、轴/网格/图例/标题/标签、**`facet`（纯几何矩形划分，不认识 chart）**、**`auto_margin`（由标签宽度/标题/图例反推四边留白）**、**`label_avoid`（通用避让，graph 侧转引同一实现）**、**`annotation`（参考线/区域高亮/标注，一律裁剪在绘图区内）** | — （规格 11 个文件全部落地） |
 | `chart` | 12 | **可用（9 子目录规格齐备，68 文件）** | 基类 + 系列 + 注册表 + `context`（绘制开关）+ `dataset`；**cartesian 23/23**（在既有 7 个之上补齐 bubble/candlestick/boxplot/violin/contour/errorbar/waterfall/gantt/dumbbell/ridgeline/parallel/mosaic/qq/bullet/streamgraph）；**polar 8/8**（pie/donut/rose/radar/gauge/polar_bar/polar_line/polar_heat）；**statistical 11/11**（distribution/ecdf/corr/pca/regression/roc/forest/survival/autocorr/seasonal/bland_altman）；**hierarchical 6+1**（treemap/sunburst/dendrogram/pack/icicle/tree_view + node 辅助）；**financial 7/7**（depth/volume/renko/kagi/point_figure/yield_curve/drawdown）；**flow 2/2**（funnel/stream）；**geo 4/4**（choropleth/tile_grid/hexbin/dot_density）；**text 4/4**（wordcloud/tag_cloud/table/progress）；**indicator 5/5**（gauge_kpi/progress_ring/star_rating/status_light/thermometer）。测试：九个子目录测试文件全部接入（ctest 全绿，739 用例 / 190594 断言） | 各图种多系列/堆叠变体未做 |
 | `chart3d` | 12 | **新增** | 3D 图表（header-only，L12 与 `chart` 同层）：`scatter3d`（点云投影成 `scene::Scene`）、`surface3d`（线框曲面）；**复用 `render_scene → Canvas → Renderer` 终端管线**，深度→颜色着色，不另造 z-buffer | — |
+| `chart4d` | 12 | **新增** | 4D 图表（header-only，L12）：`Projector4D`（**两阶段** Vec4→(4D 旋转+透视除 W)→Vec3→内层 `IProjector`（通常 `Projector3D`）→画布；另覆写 Vec3 入口转发内层，故也能插进 scatter3d/surface3d）、`wire4d`（线框/点云发射：边按两端平均深度着色 + 顶点方块，两端任一不可见整段丢弃）；`chart3d` 已抽 `IProjector` 投影缝（可选尾参 `const IProjector*`，nullptr = 按 opts 现算，既有调用零改动）。示例 `74_hypercube_4d`（16 顶点/32 边超立方体，XW+YZ 自转，braille + HeadlessSession 差分重绘 60 帧）、`75_gui_cjk_4d`（+TTF 中文标题 + SceneRenderer 3× 超采样 → PNG，两次运行 SHA256 一致）、Win32 `hypercube_4d_demo`（拖拽/滚轮/暂停交互 + `--png` 无头） | 只到线框档：无实体填充/遮挡排序 |
+| `chart4d` | 12 | **新增** | 4D 图表（header-only，L12）：`Projector4D`（**两阶段** Vec4→(4D 旋转+透视除 W)→Vec3→内层 `IProjector`（通常 `Projector3D`）→画布；另覆写 Vec3 入口转发内层，故也能插进 scatter3d/surface3d）、`wire4d`（线框/点云发射：边按两端平均深度着色 + 顶点方块，两端任一不可见整段丢弃）；`chart3d` 已抽 `IProjector` 投影缝（可选尾参 `const IProjector*`，nullptr = 按 opts 现算，既有调用零改动）。示例 `74_hypercube_4d`（16 顶点/32 边超立方体，XW+YZ 自转，braille + HeadlessSession 差分重绘 60 帧）、`75_gui_cjk_4d`（+TTF 中文标题 + SceneRenderer 3× 超采样 → PNG，两次运行 SHA256 一致）、Win32 `hypercube_4d_demo`（拖拽/滚轮/暂停交互 + `--png` 无头） | 只到线框档：无实体填充/遮挡排序 |
 | `document` | 8 | 可用 | Document/Block/Span/TableModel IR | — |
 | `graph` | 13 | 部分 | 节点/边/元数据/占用栅格/箭头/端口/标签避让/交叉计数（判定复用 `util/geom`）；布局（网格/分层/根树/力导向/**径向/圆周**——径向按子树扇区均分、半径按层递增，圆周按外接圆判据推半径保证不重叠；**`metro` 地铁 45°（链分解 + 之字 + 锚点候选对栅格路由）**/ **`cluster` 聚类**）；路由（直线/正交/**样条 `spline`**/**弧线 `arc`**/**`bundling` 边捆绑**/**`obstacle` 障碍避让**）；**形状八种**；图种（流程图/状态机图/思维导图/**组织架构图**/节点-连线/**`dag`（含环检测）**/**`dependency`**） | `sugiyama`（分层已覆盖其分层部分）`kamada_kawai`；`18_uml_sequence` 示例（等序列渲染） |
 | `interaction` | 15 | **可用** | 输入解析（ANSI/UTF-8/SGR 鼠标流式，未完成序列有 **256 KiB 缓冲上限**）、事件、命中测试、分发、焦点、**视口缩放/平移**（`Viewport`：锚点缩放 + 双向夹取；`PanGesture`：纯几何拖拽状态机）、**悬停读数层 `crosshair`**（横/纵准线 + 轴侧读数，默认只改样式保留数据字符）、**浮层 `tooltip`**（边框 + 自动翻边 + 宽字符按 2 列算 + 超长截断）；后两者的核心不变量都是**`clear()` 逐格逐属性精确还原**（覆盖层不得永久污染画布）；**`highlight`**（高亮放大：锚点居中、跨度 /magnify）、**`select`**（框选状态机 begin/update/end/cancel，矩形归一化 + payloads_inside 保序）、**`brush`**（半径吸附刷选，首次顺序去重）、**`legend_toggle`**（id→可见性，payload 0 永不生效，click_at 复用 topmost_hit）、**`immediate`**（Event 流→Viewport/BoxSelect 的路由粘合层）。各配单测；`examples/30` 锁图例语义 | 序列图/表格的交互绑定（等渲染侧落地） |
@@ -94,6 +100,9 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `70_export_pdf` | 文件 | `backend`（PDF 后端） | PDF 矢量导出（与 SVG/HTML/JSON 同构，走 Document IR） |
 | `71_fetch_stb` | 网络 | `network`（HTTP/1.1 + schannel） | 用库自带 net 后端拉取 vendored stb 头到 `third_party/stb/`；默认离线，`--fetch` 才联网 |
 | `72_3d` | 终端 | `chart3d` → `scene` → `render_scene` | 3D 曲面/散点：z=f(x,y) 投影成 `Scene`，走 braille/halfblock 出图，深度着色 |
+| `74_hypercube_4d` | 终端 | `math4d` + `chart4d` → `scene` → `render_scene` + `app::HeadlessSession` | 4D 超立方体：16 顶点/32 边，XW+YZ 两平面自转，两阶段投影，差分重绘 60 帧（帧角=帧号×定步长；stdout tty 门控节流） |
+| `75_gui_cjk_4d` | PNG | `chart4d` + `gui/font`（TTF）+ `gui::SceneRenderer` | 4D 缝合怪：超立方体固定帧角 + 中文标题/注脚（系统 TTF）+ 3× 超采样 → PNG；两次运行 SHA256 一致；标题带 ink 656px（真字形量级） |
+| `76_csv_to_chart` | 终端 | `io/csv` + `data` + `math/stats` + braille 光栅 | 数据管线端到端：CSV（含 NA）→ LinearInterp → EMA(5) → 双曲线 + 尾部统计行（mean/pearson），确定性 |
 
 **重要澄清（避免再踩 R12 的坑）**：`chart`/`graph`/`layout` 这些"高级 API"示例
 **本来就直连 `canvas.draw_line`/`draw_text` + 显式字符**，从不经过 `scene::Scene`，
@@ -119,11 +128,11 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 **359 头**，`src/` **282 个 `.cpp`**。
-  规格具名头文件约 336–338 个，**本会话新增 `math3d`（3 头）+ `chart3d`（2 头）后已超规格
-  （359 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
-  （此前为零代码），`termchart_gui/` 属于 GUI 平行栈、刻意未开工。
-- `examples/`：规格 60 个，实存 **63 个源**（规格编号示例 01–54 全部齐备；
+- 按 `结构.md` 的具名文件表核对：`include/` 现有 **372 头**，`src/` **309 个 `.cpp`**。
+  规格具名头文件约 336–338 个，**经 `math3d`/`chart3d`/`math4d`/`chart4d`/`network`/`math`/`io`/`data`
+  八轮扩展后已远超规格（372 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
+  （此前为零代码），`termchart_gui/` 属于 GUI 平行栈、已开工（见第六节）。
+- `examples/`：规格 60 个，实存 **76 个源**（规格编号示例 01–54 全部齐备；
   `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`、`07_fractal`、
   `08_fractal_levels`、`40_advanced_master`、`71_fetch_stb`、`72_3d` 等为规格外补充，
   部分来自并行会话）。

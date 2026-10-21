@@ -2,12 +2,12 @@
 
 ## 决策
 
-模块 = `include/termchart/` 下的一级目录，层号 L0–L21 固定写在
+模块 = `include/termchart/` 下的一级目录，层号 L0–L22（同层模块互不依赖）固定写在
 `cmake/TermchartModules.cmake` 的三张表里：
 
 - `TERMCHART_MODULE_LAYERS`：每个模块的层号；
 - `TERMCHART_NARROW_EDGES`：收窄边（模块间默认关闭、白名单文件级放行）;
-- `TERMCHART_FORBIDDEN_EDGES`：禁止边。
+- `TERMCHART_FORBIDDEN_EDGES`：禁止边（现含 `gui > canvas/term/app`：GUI 平行栈不得碰终端呈现）。
 
 由 `tools/check_layers.py` 执行，判定顺序固定：**禁止边 → 收窄边 → 层号**。
 `cmake --build --preset <预设> --target check_layers` 一键校验。
