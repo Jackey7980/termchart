@@ -34,7 +34,16 @@ PLATFORM_SUFFIXES = ("_posix", "_win32", "_darwin", "_linux", "_macos")
 # 同类——把 HTTP 线格式解析做成纯函数 TU，测试直接 include 私有头咬分支；
 # network/dns_cache 同理：进程级 TTL 缓存是对 connect 路径的透明优化，
 # 不属于公开 API 面（公开面只有 socket.hpp 的选项与行为）。
-SRC_INTERNAL_CXX = ("network/http_parse", "network/dns_cache")
+# network/proxy_* 四件套：代理探测链与隧道协议（私有头 proxy_internal.hpp
+# 声明，公开面只有 http.hpp 的 HttpOptions::proxy）。
+SRC_INTERNAL_CXX = (
+    "network/http_parse",
+    "network/dns_cache",
+    "network/proxy_detect",
+    "network/proxy_tunnel",
+    "network/proxy_sys_win32",
+    "network/proxy_sys_posix",
+)
 
 
 def read_header_only() -> set[str]:

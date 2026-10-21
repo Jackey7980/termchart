@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "src/network/http_parse.hpp"
+#include "src/network/proxy_internal.hpp"
 #include "termchart/network/tls/registry.hpp"
+#include "termchart/util/logging.hpp"
 
 namespace termchart::network::http {
 namespace {
@@ -222,10 +224,56 @@ Result<Connection> open_connection(const Uri& uri, const HttpOptions& options) n
     if (port == 0) {
         return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
     }
-    Result<TcpSocket> socket = TcpSocket::connect(uri.host, port, options.socket);
+
+    // 代理解析：显式 > 环境变量 > 系统代理 > 直连。显式字符串的格式错误在此
+    // fail-loud（InvalidArgument/Unsupported），不进入探测链。
+    proxy::Config explicit_cfg;
+    if (!options.proxy.empty()) {
+        const Result<proxy::Config> parsed = proxy::parse(options.proxy);
+        if (!parsed.has_value()) {
+            return Unexpected<ErrorCode>(parsed.error());
+        }
+        explicit_cfg = *parsed;
+    }
+    const proxy::Config cfg = proxy::resolve(uri.scheme, uri.host, explicit_cfg,
+                                             proxy::read_env(),
+                                             proxy::read_system(uri.scheme, uri.host));
+
+    // 建连：代理模式连代理端点，直连模式连目标。
+    const auto connect_via = [&options, &uri, port](const proxy::Config& c) {
+        if (c.kind == proxy::Kind::None) {
+            return TcpSocket::connect(uri.host, port, options.socket);
+        }
+        return TcpSocket::connect(c.host, c.port, options.socket);
+    };
+    Result<TcpSocket> socket = connect_via(cfg);
+    if (!socket.has_value() && cfg.from_detect) {
+        // 分级降级：探测来的代理不可达 → warn + 回落直连。
+        TERMCHART_LOG_WARN("network/proxy: 探测到的代理不可达，回落直连");
+        socket = connect_via(proxy::Config{});
+    }
     if (!socket.has_value()) {
         return Unexpected<ErrorCode>(socket.error());
     }
+
+    // 按需建隧道。建在 socket 上、对上层透明：TLS 握手与 HTTP 原样跑，
+    // SNI/证书校验仍是最终目标 host。
+    if (cfg.kind != proxy::Kind::None) {
+        const Status tunnel = cfg.kind == proxy::Kind::HttpConnect
+                                  ? proxy::http_connect(*socket, uri.host, port, cfg)
+                                  : proxy::socks5_connect(*socket, uri.host, port, cfg);
+        if (tunnel != ErrorCode::Ok) {
+            if (!cfg.from_detect) {
+                return Unexpected<ErrorCode>(tunnel);  // 显式代理：fail-loud
+            }
+            TERMCHART_LOG_WARN("network/proxy: 探测到的代理建隧道失败，回落直连");
+            socket = connect_via(proxy::Config{});
+            if (!socket.has_value()) {
+                return Unexpected<ErrorCode>(socket.error());
+            }
+        }
+    }
+
     std::unique_ptr<tls::TlsBackend> tls;
     if (uri.scheme == "https") {
         Result<std::unique_ptr<tls::TlsBackend>> backend =

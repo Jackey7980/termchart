@@ -52,8 +52,14 @@ set_target_properties(termchart PROPERTIES
 # network/socket_win32.cpp 的 Winsock2 符号与 network/tls/schannel.cpp 的
 # SChannel/证书 API 来自操作系统库——ws2_32 / schannel / secur32 / crypt32
 # 是平台系统库而非第三方依赖，"零强制依赖"口径不变。
+# proxy_sys_win32.cpp 读注册表用 advapi32（同样系统库）。
 if(WIN32)
-    target_link_libraries(termchart PRIVATE ws2_32 schannel secur32 crypt32)
+    target_link_libraries(termchart PRIVATE ws2_32 schannel secur32 crypt32 advapi32)
+endif()
+
+# proxy_sys_posix.cpp 在 macOS 上读 SystemConfiguration（系统框架，非第三方）。
+if(APPLE)
+    target_link_libraries(termchart PRIVATE "-framework SystemConfiguration")
 endif()
 
 if(NOT TERMCHART_BUILD_SHARED)

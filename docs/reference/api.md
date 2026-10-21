@@ -1496,14 +1496,21 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 >
 > 支持范围（**明确列出，避免"以为支持"**）：
 > ✅ http:// 明文与 https://（TLS 走 network/tls 注册表的后端，fail-loud）；
+> ✅ 代理：显式 `HttpOptions::proxy`（"http://h:p" / "socks5://h:p" / 裸 "h:p"）
+> 或**自动探测**（环境变量 HTTPS_PROXY/HTTP_PROXY/ALL_PROXY + NO_PROXY，
+> Windows 注册表系统代理 / macOS SystemConfiguration；都没有则直连）；
 > ✅ 请求：任意 method、自定义头、请求体（Content-Length 自动补）；
 > ✅ 响应：状态行 + 响应头 + 响应体；体长按 Content-Length / chunked /
 > 读到连接关闭三种规则解析（HEAD 与 204/304 按规范不收体）；
 > ✅ 重定向：301/302/303/307/308 跟 Location（默认上限 5 次；303 降为 GET）；
 > ✅ 每请求独立连接，发 `Connection: close`（库内不做连接池——图表库的
 > 拉取场景一次一个 URL，池化是纯负担）；
-> ⛔ 不支持：HTTP/2、Cookie 管理、代理、摘要认证、请求体流式分块上传、
+> ⛔ 不支持：HTTP/2、Cookie 管理、摘要认证、请求体流式分块上传、
 > 非 ASCII 头的原始字节透传（按 std::string 收）。
+> 代理语义（分级 fail-loud）：
+> * 显式配了代理却连不上/隧道建不起 → **报错**（不静默回落直连）；
+> * 探测来的代理（环境变量/系统设置）不可用 → warn 后回落直连
+> （代理是可选加速路径，直连是正确默认行为，curl/requests 同款行为）。
 > 错误：连接失败 IoError；TLS 后端缺失/握手失败 Unsupported / IoError；
 > 响应超限 OutOfRange；协议解析失败 ParseError。
 
