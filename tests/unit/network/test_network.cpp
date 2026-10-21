@@ -16,6 +16,7 @@
 #include "termchart/network/socket.hpp"
 #include "termchart/network/tls/backend.hpp"
 #include "termchart/network/tls/registry.hpp"
+#include "termchart/network/tls/schannel.hpp"
 
 namespace {
 
@@ -112,6 +113,22 @@ TEST_CASE("network/tls: 未登记名字返回 nullptr（fail-loud 源头）") {
     const tls::TlsRegistry& registry = tls::TlsRegistry::instance();
     CHECK_FALSE(registry.supports("definitely-not-registered"));
     CHECK(registry.create("definitely-not-registered") == nullptr);
+}
+
+// 回归：SChannel 客户端凭据（2026-10-21 修复的 MinGW dwVersion 坑）。
+//
+// 根因：MinGW-w64 的 schannel.h 结构体已是 V4，但 SCH_CRED_VERSION 宏停留在
+// 0x2；SChannel 对 dwVersion 精确匹配，传 2 一律 SEC_E_UNKNOWN_CREDENTIALS，
+// 所有 https 握手失败。曾因现象被误判为"沙箱策略限制"。
+// 本用例不联网（AcquireCredentialsHandle 只建本地凭据句柄），Windows CI
+// （msys2 MinGW，同一编译器家族）会真实验证修复；POSIX 上 schannel 为 no-op
+// 编译，credentials_available 恒 false。
+TEST_CASE("network/tls: schannel 凭据可用（dwVersion 回归，无外网依赖）") {
+#if defined(_WIN32)
+    CHECK(tls::schannel::credentials_available());
+#else
+    CHECK_FALSE(tls::schannel::credentials_available());
+#endif
 }
 
 }  // namespace

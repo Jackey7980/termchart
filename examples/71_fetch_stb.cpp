@@ -5,9 +5,12 @@
 // （third_party/stb/）。零强制依赖：默认只打印用法，**不联网**；带 --fetch 才
 // 真正下载并落盘。
 //
-// 多镜像：raw.githubusercontent 在本机环境 TLS 握手偶发失败，故每个文件都给
-// 一组候选 URL，取第一个返回 200 的；这一层容错是 net 后端的"调用方责任"，
-// 库本身只对"已登记但握手不过"的 TLS 后端 fail-loud，不做静默降级。
+// 多镜像：两个候选域名（jsdelivr / raw.githubusercontent）在部分网络环境
+// （如中国大陆的 SNI 阻断）下 TLS 会被 RST——那是网络层的事，不是库缺陷
+// （2026-10-21 实证：同环境 curl/PowerShell 同样失败，而 example.com 正常）。
+// 故每个文件给一组候选 URL，取第一个返回 200 的；这一层容错是 net 后端的
+// "调用方责任"，库本身只对"已登记但握手不过"的 TLS 后端 fail-loud，
+// 不做静默降级。受阻环境可自行换可达镜像或本地文件。
 //
 // 运行（从仓库根目录，保证相对路径 third_party/stb/ 可达）：
 //   ./build/<preset>/examples/71_fetch_stb            # 离线，只打印用法

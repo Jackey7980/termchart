@@ -1,4 +1,4 @@
 fetch_stb: 用 termchart network 后端拉取 vendored STB（image 扩容用）。
 用法:
-  C:\Users\����\Desktop\������\��Ʒ\termchart\build\ninja\examples\71_fetch_stb.exe --probe   联网连通性探针（确认 schannel 能否握手外网）
-  C:\Users\����\Desktop\������\��Ʒ\termchart\build\ninja\examples\71_fetch_stb.exe --fetch   真正下载并写盘（需从仓库根目录运行）
+  C:\termchart\build\ninja\examples\71_fetch_stb.exe --probe   联网连通性探针（确认 schannel 能否握手外网）
+  C:\termchart\build\ninja\examples\71_fetch_stb.exe --fetch   真正下载并写盘（需从仓库根目录运行）

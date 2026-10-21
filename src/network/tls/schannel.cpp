@@ -87,6 +87,25 @@ bool send_token(TcpSocket& socket, const SecBuffer& token) noexcept {
     return n.has_value();
 }
 
+// 客户端凭据配置（握手与 credentials_available 自检共用）。
+//
+// dwVersion 必须是 4（SCH_CRED_VERSION 的当前 ABI）——**不能直接用 MinGW-w64
+// 的头宏**：它的 schannel.h 结构体已是 V4（含 dwCredFormat），但宏仍停留在
+// 0x00000002（mingw-w64 头的已知疏漏）。SChannel 对 dwVersion 精确匹配，传 2
+// 会被 AcquireCredentialsHandleW 以 SEC_E_UNKNOWN_CREDENTIALS（0x8009030D）
+// 拒绝——**所有** https 握手失败（2026-10-21 实证：真机同样命中，曾被误判为
+// "沙箱策略限制"而写进头注释）。零初始化保证 dwCredFormat =
+// SCH_CRED_FORMAT_CERT_CONTEXT（0）。
+SCHANNEL_CRED make_cred() noexcept {
+    SCHANNEL_CRED cred{};
+    cred.dwVersion = 0x00000004;
+    cred.grbitEnabledProtocols = kSchannelProtocols;
+    // 手动验证证书：信任判定交给 verify_certificate（链 + 主机名），不用
+    // "握手过了就信"的默认行为。
+    cred.dwFlags = kSchannelCredFlags;
+    return cred;
+}
+
 }  // namespace
 
 class SchannelBackend final : public TlsBackend {
@@ -138,13 +157,8 @@ Status SchannelBackend::handshake(TcpSocket& socket, std::string_view hostname) 
 }
 
 Status SchannelBackend::do_handshake(TcpSocket& socket, const std::wstring& hostname_w) {
-    SCHANNEL_CRED cred{};
-    cred.dwVersion = SCH_CRED_VERSION;
-    cred.grbitEnabledProtocols = kSchannelProtocols;
-    // 手动验证证书：信任判定交给 verify_certificate（链 + 主机名），不用
-    // "握手过了就信"的默认行为。
-    cred.dwFlags = kSchannelCredFlags;
     TimeStamp expiry{};
+    SCHANNEL_CRED cred = make_cred();  // pvAuthData 是非 const void*，须左值
     SECURITY_STATUS st = ::AcquireCredentialsHandleW(
         nullptr, UNISP_NAME_W, SECPKG_CRED_OUTBOUND, nullptr, &cred, nullptr, nullptr,
         &cred_, &expiry);
@@ -472,6 +486,20 @@ void register_backend() noexcept {
     });
 }
 
+bool credentials_available() noexcept {
+    CredHandle handle{};
+    TimeStamp expiry{};
+    SCHANNEL_CRED cred = make_cred();  // pvAuthData 是非 const void*，须左值
+    const SECURITY_STATUS st = ::AcquireCredentialsHandleW(
+        nullptr, UNISP_NAME_W, SECPKG_CRED_OUTBOUND, nullptr, &cred, nullptr,
+        nullptr, &handle, &expiry);
+    if (st == SEC_E_OK) {
+        ::FreeCredentialsHandle(&handle);
+        return true;
+    }
+    return false;
+}
+
 }  // namespace termchart::network::tls::schannel
 
 #else  // !_WIN32
@@ -486,6 +514,8 @@ namespace termchart::network::tls::schannel {
 std::unique_ptr<TlsBackend> create_backend() noexcept { return nullptr; }
 
 void register_backend() noexcept {}
+
+bool credentials_available() noexcept { return false; }
 
 }  // namespace termchart::network::tls::schannel
 
