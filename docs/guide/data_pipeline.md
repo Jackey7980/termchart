@@ -64,10 +64,23 @@ NaN 即缺失，三种策略：`ForwardFill`（前向填充，时间序列）、
 mean/sum/stddev/min/max/median，右对齐或居中；`ema(values, window)` 是指数移动平均
 （O(N) 递推，`alpha = 2/(window+1)`，pandas `ewm(span=window).mean()` 口径）。
 
+`rolling` 的全部统计量均为 **O(N) 滑窗**：mean/sum 用滑动和、stddev 用 Welford 加/减
+（方差钳到非负）、min/max 用单调双端队列、median 用双 multiset（O(N log W)）。NaN 在
+窗口内跳过，非 NaN 计数低于 `min_periods` 时该点输出 NaN。
+
+### 脏标量解析（`data/scalar_parse.hpp`）
+
+"赛博法医"入口：把 `io/csv` 读到的脏字符串尽力解析成 `double`——千分位逗号、货币符号
+（`$`/`¥`/`€`/`£`/`RMB`/`USD`/`CNY` 与中文后缀 `元`）、百分号 `15%→0.15`、会计括号
+`(123.45)→-123.45`、Unicode 负号 `−123`、NA 族（`NA`/`N/A`/`null`/`-` 等 → 缺失）。解析
+不出返回 `NotNumeric`、是缺失记号返回 `Empty`（`value=NaN`），绝不崩。
+
 ### K 线 OHLC（`data/ohlc.hpp`）
 
 时间轴等宽分桶 → `OhlcBar{open, high, low, close, count}`，`chart/cartesian`
-candlestick 的数据入口。约定：timestamps 非降序、桶边界锚定桶内首样本、空桶不产 bar。
+candlestick 的数据入口。返回 `Result<std::vector<OhlcBar>>`：timestamps **必须非降序**，
+违反即 fail-loud 返回 `InvalidArgument`（无序输入会把 K 线切成错乱桶，比报错更糟）；空桶
+不产 bar、NaN 在桶内跳过。
 
 ### 重采样与聚合（`data/resample.hpp` / `data/aggregate.hpp`）
 
@@ -102,7 +115,8 @@ const double r = termchart::math::pearson(xs, ys);       // 相关系数
 
 ## 已知边界（如实登记）
 
-- `data::rolling` 的纯 SMA 仍 O(N·window)（EMA 已 O(N)；滑动求和化见 backlog）；
+- `data::rolling` 全部统计量已 O(N)（运行和 / Welford / 单调队列 / 双 multiset）；median 为
+  O(N log W)，比对朴素 O(N·W·log W) 已优一个 W 因子；
 - `math::interpolate` 无 monotone (PCHIP) 变体（自然样条在噪声数据上轻微过冲）；
 - `io/csv` 与 `dsl/csv_sniff` 两份解析器并存（后者输出 `document::TableModel`，层号 L8
   无法下沉 io，远期合并见 backlog）；
