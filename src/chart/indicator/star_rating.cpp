@@ -42,7 +42,7 @@ void StarRating::draw(DrawContext ctx) {
     // 评分收敛到 [0, max]，非有限按 0；四舍五入到半星。
     double rating = std::isfinite(rating_) ? rating_ : 0.0;
     rating = std::min(static_cast<double>(max_stars), std::max(0.0, rating));
-    const double halves = std::llround(rating * 2.0);
+    const double halves = static_cast<double>(std::llround(rating * 2.0));
     const auto full = static_cast<std::size_t>(halves / 2.0);
     const bool half = (static_cast<long long>(halves) % 2) != 0;
 

@@ -19,9 +19,6 @@
 using namespace termchart::io;
 
 namespace {
-
-bool approx(double a, double b, double eps = 1e-9) { return std::fabs(a - b) < eps; }
-
 }  // namespace
 
 TEST_SUITE("io") {

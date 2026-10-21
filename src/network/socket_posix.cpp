@@ -8,6 +8,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/tcp.h>  // TCP_NODELAY（POSIX 上定义于此，非 <sys/socket.h>）
 #include <netdb.h>
 #include <poll.h>
 #include <unistd.h>

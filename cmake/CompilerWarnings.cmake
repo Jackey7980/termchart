@@ -6,6 +6,12 @@
 function(termchart_set_warnings target)
     cmake_parse_arguments(ARG "WERROR" "" "" ${ARGN})
 
+    # TERMCHART_WARNINGS_AS_ERRORS（CI 用）接进唯一关口：开启时对所有调用方
+    # 目标生效 -Werror，无需在每个调用点手写 WERROR。原开关曾形同虚设。
+    if(TERMCHART_WARNINGS_AS_ERRORS)
+        set(ARG_WERROR TRUE)
+    endif()
+
     set(gcc_like "$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>")
     set(msvc_like "$<COMPILE_LANG_AND_ID:CXX,MSVC>")
 

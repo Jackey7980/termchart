@@ -46,7 +46,7 @@ void DotDensity::draw(DrawContext ctx) {
     if (regions_.empty()) {
         return;
     }
-    const Rect area = content_area(ctx, *this);
+    content_area(ctx, *this);  // 保留副作用：绘制标题（返回值本方法内未用于裁剪）
     // unit 收敛到 > 0（非有限或 <= 0 都按 1 处理，避免除零）。
     const double unit =
         (std::isfinite(options_.unit) && options_.unit > 0.0) ? options_.unit : 1.0;

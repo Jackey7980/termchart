@@ -31,51 +31,11 @@ struct Seg {
     std::size_t end   = 0;  // 不含
 };
 
-double reduce_one(Reducer r, const double* data, std::size_t n) {
-    if (n == 0) return std::nan("");
-    if (r == Reducer::Count) return static_cast<double>(n);
-    if (r == Reducer::First) return data[0];
-    if (r == Reducer::Last)  return data[n - 1];
-
-    double sum = 0.0;
-    for (std::size_t i = 0; i < n; ++i) sum += data[i];
-
-    if (r == Reducer::Sum)  return sum;
-    if (r == Reducer::Mean) return sum / static_cast<double>(n);
-
-    double mn = data[0], mx = data[0];
-    for (std::size_t i = 1; i < n; ++i) {
-        if (data[i] < mn) mn = data[i];
-        if (data[i] > mx) mx = data[i];
-    }
-    if (r == Reducer::Min) return mn;
-    if (r == Reducer::Max) return mx;
-
-    if (r == Reducer::Median) {
-        std::vector<double> sorted(data, data + n);
-        std::sort(sorted.begin(), sorted.end());
-        if (n % 2 == 1) return sorted[n / 2];
-        return 0.5 * (sorted[n / 2 - 1] + sorted[n / 2]);
-    }
-
-    if (r == Reducer::Stddev) {
-        const double mean = sum / static_cast<double>(n);
-        double ss = 0.0;
-        for (std::size_t i = 0; i < n; ++i) {
-            const double d = data[i] - mean;
-            ss += d * d;
-        }
-        return std::sqrt(ss / static_cast<double>(n));
-    }
-    return std::nan("");
-}
-
 // 按 key 升序构造段（NaN key 跳过；相同 key 合并）
 std::vector<std::pair<double, std::vector<Seg>>>
 bucketize(DataView key_view, std::size_t num_cols,
           const std::vector<std::vector<std::size_t>>& col_indices_per_group) {
     std::map<double, std::vector<Seg>> buckets;
-    const std::size_t n = std::min(key_view.size, num_cols > 0 ? key_view.size : 0);
     for (std::size_t i = 0; i < key_view.size; ++i) {
         const double k = key_view.data[i];
         if (std::isnan(k)) continue;
@@ -194,7 +154,7 @@ Quartiles quartiles(DataView view) {
     if (sorted.empty()) return q;
     std::sort(sorted.begin(), sorted.end());
     auto pct = [&](double p) {
-        const double pos = p * (sorted.size() - 1);
+        const double pos = p * static_cast<double>(sorted.size() - 1);
         const std::size_t lo = static_cast<std::size_t>(std::floor(pos));
         const std::size_t hi = static_cast<std::size_t>(std::ceil(pos));
         if (lo == hi) return sorted[lo];

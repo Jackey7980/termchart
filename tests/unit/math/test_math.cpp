@@ -211,12 +211,12 @@ TEST_CASE("math::linalg::multiply/inverse/solve/determinant") {
 // ── special ────────────────────────────────────────────────────────────────
 
 TEST_CASE("math::special::gamma/ln_gamma/erf") {
-    CHECK(gamma(5.0) == doctest::Approx(24.0));
-    CHECK(gamma(0.5) == doctest::Approx(std::sqrt(3.14159265358979323846)));
+    CHECK(termchart::math::gamma(5.0) == doctest::Approx(24.0));
+    CHECK(termchart::math::gamma(0.5) == doctest::Approx(std::sqrt(3.14159265358979323846)));
     CHECK(ln_gamma(5.0) == doctest::Approx(std::log(24.0)));
     // 极点显式 NaN（标准库这里回 ±Inf）
-    CHECK(std::isnan(gamma(0.0)));
-    CHECK(std::isnan(gamma(-3.0)));
+    CHECK(std::isnan(termchart::math::gamma(0.0)));
+    CHECK(std::isnan(termchart::math::gamma(-3.0)));
     CHECK(std::isnan(ln_gamma(-1.0)));
     CHECK(termchart::math::erf(0.0) == doctest::Approx(0.0));
     CHECK(termchart::math::erf(1.0) == doctest::Approx(0.8427007929497149));
