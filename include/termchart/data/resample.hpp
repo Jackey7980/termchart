@@ -5,17 +5,17 @@
 //
 // 与 `aggregate::histogram` 的差异：resample 不要求等宽，
 // 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
-#ifndef TERMCHART_UTIL_DATA_RESAMPLE_HPP
-#define TERMCHART_UTIL_DATA_RESAMPLE_HPP
+#ifndef TERMCHART_DATA_RESAMPLE_HPP
+#define TERMCHART_DATA_RESAMPLE_HPP
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "termchart/export.hpp"
-#include "termchart/util/data/aggregate.hpp"
+#include "termchart/data/aggregate.hpp"
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 // 等宽桶：lo..hi 切成 n 桶（最后一桶包含 hi）。
 [[nodiscard]] TERMCHART_API std::vector<double>
@@ -35,4 +35,4 @@ resample(const std::vector<double>& values, const std::vector<double>& edges,
 
 }  // namespace termchart::util::data
 
-#endif  // TERMCHART_UTIL_DATA_RESAMPLE_HPP
+#endif  // TERMCHART_DATA_RESAMPLE_HPP

@@ -1,19 +1,23 @@
-// tests/unit/util/test_data.cpp —— 数据处理层（aggregate / fill_missing /
-//                                rolling / resample）的最小测试集
+// tests/unit/data/test_data.cpp —— 数据处理层（aggregate / fill_missing /
+//                                 rolling / resample）的最小测试集
 //
 // doctest：doctest.h vendored 于 third_party/，本测试通过 TEST_CASE 宏串联。
 // 不依赖任何外部 fixture；测试样本全部内置。
-#include "termchart/util/data/aggregate.hpp"
-#include "termchart/util/data/fill_missing.hpp"
-#include "termchart/util/data/resample.hpp"
-#include "termchart/util/data/rolling.hpp"
+//
+// 历史：2026-10-21 随模块从 util/data 上移至 data（L4），命名空间
+// termchart::util::data → termchart::data。
+#include "termchart/data/aggregate.hpp"
+#include "termchart/data/fill_missing.hpp"
+#include "termchart/data/ohlc.hpp"
+#include "termchart/data/resample.hpp"
+#include "termchart/data/rolling.hpp"
 
 #include <cmath>
 #include <vector>
 
 #include <doctest.h>
 
-using namespace termchart::util::data;
+using namespace termchart::data;
 
 namespace {
 
@@ -123,4 +127,72 @@ TEST_CASE("util::data::resample::mean by edges") {
         CHECK((approx(static_cast<double>(b.count), 2.0) ||
                approx(static_cast<double>(b.count), 3.0)));
     }
+}
+
+// ── 2026-10-21 随模块上移新增：EMA 与 OHLC ──────────────────────────────
+
+TEST_CASE("data::ema::递推值（window=3, alpha=0.5）") {
+    const std::vector<double> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    auto r = ema(v, 3);
+    REQUIRE(r.size() == 10);
+    CHECK(approx(r[0], 1.0));        // 种子
+    CHECK(approx(r[1], 1.5));        // 0.5*2+0.5*1
+    CHECK(approx(r[2], 2.25));
+    CHECK(approx(r[3], 3.125));
+    CHECK(approx(r[9], 9.001953125));
+    // 常数序列 EMA 恒等于该常数
+    const std::vector<double> c(6, 7.0);
+    for (double x : ema(c, 4)) CHECK(approx(x, 7.0));
+}
+
+TEST_CASE("data::ema::NaN 透传且保持状态") {
+    const std::vector<double> v = {1, 2, std::nan(""), 4, 5};
+    auto r = ema(v, 3);
+    REQUIRE(r.size() == 5);
+    CHECK(approx(r[0], 1.0));
+    CHECK(approx(r[1], 1.5));
+    CHECK(std::isnan(r[2]));                       // 透传
+    CHECK(approx(r[3], 0.5 * 4 + 0.5 * 1.5));      // 状态保持，继续递推
+    CHECK(ema(std::vector<double>{}, 3).empty());
+    CHECK(ema(v, 0).empty());                      // window=0 → 空
+}
+
+TEST_CASE("data::ohlc::按 60s 分桶（左闭右开）") {
+    const std::vector<double> t = {0, 30, 90, 120, 210};
+    const std::vector<double> v = {10, 12, 8, 15, 11};
+    auto bars = ohlc(t, v, {60.0});
+    REQUIRE(bars.size() == 3);
+    // 桶 1：锚定 t0=0 → [0,60) → 10,12
+    CHECK(approx(bars[0].t0, 0.0));
+    CHECK(approx(bars[0].open, 10.0));
+    CHECK(approx(bars[0].high, 12.0));
+    CHECK(approx(bars[0].low, 10.0));
+    CHECK(approx(bars[0].close, 12.0));
+    CHECK(bars[0].count == 2);
+    // 桶 2：锚定 t0=90 → [90,150) → 8,15
+    CHECK(approx(bars[1].t0, 90.0));
+    CHECK(approx(bars[1].open, 8.0));
+    CHECK(approx(bars[1].high, 15.0));
+    CHECK(approx(bars[1].low, 8.0));
+    CHECK(approx(bars[1].close, 15.0));
+    CHECK(bars[1].count == 2);
+    // 桶 3：单样本
+    CHECK(approx(bars[2].t0, 210.0));
+    CHECK(bars[2].count == 1);
+    CHECK(approx(bars[2].high, 11.0));
+}
+
+TEST_CASE("data::ohlc::单桶模式与 NaN 跳过") {
+    const std::vector<double> t = {0, 10, 20, 30, 40};
+    const std::vector<double> v = {10, 12, std::nan(""), 15, 11};
+    // bucket ≤ 0 → 单桶全量（NaN 跳过）
+    auto bars = ohlc(t, v, {0.0});
+    REQUIRE(bars.size() == 1);
+    CHECK(approx(bars[0].open, 10.0));
+    CHECK(approx(bars[0].high, 15.0));
+    CHECK(approx(bars[0].low, 10.0));
+    CHECK(approx(bars[0].close, 11.0));
+    CHECK(bars[0].count == 4);
+    // 空输入 → 空
+    CHECK(ohlc(std::vector<double>{}, std::vector<double>{}).empty());
 }

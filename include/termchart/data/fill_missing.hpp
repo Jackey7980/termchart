@@ -7,8 +7,8 @@
 //   Drop          ：返回新 vector 仅含非缺失值
 //
 // 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
-#ifndef TERMCHART_UTIL_DATA_FILL_MISSING_HPP
-#define TERMCHART_UTIL_DATA_FILL_MISSING_HPP
+#ifndef TERMCHART_DATA_FILL_MISSING_HPP
+#define TERMCHART_DATA_FILL_MISSING_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -16,7 +16,7 @@
 
 #include "termchart/export.hpp"
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 enum class FillStrategy : std::uint8_t {
     ForwardFill,
@@ -40,4 +40,4 @@ count_missing(const std::vector<double>& values) noexcept;
 
 }  // namespace termchart::util::data
 
-#endif  // TERMCHART_UTIL_DATA_FILL_MISSING_HPP
+#endif  // TERMCHART_DATA_FILL_MISSING_HPP

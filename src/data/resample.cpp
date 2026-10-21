@@ -1,9 +1,9 @@
-#include "termchart/util/data/resample.hpp"
+#include "termchart/data/resample.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 std::vector<double>
 linspace_edges(double lo, double hi, std::size_t n) {
@@ -115,4 +115,4 @@ resample(const std::vector<double>& values, const std::vector<double>& edges,
     return out;
 }
 
-}  // namespace termchart::util::data
+}  // namespace termchart::data

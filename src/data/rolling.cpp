@@ -1,11 +1,11 @@
-#include "termchart/util/data/rolling.hpp"
+#include "termchart/data/rolling.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 const char* rolling_stat_name(RollingStat s) noexcept {
     switch (s) {
@@ -88,4 +88,28 @@ rolling(const std::vector<double>& values, RollingStat stat,
     return out;
 }
 
-}  // namespace termchart::util::data
+std::vector<double> ema(const std::vector<double>& values, std::size_t window) noexcept {
+    std::vector<double> out;
+    if (values.empty() || window == 0) return out;
+    out.reserve(values.size());
+    const double alpha = 2.0 / (static_cast<double>(window) + 1.0);
+    bool seeded = false;
+    double prev = 0.0;
+    for (const double v : values) {
+        if (std::isnan(v)) {
+            out.push_back(std::nan(""));
+            continue;
+        }
+        if (!seeded) {
+            prev = v;
+            seeded = true;
+            out.push_back(prev);
+            continue;
+        }
+        prev = alpha * v + (1.0 - alpha) * prev;
+        out.push_back(prev);
+    }
+    return out;
+}
+
+}  // namespace termchart::data

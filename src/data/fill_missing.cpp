@@ -1,8 +1,8 @@
-#include "termchart/util/data/fill_missing.hpp"
+#include "termchart/data/fill_missing.hpp"
 
 #include <cmath>
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 const char* fill_strategy_name(FillStrategy s) noexcept {
     switch (s) {
@@ -86,4 +86,4 @@ count_missing(const std::vector<double>& values) noexcept {
     return n;
 }
 
-}  // namespace termchart::util::data
+}  // namespace termchart::data

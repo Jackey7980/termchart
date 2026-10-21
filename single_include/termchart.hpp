@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 362 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 372 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -3123,6 +3123,466 @@ private:
 
 }  // namespace termchart
 
+// ===== include/termchart/math/fft.hpp =====
+// math/fft.hpp —— 快速傅里叶变换（header-only）
+//
+// Radix-2 Cooley-Tukey，原地计算（除 twiddle 外零分配），re/im 双 span 布局
+// （复数交错由调用方决定，原语本身不替谁做决定）。
+// 设计约定：
+//   * n 必须是 2 的幂且 re/im 等长——否则返回 false 且**不改数据**
+//     （fail-loud：让调用方去 pad，不悄悄挑个邻近长度糊弄）。
+//   * 逆变换缩放 1/N，保证 forward → inverse 往返恒等（与 scipy 口径一致）。
+//   * twiddle 每个 stage 直接算 cos/sin 不用递推——递推的误差随 log N 累积，
+//     可视化频谱不需要为省几次 trig 赔上精度。
+//   * 不抛异常；span 为空/不等长/非 2 幂均安全返回。
+
+#include <cmath>
+
+namespace termchart::math {
+
+// 不小于 n 的最小 2 的幂（n == 0 时返回 1）。
+[[nodiscard]] constexpr std::size_t next_pow2(std::size_t n) noexcept {
+    std::size_t p = 1;
+    while (p < n) p <<= 1;
+    return p;
+}
+
+// 原地 radix-2 FFT。re/im 长度相等且为 2 的幂；inverse = true 时做逆变换并缩放 1/N。
+// 成功返回 true；输入不合法返回 false（数据保持原样）。
+[[nodiscard]] inline bool fft(std::span<double> re, std::span<double> im, bool inverse = false) noexcept {
+    if (re.size() != im.size() || re.empty()) return false;
+    std::size_t n = re.size();
+    if ((n & (n - 1)) != 0) return false;  // 非 2 的幂
+
+    // 位反转置换（原地交换）
+    for (std::size_t i = 1, j = 0; i < n; ++i) {
+        std::size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            const double tr = re[i];
+            re[i] = re[j];
+            re[j] = tr;
+            const double ti = im[i];
+            im[i] = im[j];
+            im[j] = ti;
+        }
+    }
+
+    // 逐级蝶形：stage 长度 2, 4, 8, ...
+    const double sign = inverse ? 1.0 : -1.0;
+    for (std::size_t len = 2; len <= n; len <<= 1) {
+        const double ang = sign * 2.0 * 3.14159265358979323846 / static_cast<double>(len);
+        const std::size_t half = len >> 1;
+        for (std::size_t i = 0; i < n; i += len) {
+            for (std::size_t k = 0; k < half; ++k) {
+                const double wr = std::cos(ang * static_cast<double>(k));
+                const double wi = std::sin(ang * static_cast<double>(k));
+                const std::size_t a = i + k;
+                const std::size_t b = a + half;
+                const double tr = re[b] * wr - im[b] * wi;
+                const double ti = re[b] * wi + im[b] * wr;
+                re[b] = re[a] - tr;
+                im[b] = im[a] - ti;
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+    }
+
+    if (inverse) {
+        const double s = 1.0 / static_cast<double>(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            re[i] *= s;
+            im[i] *= s;
+        }
+    }
+    return true;
+}
+
+}  // namespace termchart::math
+
+// ===== include/termchart/math/interpolate.hpp =====
+// math/interpolate.hpp —— 数据插值（header-only）
+//
+// 让生硬的折线瞬间丝滑：线性插值（零参数、保单调段）与自然三次样条（C² 连续）。
+// 设计约定：
+//   * 输入 std::span<const double>，xs 必须**严格升序**（图表 x 轴的常态）。
+//   * 越界**钳位**到首/末值（不外推：外推出的值没有数据支撑，画成图会骗人）。
+//   * NaN 传播：查询点或两端任一为 NaN 时返回 NaN。
+//   * 自然样条的二阶导在两端为 0；数据噪声大时可能轻微过冲，monotone (PCHIP)
+//     变体记入 backlog，刻意不塞进本文件。
+//   * 与 graph/route/spline 的区别：那边是连线路由的 Catmull-Rom（途经点），
+//     这边是数据域的插值，互不相干。
+
+#include <algorithm>
+
+namespace termchart::math {
+
+// 分段线性插值：在 xs 中定位 x 所在区间，按比例取 ys。
+// xs 为空 / x 为 NaN / 定位到的两端任一为 NaN → NaN。
+[[nodiscard]] inline double linear_at(std::span<const double> xs, std::span<const double> ys,
+                                      double x) noexcept {
+    if (xs.empty() || std::isnan(x)) return std::nan("");
+    const std::size_t n = xs.size() < ys.size() ? xs.size() : ys.size();
+    if (n == 0) return std::nan("");
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[n - 1]) return ys[n - 1];
+    const auto it = std::lower_bound(xs.begin(), xs.begin() + static_cast<std::ptrdiff_t>(n), x);
+    if (it == xs.begin()) return ys[0];
+    const std::size_t hi = static_cast<std::size_t>(it - xs.begin());
+    const std::size_t lo = hi - 1;
+    const double span = xs[hi] - xs[lo];
+    if (span <= 0.0 || std::isnan(span)) return ys[lo];
+    const double t = (x - xs[lo]) / span;
+    return ys[lo] + (ys[hi] - ys[lo]) * t;
+}
+
+// 自然三次样条（C² 连续，两端二阶导为 0）。
+//
+// 构造为 O(N)（Thomas 算法解三对角），求值 O(log N)（二分定位区间）。
+// 坏输入（点数 < 2、xs 非严格升序、含 NaN/Inf）不抛异常：valid() 为 false，
+// at() 一律返回 NaN —— fail-loud 由调用方检查 valid() 完成。
+class CubicSpline {
+public:
+    CubicSpline() noexcept = default;
+
+    // 构造：xs/ys 等长（取较短者），xs 严格升序。
+    CubicSpline(std::span<const double> xs, std::span<const double> ys) noexcept {
+        const std::size_t n = xs.size() < ys.size() ? xs.size() : ys.size();
+        if (n < 2) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!std::isfinite(xs[i]) || !std::isfinite(ys[i])) return;
+            if (i > 0 && !(xs[i] > xs[i - 1])) return;
+        }
+        x_.assign(xs.begin(), xs.begin() + static_cast<std::ptrdiff_t>(n));
+        y_.assign(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(n));
+        m2_.assign(n, 0.0);
+
+        // 三对角系统：h[i]*M[i-1] + 2(h[i-1]+h[i])*M[i] + h[i-1]*M[i+1] = 6*Δ²y[i]
+        // 自然边界 M[0] = M[n-1] = 0，只解内部 n-2 个未知量。
+        const std::size_t inner = n - 2;
+        std::vector<double> lower(inner, 0.0);  // 次对角
+        std::vector<double> diag(inner, 0.0);   // 主对角
+        std::vector<double> upper(inner, 0.0);  // 超对角
+        std::vector<double> rhs(inner, 0.0);
+        for (std::size_t i = 1; i <= n - 2; ++i) {
+            const std::size_t k = i - 1;
+            const double h_prev = x_[i] - x_[i - 1];
+            const double h_next = x_[i + 1] - x_[i];
+            lower[k] = h_prev;
+            diag[k] = 2.0 * (h_prev + h_next);
+            upper[k] = h_next;
+            rhs[k] = 6.0 * ((y_[i + 1] - y_[i]) / h_next - (y_[i] - y_[i - 1]) / h_prev);
+        }
+        // Thomas：前向消去
+        for (std::size_t k = 1; k < inner; ++k) {
+            const double w = lower[k] / diag[k - 1];
+            diag[k] -= w * upper[k - 1];
+            rhs[k] -= w * rhs[k - 1];
+        }
+        // 回代
+        if (inner > 0) {
+            m2_[n - 2] = rhs[inner - 1] / diag[inner - 1];
+            for (std::size_t k = inner - 1; k-- > 0;) {
+                m2_[k + 1] = (rhs[k] - upper[k] * m2_[k + 2]) / diag[k];
+            }
+        }
+        valid_ = true;
+    }
+
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+    [[nodiscard]] std::size_t size() const noexcept { return x_.size(); }
+
+    // 求值：x 越界钳位到首/末；无效样条或 NaN 查询返回 NaN。
+    [[nodiscard]] double at(double x) const noexcept {
+        if (!valid_ || std::isnan(x)) return std::nan("");
+        const std::size_t n = x_.size();
+        if (x <= x_[0]) return y_[0];
+        if (x >= x_[n - 1]) return y_[n - 1];
+        const auto it = std::lower_bound(x_.begin(), x_.end(), x);
+        const std::size_t hi = static_cast<std::size_t>(it - x_.begin());
+        const std::size_t lo = hi - 1;
+        const double h = x_[hi] - x_[lo];
+        const double a = (x_[hi] - x) / h;
+        const double b = (x - x_[lo]) / h;
+        // S(x) = a*y[i] + b*y[i+1] + ((a³-a)*M[i] + (b³-b)*M[i+1]) * h²/6
+        return a * y_[lo] + b * y_[hi] +
+               ((a * a * a - a) * m2_[lo] + (b * b * b - b) * m2_[hi]) * (h * h) / 6.0;
+    }
+
+private:
+    std::vector<double> x_;
+    std::vector<double> y_;
+    std::vector<double> m2_;  // 各点二阶导
+    bool valid_ = false;
+};
+
+}  // namespace termchart::math
+
+// ===== include/termchart/math/linalg.hpp =====
+// math/linalg.hpp —— 稠密小矩阵线性代数（行主序、span、无模板）
+//
+// 定位：服务 chart3d/chart4d 的 3D/4D 矩阵与数据拟合的最小公倍集——乘法、求逆、
+// 解方程、行列式。**刻意不做**通用矩阵类型（那属于 Eigen 的生态位）：这里只认
+// span<const double> + 行主序 n×n，零分配、零模板、调用方自管缓冲。
+//   * 所有尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+//   * 算法：部分选主元高斯消元（numerical stability 的底线）。
+
+
+
+namespace termchart::math {
+
+// C = A × B（均为 n×n 行主序）。out 可与 a 或 b 别名（内部用栈缓冲分块）。
+[[nodiscard]] TERMCHART_API bool multiply(std::span<const double> a, std::span<const double> b,
+                                          std::size_t n, std::span<double> out) noexcept;
+
+// out = A⁻¹（n×n）。A 奇异（主元为 0）时返回 false，out 内容无定义。
+[[nodiscard]] TERMCHART_API bool inverse(std::span<const double> a, std::size_t n,
+                                         std::span<double> out) noexcept;
+
+// 解 A x = b（A 为 n×n，b/x 长 n）。奇异返回 false。
+[[nodiscard]] TERMCHART_API bool solve(std::span<const double> a, std::span<const double> b,
+                                       std::size_t n, std::span<double> x) noexcept;
+
+// 行列式（高斯消元上三角求积）。n == 0 返回 1（空矩阵约定的单位元）。
+[[nodiscard]] TERMCHART_API double determinant(std::span<const double> a, std::size_t n) noexcept;
+
+}  // namespace termchart::math
+
+// ===== include/termchart/math/special.hpp =====
+// math/special.hpp —— 特殊函数（header-only）
+//
+// Gamma / lnGamma / erf / erfc：对 C++11 <cmath> 数学特殊函数的薄封装——统一 NaN
+// 边界口径（阶乘在 0 与负整数无定义，标准库回 ±Inf 的场合这里显式 NaN），
+// 行为跨平台确定（MinGW/libstdc++/libc++ 的 tgamma 边界实现不一）。
+// Bessel J 系：标准库没有，自行实现——小/中参数幂级数 + 大参数 Hankel 渐近，
+// 分界 |x| = 20（两侧均留一位数余量）。
+
+
+namespace termchart::math {
+
+// Gamma 函数 Γ(x)。x 为 0 或负整数（无定义）及 NaN/Inf 时返回 NaN。
+[[nodiscard]] inline double gamma(double x) noexcept {
+    if (std::isnan(x) || std::isinf(x)) return std::nan("");
+    const double r = std::floor(x);
+    if (r == x && r <= 0.0) return std::nan("");  // 极点
+    return std::tgamma(x);
+}
+
+// ln Γ(x)。x ≤ 0 或 NaN/Inf 返回 NaN。大参数下用 log 避免溢出。
+[[nodiscard]] inline double ln_gamma(double x) noexcept {
+    if (std::isnan(x) || std::isinf(x) || x <= 0.0) return std::nan("");
+    return std::lgamma(x);
+}
+
+// 误差函数 erf(x)（标准库薄封装，保留 NaN 传播）。
+[[nodiscard]] inline double erf(double x) noexcept { return std::erf(x); }
+
+// 互补误差函数 erfc(x) = 1 - erf(x)（大 x 下比手算 1-erf 更保精度）。
+[[nodiscard]] inline double erfc(double x) noexcept { return std::erfc(x); }
+
+namespace detail {
+
+// Hankel 渐近的 P 系数（μ = 4ν²）。
+inline double bessel_asym_p(double mu, double x) noexcept {
+    const double y = 8.0 * x;
+    double p = 1.0;
+    double term = 1.0;
+    // P = 1 - (μ-1)(μ-9)/(2!(8x)²) + (μ-1)(μ-9)(μ-25)(μ-49)/(4!(8x)⁴) - …
+    double f = mu - 1.0;
+    term *= -f / (2.0 * y * y);
+    p += term;
+    f *= (mu - 9.0) * (mu - 25.0) * (mu - 49.0);
+    term *= -f / (24.0 * y * y * y * y);
+    p += term;
+    return p;
+}
+
+// Hankel 渐近的 Q 系数（μ = 4ν²）。
+inline double bessel_asym_q(double mu, double x) noexcept {
+    const double y = 8.0 * x;
+    double q = (mu - 1.0) / y;
+    // Q = (μ-1)/(8x) - (μ-1)(μ-9)(μ-25)/(3!(8x)³) + …
+    q -= (mu - 1.0) * (mu - 9.0) * (mu - 25.0) / (6.0 * y * y * y);
+    return q;
+}
+
+inline double bessel_asym_j(int order, double x) noexcept {
+    const double mu = 4.0 * static_cast<double>(order) * static_cast<double>(order);
+    const double w = x - static_cast<double>(order) * 1.5707963267948966 - 0.7853981633974483;
+    return std::sqrt(2.0 / (3.14159265358979323846 * x)) *
+           (std::cos(w) * bessel_asym_p(mu, x) - std::sin(w) * bessel_asym_q(mu, x));
+}
+
+}  // namespace detail
+
+// 第一类 Bessel 函数 J0(x)。负参数按偶函数处理。
+[[nodiscard]] inline double bessel_j0(double x) noexcept {
+    if (std::isnan(x)) return std::nan("");
+    const double ax = std::fabs(x);
+    if (ax <= 20.0) {
+        // J0 = Σ (-1)^k (x²/4)^k / (k!)²
+        double term = 1.0;
+        double sum = 1.0;
+        const double q = ax * ax / 4.0;
+        for (int k = 1; k < 80; ++k) {
+            term *= -q / (static_cast<double>(k) * static_cast<double>(k));
+            sum += term;
+            if (std::fabs(term) < 1e-17 * (std::fabs(sum) + 1e-300)) break;
+        }
+        return sum;
+    }
+    return detail::bessel_asym_j(0, ax);
+}
+
+// 第一类 Bessel 函数 J1(x)。负参数按奇函数处理（J1(-x) = -J1(x)）。
+[[nodiscard]] inline double bessel_j1(double x) noexcept {
+    if (std::isnan(x)) return std::nan("");
+    const double ax = std::fabs(x);
+    const double sign = x < 0.0 ? -1.0 : 1.0;
+    if (ax <= 20.0) {
+        // J1 = (x/2) Σ (-1)^k (x²/4)^k / (k!(k+1)!)
+        double term = ax / 2.0;
+        double sum = term;
+        const double q = ax * ax / 4.0;
+        for (int k = 1; k < 80; ++k) {
+            term *= -q / (static_cast<double>(k) * static_cast<double>(k + 1));
+            sum += term;
+            if (std::fabs(term) < 1e-17 * (std::fabs(sum) + 1e-300)) break;
+        }
+        return sign * sum;
+    }
+    return sign * detail::bessel_asym_j(1, ax);
+}
+
+// 第一类 Bessel 函数 Jn(x)（n ≥ 2 用向上递推 J_{k+1} = (2k/x)J_k - J_{k-1}）。
+// 递推在 x > n 时数值稳定；x ≤ n 时仍可用但精度递减（文档如实标注）。
+// n < 0 按 J_{-n} = (-1)^n J_n 归算；x == 0 时 n == 0 → 1，否则 → 0。
+[[nodiscard]] inline double bessel_j(int n, double x) noexcept {
+    if (std::isnan(x)) return std::nan("");
+    if (n < 0) {
+        const double v = bessel_j(-n, x);
+        return (n % 2 == 0) ? v : -v;
+    }
+    if (x == 0.0) return n == 0 ? 1.0 : 0.0;
+    if (n == 0) return bessel_j0(x);
+    if (n == 1) return bessel_j1(x);
+    double jm1 = bessel_j0(x);  // J_{k-1}
+    double jk = bessel_j1(x);   // J_k
+    for (int k = 1; k < n; ++k) {
+        const double jp = (2.0 * static_cast<double>(k) / x) * jk - jm1;
+        jm1 = jk;
+        jk = jp;
+    }
+    return jk;
+}
+
+}  // namespace termchart::math
+
+// ===== include/termchart/math/stats.hpp =====
+// math/stats.hpp —— 描述统计（header-only）
+//
+// NumPy/pandas 统计函数的最小集：均值、中位数、方差/标准差、协方差、皮尔逊相关。
+// 设计约定：
+//   * 输入一律 std::span<const double>，不用模板——调用方传 vector/array/C 数组皆可，
+//     且每个 TU 只编译一份展开，守住"编译极速"。
+//   * NaN 视为缺失并**跳过**（与 util/data/rolling 同口径）；空输入或全 NaN 返回 quiet NaN。
+//   * 均值用 Kahan 补偿求和；方差用 Welford 单遍算法——长序列上不丢有效位。
+//   * 不抛异常、不分配堆内存（median 内部的局部 vector 除外）。
+
+
+namespace termchart::math {
+
+// 算术均值。跳过 NaN；无有效值时返回 NaN。
+[[nodiscard]] inline double mean(std::span<const double> xs) noexcept {
+    double sum = 0.0;
+    double comp = 0.0;  // Kahan 补偿项
+    std::size_t n = 0;
+    for (const double x : xs) {
+        if (std::isnan(x)) continue;
+        const double y = x - comp;
+        const double t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
+        ++n;
+    }
+    if (n == 0) return std::nan("");
+    return sum / static_cast<double>(n);
+}
+
+// 中位数。偶数个取中间两个的均值；O(N) 平均复杂度（nth_element）。
+[[nodiscard]] inline double median(std::span<const double> xs) noexcept {
+    std::vector<double> v;
+    v.reserve(xs.size());
+    for (const double x : xs) {
+        if (!std::isnan(x)) v.push_back(x);
+    }
+    const std::size_t n = v.size();
+    if (n == 0) return std::nan("");
+    const std::size_t mid = n / 2;
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
+    if (n % 2 == 1) return v[mid];
+    const double upper = v[mid];
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid - 1), v.end());
+    return 0.5 * (v[mid - 1] + upper);
+}
+
+// 方差。ddof = 0 为总体方差（numpy 默认口径），ddof = 1 为样本方差（pandas 默认口径）；
+// 有效样本数 ≤ ddof 时返回 NaN。Welford 单遍，数值稳定。
+[[nodiscard]] inline double variance(std::span<const double> xs, double ddof = 0.0) noexcept {
+    double m = 0.0;
+    double m2 = 0.0;
+    std::size_t n = 0;
+    for (const double x : xs) {
+        if (std::isnan(x)) continue;
+        ++n;
+        const double delta = x - m;
+        m += delta / static_cast<double>(n);
+        m2 += delta * (x - m);
+    }
+    if (n == 0 || static_cast<double>(n) <= ddof) return std::nan("");
+    return m2 / (static_cast<double>(n) - ddof);
+}
+
+// 标准差（方差的平方根），ddof 口径同 variance。
+[[nodiscard]] inline double stddev(std::span<const double> xs, double ddof = 0.0) noexcept {
+    const double v = variance(xs, ddof);
+    if (std::isnan(v)) return v;
+    return std::sqrt(v);
+}
+
+// 协方差。两序列成对取样：任一侧为 NaN 的对整体跳过；长度不等取较短者。
+[[nodiscard]] inline double covariance(std::span<const double> xs, std::span<const double> ys,
+                                       double ddof = 0.0) noexcept {
+    const std::size_t n = xs.size() < ys.size() ? xs.size() : ys.size();
+    double mx = 0.0;
+    double my = 0.0;
+    double c = 0.0;  // 累积离差积
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::isnan(xs[i]) || std::isnan(ys[i])) continue;
+        ++k;
+        const double dx = xs[i] - mx;
+        const double dy = ys[i] - my;
+        mx += dx / static_cast<double>(k);
+        my += dy / static_cast<double>(k);
+        c += dx * (ys[i] - my);
+    }
+    if (k == 0 || static_cast<double>(k) <= ddof) return std::nan("");
+    return c / (static_cast<double>(k) - ddof);
+}
+
+// 皮尔逊相关系数：cov / (sx * sy)。任一序列零方差（常数）时返回 NaN（无定义）。
+[[nodiscard]] inline double pearson(std::span<const double> xs, std::span<const double> ys) noexcept {
+    const double sx = stddev(xs);
+    const double sy = stddev(ys);
+    if (sx == 0.0 || sy == 0.0 || std::isnan(sx) || std::isnan(sy)) return std::nan("");
+    return covariance(xs, ys) / (sx * sy);
+}
+
+}  // namespace termchart::math
+
 // ===== include/termchart/util/assert.hpp =====
 // assert.hpp —— 断言宏（header-only）
 //
@@ -3345,176 +3805,6 @@ constexpr std::uint8_t rotl8(std::uint8_t v, int n) noexcept {
 }
 
 }  // namespace termchart::util
-
-// ===== include/termchart/util/data/aggregate.hpp =====
-// util/data/aggregate.hpp —— 聚合（group by + reducer）
-//
-// 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
-// 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
-// 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
-// "分组键"由第一列决定（或显式指定 key column）。
-//
-// 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
-//
-// 约束：单线程；不抛异常；空输入返回空结果。
-
-
-
-
-namespace termchart::util::data {
-
-struct DataView {
-    const double* data = nullptr;
-    std::size_t   size = 0;
-};
-
-enum class Reducer : std::uint8_t {
-    Sum, Mean, Min, Max, Count, First, Last, Median, Stddev,
-};
-
-[[nodiscard]] TERMCHART_API const char* reducer_name(Reducer r) noexcept;
-
-struct Group {
-    double                key = 0.0;       // 分组键（NaN 不参与聚合）
-    std::vector<DataView> values_per_col;  // 每列在原数组中的"段"
-};
-
-// 基础聚合：单列按 key 分组，对 value 列施加 reducer。
-// `key_view` 与 `value_view` 必须同长度；NaN key 跳过。
-[[nodiscard]] TERMCHART_API std::vector<Group>
-group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reducer);
-
-// 多 reducer：同组输出多个聚合结果。
-struct MultiReduceResult {
-    std::vector<Group>   groups;   // 同一组只出现一次（按 key 升序）
-    std::vector<Reducer> reducers; // 与 groups[i].values_per_col 对应
-};
-[[nodiscard]] TERMCHART_API MultiReduceResult
-group_reduce_multi(DataView key_view,
-                   std::vector<DataView> value_views,
-                   std::vector<Reducer> reducers);
-
-// 直方图：等宽 bin，bin 数由调用方给，返回每桶计数。
-struct HistogramBin {
-    double lo = 0.0;     // 包含
-    double hi = 0.0;     // 不包含（最后一桶包含 hi）
-    std::size_t count = 0;
-};
-[[nodiscard]] TERMCHART_API std::vector<HistogramBin>
-histogram(DataView view, std::size_t num_bins);
-
-// 四分位数（min / Q1 / median / Q3 / max）。NaN 跳过；偶数样本中位数为两均值。
-struct Quartiles {
-    double minimum = 0.0;
-    double q1 = 0.0;
-    double median = 0.0;
-    double q3 = 0.0;
-    double maximum = 0.0;
-};
-[[nodiscard]] TERMCHART_API Quartiles quartiles(DataView view);
-
-}  // namespace termchart::util::data
-
-// ===== include/termchart/util/data/fill_missing.hpp =====
-// util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
-//
-// NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
-// 三种策略：
-//   ForwardFill   ：沿用前一个非缺失值（适合时间序列）
-//   LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
-//   Drop          ：返回新 vector 仅含非缺失值
-//
-// 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
-
-
-
-namespace termchart::util::data {
-
-enum class FillStrategy : std::uint8_t {
-    ForwardFill,
-    LinearInterp,
-    Drop,
-};
-
-[[nodiscard]] TERMCHART_API const char* fill_strategy_name(FillStrategy s) noexcept;
-
-// 改写入参；全 NaN 全部保持 NaN（ForwardFill/LinearInterp 都这样）。
-[[nodiscard]] TERMCHART_API std::size_t
-fill_missing(std::vector<double>& values, FillStrategy strategy) noexcept;
-
-// Drop：返回新 vector（仅非缺失值）。
-[[nodiscard]] TERMCHART_API std::vector<double>
-drop_missing(const std::vector<double>& values);
-
-// 计数：返回 NaN 个数。
-[[nodiscard]] TERMCHART_API std::size_t
-count_missing(const std::vector<double>& values) noexcept;
-
-}  // namespace termchart::util::data
-
-// ===== include/termchart/util/data/resample.hpp =====
-// util/data/resample.hpp —— 重采样（按规则桶聚合）
-//
-// 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
-// 输出每桶的聚合值（mean / sum / min / max / first / last）。
-//
-// 与 `aggregate::histogram` 的差异：resample 不要求等宽，
-// 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
-
-
-
-namespace termchart::util::data {
-
-// 等宽桶：lo..hi 切成 n 桶（最后一桶包含 hi）。
-[[nodiscard]] TERMCHART_API std::vector<double>
-linspace_edges(double lo, double hi, std::size_t n);
-
-// 重采样：把 values 按 edges 切桶，每桶施加 reducer。
-// edges 必须升序且至少 2 个元素；values 越界的不进任何桶。
-struct ResampleBin {
-    double      lo = 0.0;       // 包含
-    double      hi = 0.0;       // 不包含（最后一桶包含 hi）
-    double      value = 0.0;    // 该桶聚合结果（NaN 表示空桶）
-    std::size_t count = 0;      // 该桶样本数
-};
-[[nodiscard]] TERMCHART_API std::vector<ResampleBin>
-resample(const std::vector<double>& values, const std::vector<double>& edges,
-         Reducer reducer);
-
-}  // namespace termchart::util::data
-
-// ===== include/termchart/util/data/rolling.hpp =====
-// util/data/rolling.hpp —— 滚动窗口聚合
-//
-// 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
-// 中心约定：
-//   * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
-//     前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
-//   * min_periods：窗口内最少非缺失值，少于则输出 NaN。
-//   * 支持：mean / sum / stddev / min / max / median。
-//   * 不抛异常；空 vector 返回空 vector。
-
-
-
-namespace termchart::util::data {
-
-enum class RollingStat : std::uint8_t {
-    Mean, Sum, Stddev, Min, Max, Median,
-};
-
-[[nodiscard]] TERMCHART_API const char* rolling_stat_name(RollingStat s) noexcept;
-
-struct RollingOptions {
-    std::size_t window = 3;
-    std::size_t min_periods = 0;       // 0 = 与 window 同；NaN 跳过
-    bool        right_aligned = true;  // false = 中心（左右各半）
-};
-
-[[nodiscard]] TERMCHART_API std::vector<double>
-rolling(const std::vector<double>& values, RollingStat stat,
-        const RollingOptions& options = {}) noexcept;
-
-}  // namespace termchart::util::data
 
 // ===== include/termchart/util/format.hpp =====
 // format.hpp —— 轻量整数 / 浮点格式化
@@ -3775,7 +4065,6 @@ TERMCHART_API std::vector<std::string> capture_log_end() noexcept;
 // 只提供终端绘图真正需要的那几个函数；依赖 <cmath> 但不引入 eigen/boost。
 // 所有函数 constexpr / noexcept：布局与缩放是在热路径上跑的。
 
-#include <cmath>
 #include <limits>
 
 namespace termchart::util {
@@ -4565,6 +4854,233 @@ struct ResolvedStyle {
     const Style& style, const ResolveOptions& options = {}) noexcept;
 
 }  // namespace termchart::color
+
+// ===== include/termchart/io/diagnostic.hpp =====
+// io/diagnostic.hpp —— 解析诊断（header-only，L2）
+//
+// 从 dsl/parser_base.hpp 下沉而来：io 的 csv/json 解析需要同口径的诊断
+// （ErrorCode + 行列 + 字节偏移），而 io=2 不能 include dsl=17（层号硬墙）。
+// dsl/parser_base.hpp 现以 using 别名 re-export 本类型，既有调用点零改动。
+// 设计口径（与 core/error.hpp 的错误策略一致）：
+//   * 解析不抛异常：错误记录进 ParseDiagnostic，由入口转成 Result 错误码；
+//   * 只保留第一个错误（后续错误往往是它引发的连锁噪声）。
+
+
+
+namespace termchart::io {
+
+struct ParseDiagnostic {
+    ErrorCode code = ErrorCode::Ok;
+    std::string message;
+    std::size_t line = 1;
+    std::size_t column = 1;
+    std::size_t offset = 0;
+
+    [[nodiscard]] bool ok() const noexcept { return code == ErrorCode::Ok; }
+};
+
+}  // namespace termchart::io
+
+// ===== include/termchart/io/csv.hpp =====
+// io/csv.hpp —— CSV 数值入口（零拷贝切分，L2）
+//
+// 与 dsl/csv_sniff 的分工（**刻意两份，不是遗漏**）：
+//   * 本文件：数值数据进图表的快路径——string_view 切分 + from_chars 直转
+//     double，列主序 vector<vector<double>>，空字段/NA 落 NaN；
+//   * dsl/csv_sniff：方言分析与表格文档（列类型推断 → document::TableModel），
+//     它依赖 document（L8），而 io=2 不能 include L8，**结构上无法下沉合并**；
+//     未来若合并，需先把它的 TableModel 组装层拆到 L8+，记入 backlog。
+//
+// 支持范围（明确列出，避免"以为支持"）：
+//   ✅ 单字符 delimiter，0 = 自动嗅探（, ; \t | 中引号外出现最多者）；
+//   ✅ 表头可选；UTF-8 BOM 跳过；注释行（comment 前缀，允许前导空白）；
+//   ✅ 引号字段 "..."：内含分隔符与换行；"" 表示一个字面引号；
+//      无转义的字段走零拷贝 view 快路径，含 "" 的字段退化为一次分配；
+//   ✅ 行尾 LF / CRLF / CR；
+//   ✅ 缺值口径：空字段与 "NaN"/"nan"/"NA"（大小写不敏感）→ quiet NaN。
+//   ⛔ 非数字字段（如文本列）→ ParseError（带行列诊断）：这是数值入口，
+//      要容忍文本请走 dsl/csv_sniff 的 TableModel；
+//   ⛔ 数字前导 + 号（from_chars 口径，与 io/json 一致）；
+//   ⛔ 反斜杠转义、多字符分隔符、`sep=` 指令。
+
+
+
+namespace termchart::io {
+
+struct CsvOptions {
+    char delimiter = 0;    // 0 = 自动嗅探
+    bool has_header = true;
+    char comment = '#';    // '#' 前缀行跳过；0 = 不启用
+};
+
+struct CsvTable {
+    std::vector<std::string> headers;            // has_header=false 时为 col0..colN-1
+    std::vector<std::vector<double>> columns;    // 列主序
+    std::size_t row_count = 0;
+};
+
+// 解析 CSV 文本为数值表。失败返回 ErrorCode::ParseError / OutOfRange /
+// InvalidArgument，可选把首个诊断（行列 + 偏移）写到 out_diagnostic。
+// 空输入返回空表（0 行 0 列），合法。
+[[nodiscard]] TERMCHART_API Result<CsvTable> parse_csv(
+    std::string_view source, const CsvOptions& options = {},
+    ParseDiagnostic* out_diagnostic = nullptr);
+
+}  // namespace termchart::io
+
+// ===== include/termchart/io/json.hpp =====
+// io/json.hpp —— JSON 解析（L2）
+//
+// 本文件于 2026-10-21 从 dsl/json.hpp 下沉收编（"数据入口归 io"）：解析核心与
+// 方言无关，dsl 及其余上层模块直接复用；dsl/json.hpp 现为 using 别名 shim，
+// 既有 dsl::JsonValue / dsl::parse_json 调用点零改动。
+//
+// 支持范围（**明确列出，避免"以为支持"**）：
+//   ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
+//   ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
+//      会丢精度，如实记录而非假装精确）；
+//   ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
+//   ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
+//   ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
+//      栈爆/内存爆；
+//   ✅ 诊断：首个错误带行列与字节偏移（与 io/csv 同口径）。
+//   ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
+//      控制字符未转义直出（按 JSON 规范拒绝）。
+//
+// 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
+// 可选地把**首个**诊断写到 out_diagnostic。
+
+
+
+namespace termchart::io {
+
+// JSON 值：带 tag 的结构体（递归容器用 vector 成员，C++17 起对不完整类型合法）。
+// 不用 variant：array/object 递归嵌套时 variant 需要额外一层间接，可读性更差。
+class JsonValue {
+public:
+    enum class Type : std::uint8_t {
+        Null = 0,
+        Bool,
+        Number,
+        String,
+        Array,
+        Object,
+    };
+
+    JsonValue() noexcept = default;  // Null
+
+    // 工厂
+    static JsonValue null() noexcept;
+    static JsonValue boolean(bool value) noexcept;
+    static JsonValue number(double value) noexcept;
+    static JsonValue string(std::string value);
+    static JsonValue array();
+    static JsonValue object();
+
+    // ── 类型判定 ──────────────────────────────────────────────────────────
+    [[nodiscard]] Type type() const noexcept { return type_; }
+    [[nodiscard]] bool is_null() const noexcept { return type_ == Type::Null; }
+    [[nodiscard]] bool is_bool() const noexcept { return type_ == Type::Bool; }
+    [[nodiscard]] bool is_number() const noexcept { return type_ == Type::Number; }
+    [[nodiscard]] bool is_string() const noexcept { return type_ == Type::String; }
+    [[nodiscard]] bool is_array() const noexcept { return type_ == Type::Array; }
+    [[nodiscard]] bool is_object() const noexcept { return type_ == Type::Object; }
+
+    // ── 取值（类型不匹配返回 fallback，不抛异常）────────────────────────────
+    [[nodiscard]] bool as_bool(bool fallback = false) const noexcept;
+    [[nodiscard]] double as_number(double fallback = 0.0) const noexcept;
+    [[nodiscard]] std::string_view as_string(std::string_view fallback = {}) const noexcept;
+
+    // ── 数组访问 ──────────────────────────────────────────────────────────
+    // size()：array/object 的元素数，其它类型为 0。
+    [[nodiscard]] std::size_t size() const noexcept;
+    // 越界返回 Null 单例（与"缺失即 null"的 JSON 语义一致，调用方无需判空）。
+    [[nodiscard]] const JsonValue& at(std::size_t index) const noexcept;
+    [[nodiscard]] const JsonValue& operator[](std::size_t index) const noexcept;
+
+    // ── 对象访问 ──────────────────────────────────────────────────────────
+    // 找不到返回 nullptr（与 at 的 Null 单例互补：需要区分"缺失"与"显式 null"时用）。
+    [[nodiscard]] const JsonValue* find(std::string_view key) const noexcept;
+    // 找不到返回 Null 单例。
+    [[nodiscard]] const JsonValue& at(std::string_view key) const noexcept;
+
+    // ── 构建（程序化构造；解析产物不需要）──────────────────────────────────
+    void push(JsonValue value);                    // 非 array 时忽略
+    void set(std::string key, JsonValue value);    // 非 object 时忽略；同名键覆盖
+
+private:
+    Type type_ = Type::Null;
+    bool bool_ = false;
+    double number_ = 0.0;
+    std::string string_;
+    std::vector<JsonValue> array_;                              // Type::Array
+    std::vector<std::pair<std::string, JsonValue>> object_;     // Type::Object（保序）
+};
+
+struct JsonOptions {
+    std::size_t max_depth = 64;        // 嵌套深度上限（数组/对象各算一层）
+    std::size_t max_bytes = 16u * 1024u * 1024u;  // 输入长度上限
+};
+
+// 解析 JSON 文本为 JsonValue。顶层必须是完整值（对象/数组/标量均可），
+// 尾部只允许空白。失败返回错误码，可选地把首个诊断写到 out_diagnostic。
+[[nodiscard]] TERMCHART_API Result<JsonValue> parse_json(
+    std::string_view source, const JsonOptions& options = {},
+    ParseDiagnostic* out_diagnostic = nullptr);
+
+}  // namespace termchart::io
+
+// ===== include/termchart/io/stream.hpp =====
+// io/stream.hpp —— 分块行读取（L2）
+//
+// 用途：GB 级 CSV/日志不整文件入内存。内部 64KB 缓冲，逐行产出 string_view
+// （视图在下一次 next()/close() 前有效，要跨行保留请自行拷贝）。
+// 关键不变量：
+//   * 任意长的单行都不 OOM：超长行走"compact + 续读"路径，缓冲最坏增长到
+//     该行自身长度（行必须放得下，没有第二条路）；
+//   * 行尾口径：LF / CRLF / CR 均切行，行内容不含行尾符；
+//   * 不抛异常：打开失败走 Result；读完 next() 返回 false。
+
+
+
+namespace termchart::io {
+
+class LineReader {
+public:
+    LineReader() noexcept = default;
+    ~LineReader() noexcept;
+    LineReader(LineReader&& other) noexcept;
+    LineReader& operator=(LineReader&& other) noexcept;
+    LineReader(const LineReader&) = delete;
+    LineReader& operator=(const LineReader&) = delete;
+
+    [[nodiscard]] bool valid() const noexcept { return file_ != nullptr || owns_string_; }
+
+    // 打开文件（二进制读）。失败返回错误码（NotFound 等）。
+    [[nodiscard]] static Result<LineReader> open(const std::string& path) noexcept;
+
+    // 内存源（测试 / 小文件 / 已下载的文本）。零 I/O，永不为空失败。
+    [[nodiscard]] static LineReader from_string(std::string text) noexcept;
+
+    // 取下一行（不含行尾）。返回 false = 流结束；line 的有效期见类注释。
+    [[nodiscard]] bool next(std::string_view& line) noexcept;
+
+    void close() noexcept;
+
+private:
+    // 续读一块到 buf_；返回读到的字节数（0 = EOF）。
+    std::size_t fill() noexcept;
+
+    std::FILE* file_ = nullptr;
+    std::string owned_;              // from_string 源
+    bool owns_string_ = false;       // from_string 构造过（空串也是合法源）
+    std::vector<char> buf_;          // 分块缓冲
+    std::size_t buf_len_ = 0;        // 有效字节
+    std::size_t buf_pos_ = 0;        // 消费游标
+    std::size_t owned_pos_ = 0;      // 内存源游标
+};
+
+}  // namespace termchart::io
 
 // ===== include/termchart/math3d/vec3.hpp =====
 // vec3.hpp —— 三维向量（header-only）
@@ -5535,6 +6051,227 @@ private:
 
 }  // namespace termchart::scale
 
+// ===== include/termchart/data/aggregate.hpp =====
+// util/data/aggregate.hpp —— 聚合（group by + reducer）
+//
+// 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
+// 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
+// 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
+// "分组键"由第一列决定（或显式指定 key column）。
+//
+// 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
+//
+// 约束：单线程；不抛异常；空输入返回空结果。
+
+
+
+
+namespace termchart::data {
+
+struct DataView {
+    const double* data = nullptr;
+    std::size_t   size = 0;
+};
+
+enum class Reducer : std::uint8_t {
+    Sum, Mean, Min, Max, Count, First, Last, Median, Stddev,
+};
+
+[[nodiscard]] TERMCHART_API const char* reducer_name(Reducer r) noexcept;
+
+struct Group {
+    double                key = 0.0;       // 分组键（NaN 不参与聚合）
+    std::vector<DataView> values_per_col;  // 每列在原数组中的"段"
+};
+
+// 基础聚合：单列按 key 分组，对 value 列施加 reducer。
+// `key_view` 与 `value_view` 必须同长度；NaN key 跳过。
+[[nodiscard]] TERMCHART_API std::vector<Group>
+group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reducer);
+
+// 多 reducer：同组输出多个聚合结果。
+struct MultiReduceResult {
+    std::vector<Group>   groups;   // 同一组只出现一次（按 key 升序）
+    std::vector<Reducer> reducers; // 与 groups[i].values_per_col 对应
+};
+[[nodiscard]] TERMCHART_API MultiReduceResult
+group_reduce_multi(DataView key_view,
+                   std::vector<DataView> value_views,
+                   std::vector<Reducer> reducers);
+
+// 直方图：等宽 bin，bin 数由调用方给，返回每桶计数。
+struct HistogramBin {
+    double lo = 0.0;     // 包含
+    double hi = 0.0;     // 不包含（最后一桶包含 hi）
+    std::size_t count = 0;
+};
+[[nodiscard]] TERMCHART_API std::vector<HistogramBin>
+histogram(DataView view, std::size_t num_bins);
+
+// 四分位数（min / Q1 / median / Q3 / max）。NaN 跳过；偶数样本中位数为两均值。
+struct Quartiles {
+    double minimum = 0.0;
+    double q1 = 0.0;
+    double median = 0.0;
+    double q3 = 0.0;
+    double maximum = 0.0;
+};
+[[nodiscard]] TERMCHART_API Quartiles quartiles(DataView view);
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/data/fill_missing.hpp =====
+// util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
+//
+// NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
+// 三种策略：
+//   ForwardFill   ：沿用前一个非缺失值（适合时间序列）
+//   LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
+//   Drop          ：返回新 vector 仅含非缺失值
+//
+// 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
+
+
+
+namespace termchart::data {
+
+enum class FillStrategy : std::uint8_t {
+    ForwardFill,
+    LinearInterp,
+    Drop,
+};
+
+[[nodiscard]] TERMCHART_API const char* fill_strategy_name(FillStrategy s) noexcept;
+
+// 改写入参；全 NaN 全部保持 NaN（ForwardFill/LinearInterp 都这样）。
+[[nodiscard]] TERMCHART_API std::size_t
+fill_missing(std::vector<double>& values, FillStrategy strategy) noexcept;
+
+// Drop：返回新 vector（仅非缺失值）。
+[[nodiscard]] TERMCHART_API std::vector<double>
+drop_missing(const std::vector<double>& values);
+
+// 计数：返回 NaN 个数。
+[[nodiscard]] TERMCHART_API std::size_t
+count_missing(const std::vector<double>& values) noexcept;
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/data/ohlc.hpp =====
+// data/ohlc.hpp —— 时间轴重采样 → K 线 OHLC（L4）
+//
+// 按等宽时间桶把 (timestamp, value) 序列聚合成 K 线四价：open/high/low/close。
+// 与 resample.hpp 的分工：那边按**值域**分桶（直方图式），这边按**时间轴**
+// 分桶（金融序列式）——K 线图（chart/cartesian/candlestick）的数据入口。
+//
+// 约定：
+//   * timestamps 必须**非降序**（时间序列常态；io/csv 读入天然有序。
+//     乱序输入行为未定义——调用方需先自行排序）；
+//   * 桶边界**锚定在每个桶的首个样本**（不规则采样下的合理口径，且单遍 O(N)）；
+//   * 空桶不产生 bar（顺序合并不感知未来样本，无法回填空桶）；
+//   * NaN 值的样本跳过（不参与任何价格）；
+//   * bucket_seconds ≤ 0 = 单桶（全量一根，用于"整段统计"）。
+//   * 单位为秒（Unix 时间戳口径）；调用方持有分钟/小时刻度自行换算。
+
+
+
+namespace termchart::data {
+
+struct OhlcBar {
+    double t0 = 0.0;       // 桶起点（本桶首个样本的时间戳）
+    double open = 0.0;     // 本桶首个非 NaN 样本
+    double high = 0.0;     // 桶内最大
+    double low = 0.0;      // 桶内最小
+    double close = 0.0;    // 桶内最后一个非 NaN 样本
+    std::size_t count = 0; // 桶内非 NaN 样本数
+};
+
+struct OhlcOptions {
+    double bucket_seconds = 60.0;  // 桶宽（秒）；≤ 0 = 单桶全量
+};
+
+// 聚合为 OHLC 序列。t/v 取较短长度；空输入返回空 vector。
+[[nodiscard]] TERMCHART_API std::vector<OhlcBar> ohlc(std::span<const double> timestamps,
+                                                      std::span<const double> values,
+                                                      const OhlcOptions& options = {}) noexcept;
+
+}  // namespace termchart::data
+
+// ===== include/termchart/data/resample.hpp =====
+// util/data/resample.hpp —— 重采样（按规则桶聚合）
+//
+// 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
+// 输出每桶的聚合值（mean / sum / min / max / first / last）。
+//
+// 与 `aggregate::histogram` 的差异：resample 不要求等宽，
+// 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
+
+
+
+namespace termchart::data {
+
+// 等宽桶：lo..hi 切成 n 桶（最后一桶包含 hi）。
+[[nodiscard]] TERMCHART_API std::vector<double>
+linspace_edges(double lo, double hi, std::size_t n);
+
+// 重采样：把 values 按 edges 切桶，每桶施加 reducer。
+// edges 必须升序且至少 2 个元素；values 越界的不进任何桶。
+struct ResampleBin {
+    double      lo = 0.0;       // 包含
+    double      hi = 0.0;       // 不包含（最后一桶包含 hi）
+    double      value = 0.0;    // 该桶聚合结果（NaN 表示空桶）
+    std::size_t count = 0;      // 该桶样本数
+};
+[[nodiscard]] TERMCHART_API std::vector<ResampleBin>
+resample(const std::vector<double>& values, const std::vector<double>& edges,
+         Reducer reducer);
+
+}  // namespace termchart::util::data
+
+// ===== include/termchart/data/rolling.hpp =====
+// data/rolling.hpp —— 滚动窗口聚合
+//
+// 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
+// 中心约定：
+//   * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
+//     前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
+//   * min_periods：窗口内最少非缺失值，少于则输出 NaN。
+//   * 支持：mean / sum / stddev / min / max / median。
+//   * 不抛异常；空 vector 返回空 vector。
+//
+// 另提供 EMA（指数移动平均）：O(N) 单遍递推，alpha = 2/(window+1)。
+// rolling() 本身为 O(N·window)（窗口内每步重算）；纯 SMA 的 O(N) 滑动求和
+// 作为已知优化点记入 backlog，刻意不在本文件展开。
+
+
+
+namespace termchart::data {
+
+enum class RollingStat : std::uint8_t {
+    Mean, Sum, Stddev, Min, Max, Median,
+};
+
+[[nodiscard]] TERMCHART_API const char* rolling_stat_name(RollingStat s) noexcept;
+
+struct RollingOptions {
+    std::size_t window = 3;
+    std::size_t min_periods = 0;       // 0 = 与 window 同；NaN 跳过
+    bool        right_aligned = true;  // false = 中心（左右各半）
+};
+
+[[nodiscard]] TERMCHART_API std::vector<double>
+rolling(const std::vector<double>& values, RollingStat stat,
+        const RollingOptions& options = {}) noexcept;
+
+// 指数移动平均（EMA）。alpha = 2/(window+1)（pandas ewm(span=window).mean() 口径）。
+//   * O(N) 单遍递推；首个非 NaN 样本作种子，其输出 = 种子本身；
+//   * NaN 输入透传 NaN，但**保持**已有 EMA 状态（后续非 NaN 继续递推）；
+//   * window == 0 或空输入返回空 vector。
+[[nodiscard]] TERMCHART_API std::vector<double>
+ema(const std::vector<double>& values, std::size_t window) noexcept;
+
+}  // namespace termchart::data
+
 // ===== include/termchart/scene/command.hpp =====
 // command.hpp —— Scene 的指令集（header-only）
 //
@@ -5868,7 +6605,6 @@ private:
 // 标量强度场是另一种东西，见 image/field.hpp（raster 的输入）。
 // 纯值类型，列入 header_only。
 
-#include <algorithm>
 
 namespace termchart::image {
 
@@ -15664,6 +16400,24 @@ TERMCHART_API bool register_builtin_dsls() noexcept;
 
 }  // namespace termchart::dsl
 
+// ===== include/termchart/dsl/json.hpp =====
+// dsl/json.hpp —— JSON 解析入口（compat shim，L17）
+//
+// 实现已于 2026-10-21 下沉收编至 io/json.hpp（L2，"数据入口归 io"）。本头保留
+// 原 dsl 命名空间的入口语义：dsl::JsonValue / dsl::JsonOptions / dsl::parse_json
+// 均为 io 命名空间对应符号的别名，既有调用点与测试零改动。
+// 新代码请直接 include "termchart/io/json.hpp"。
+
+
+namespace termchart::dsl {
+
+using termchart::io::JsonValue;
+using termchart::io::JsonOptions;
+using termchart::io::ParseDiagnostic;
+using termchart::io::parse_json;
+
+}  // namespace termchart::dsl
+
 // ===== include/termchart/dsl/lexer.hpp =====
 // lexer.hpp —— DSL 词法分析器（L17）
 //
@@ -15770,15 +16524,10 @@ TERMCHART_API Result<std::vector<Token>> tokenize(std::string_view source, Keywo
 
 namespace termchart::dsl {
 
-struct ParseDiagnostic {
-    ErrorCode code = ErrorCode::Ok;
-    std::string message;
-    std::size_t line = 1;
-    std::size_t column = 1;
-    std::size_t offset = 0;
-
-    [[nodiscard]] bool ok() const noexcept { return code == ErrorCode::Ok; }
-};
+// ParseDiagnostic 于 2026-10-21 下沉至 io（L2）：io 的 csv/json 解析需要同口径
+// 诊断（ErrorCode + 行列 + 偏移），而 io=2 不能 include dsl=17（层号硬墙）。
+// 此处保留 dsl 命名空间入口，既有 dsl::ParseDiagnostic 用法零改动。
+using termchart::io::ParseDiagnostic;
 
 class ParserBase {
 public:
@@ -15981,104 +16730,6 @@ struct DotParseOptions {
 
 // 典型首行指令；供注册表/自动识别共享，避免两处硬编码字符串。
 inline constexpr std::string_view kDotDirective = "digraph";
-
-}  // namespace termchart::dsl
-
-// ===== include/termchart/dsl/json.hpp =====
-// json.hpp —— JSON 解析（L17）
-//
-// 支持范围（**明确列出，避免"以为支持"**）：
-//   ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
-//   ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
-//      会丢精度，如实记录而非假装精确）；
-//   ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
-//   ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
-//   ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
-//      栈爆/内存爆；
-//   ✅ 诊断：首个错误带行列与字节偏移（与 csv_sniff 同口径）。
-//   ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
-//      控制字符未转义直出（按 JSON 规范拒绝）。
-//
-// 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
-// 可选地把**首个**诊断写到 out_diagnostic。
-
-
-
-namespace termchart::dsl {
-
-// JSON 值：带 tag 的结构体（递归容器用 vector 成员，C++17 起对不完整类型合法）。
-// 不用 variant：array/object 递归嵌套时 variant 需要额外一层间接，可读性更差。
-class JsonValue {
-public:
-    enum class Type : std::uint8_t {
-        Null = 0,
-        Bool,
-        Number,
-        String,
-        Array,
-        Object,
-    };
-
-    JsonValue() noexcept = default;  // Null
-
-    // 工厂
-    static JsonValue null() noexcept;
-    static JsonValue boolean(bool value) noexcept;
-    static JsonValue number(double value) noexcept;
-    static JsonValue string(std::string value);
-    static JsonValue array();
-    static JsonValue object();
-
-    // ── 类型判定 ──────────────────────────────────────────────────────────
-    [[nodiscard]] Type type() const noexcept { return type_; }
-    [[nodiscard]] bool is_null() const noexcept { return type_ == Type::Null; }
-    [[nodiscard]] bool is_bool() const noexcept { return type_ == Type::Bool; }
-    [[nodiscard]] bool is_number() const noexcept { return type_ == Type::Number; }
-    [[nodiscard]] bool is_string() const noexcept { return type_ == Type::String; }
-    [[nodiscard]] bool is_array() const noexcept { return type_ == Type::Array; }
-    [[nodiscard]] bool is_object() const noexcept { return type_ == Type::Object; }
-
-    // ── 取值（类型不匹配返回 fallback，不抛异常）────────────────────────────
-    [[nodiscard]] bool as_bool(bool fallback = false) const noexcept;
-    [[nodiscard]] double as_number(double fallback = 0.0) const noexcept;
-    [[nodiscard]] std::string_view as_string(std::string_view fallback = {}) const noexcept;
-
-    // ── 数组访问 ──────────────────────────────────────────────────────────
-    // size()：array/object 的元素数，其它类型为 0。
-    [[nodiscard]] std::size_t size() const noexcept;
-    // 越界返回 Null 单例（与"缺失即 null"的 JSON 语义一致，调用方无需判空）。
-    [[nodiscard]] const JsonValue& at(std::size_t index) const noexcept;
-    [[nodiscard]] const JsonValue& operator[](std::size_t index) const noexcept;
-
-    // ── 对象访问 ──────────────────────────────────────────────────────────
-    // 找不到返回 nullptr（与 at 的 Null 单例互补：需要区分"缺失"与"显式 null"时用）。
-    [[nodiscard]] const JsonValue* find(std::string_view key) const noexcept;
-    // 找不到返回 Null 单例。
-    [[nodiscard]] const JsonValue& at(std::string_view key) const noexcept;
-
-    // ── 构建（程序化构造；解析产物不需要）──────────────────────────────────
-    void push(JsonValue value);                    // 非 array 时忽略
-    void set(std::string key, JsonValue value);    // 非 object 时忽略；同名键覆盖
-
-private:
-    Type type_ = Type::Null;
-    bool bool_ = false;
-    double number_ = 0.0;
-    std::string string_;
-    std::vector<JsonValue> array_;                              // Type::Array
-    std::vector<std::pair<std::string, JsonValue>> object_;     // Type::Object（保序）
-};
-
-struct JsonOptions {
-    std::size_t max_depth = 64;        // 嵌套深度上限（数组/对象各算一层）
-    std::size_t max_bytes = 16u * 1024u * 1024u;  // 输入长度上限
-};
-
-// 解析 JSON 文本为 JsonValue。顶层必须是完整值（对象/数组/标量均可），
-// 尾部只允许空白。失败返回错误码，可选地把首个诊断写到 out_diagnostic。
-[[nodiscard]] TERMCHART_API Result<JsonValue> parse_json(
-    std::string_view source, const JsonOptions& options = {},
-    ParseDiagnostic* out_diagnostic = nullptr);
 
 }  // namespace termchart::dsl
 

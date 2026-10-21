@@ -16,18 +16,14 @@
 #include "termchart/core/error.hpp"
 #include "termchart/export.hpp"
 #include "termchart/dsl/lexer.hpp"
+#include "termchart/io/diagnostic.hpp"
 
 namespace termchart::dsl {
 
-struct ParseDiagnostic {
-    ErrorCode code = ErrorCode::Ok;
-    std::string message;
-    std::size_t line = 1;
-    std::size_t column = 1;
-    std::size_t offset = 0;
-
-    [[nodiscard]] bool ok() const noexcept { return code == ErrorCode::Ok; }
-};
+// ParseDiagnostic 于 2026-10-21 下沉至 io（L2）：io 的 csv/json 解析需要同口径
+// 诊断（ErrorCode + 行列 + 偏移），而 io=2 不能 include dsl=17（层号硬墙）。
+// 此处保留 dsl 命名空间入口，既有 dsl::ParseDiagnostic 用法零改动。
+using termchart::io::ParseDiagnostic;
 
 class ParserBase {
 public:

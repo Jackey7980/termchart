@@ -1,4 +1,4 @@
-#include "termchart/util/data/aggregate.hpp"
+#include "termchart/data/aggregate.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,7 +7,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 const char* reducer_name(Reducer r) noexcept {
     switch (r) {
@@ -209,4 +209,4 @@ Quartiles quartiles(DataView view) {
     return q;
 }
 
-}  // namespace termchart::util::data
+}  // namespace termchart::data

@@ -1,9 +1,10 @@
-// json.cpp —— JSON 解析实现（递归下降 + 自带扫描器）
+// io/json.cpp —— JSON 解析实现（递归下降 + 自带扫描器）
 //
 // 自带扫描器而不复用 dsl/lexer.hpp：JSON 词法与 mermaid/dot 等方言差异过大
 // （负号、科学计数法、\uXXXX 转义、无注释/换行语义），扩展 lexer 会波及所有
-// 方言，收益不抵风险。ParseDiagnostic / ErrorCode 与 csv_sniff 同口径。
-#include "termchart/dsl/json.hpp"
+// 方言，收益不抵风险。ParseDiagnostic / ErrorCode 与 io/csv 同口径。
+// 本文件于 2026-10-21 从 src/dsl/json.cpp 随头文件一并下沉收编至 io 模块。
+#include "termchart/io/json.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -13,7 +14,7 @@
 #include <string_view>
 #include <utility>
 
-namespace termchart::dsl {
+namespace termchart::io {
 namespace {
 
 // Null 单例：at()/operator[] 越界与 find() 失败时返回它（const，调用方不得改）。
@@ -572,4 +573,4 @@ Result<JsonValue> parse_json(std::string_view source, const JsonOptions& options
     return value;
 }
 
-}  // namespace termchart::dsl
+}  // namespace termchart::io

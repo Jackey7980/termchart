@@ -8,8 +8,8 @@
 // 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
 //
 // 约束：单线程；不抛异常；空输入返回空结果。
-#ifndef TERMCHART_UTIL_DATA_AGGREGATE_HPP
-#define TERMCHART_UTIL_DATA_AGGREGATE_HPP
+#ifndef TERMCHART_DATA_AGGREGATE_HPP
+#define TERMCHART_DATA_AGGREGATE_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -22,7 +22,7 @@
 
 #include "termchart/export.hpp"
 
-namespace termchart::util::data {
+namespace termchart::data {
 
 struct DataView {
     const double* data = nullptr;
@@ -76,4 +76,4 @@ struct Quartiles {
 
 }  // namespace termchart::util::data
 
-#endif  // TERMCHART_UTIL_DATA_AGGREGATE_HPP
+#endif  // TERMCHART_DATA_AGGREGATE_HPP

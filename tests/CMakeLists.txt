@@ -13,6 +13,15 @@ add_executable(termchart_tests
     unit/core/test_expected.cpp
     unit/core/test_buffer.cpp
 
+    # ── math ──
+    unit/math/test_math.cpp
+
+    # ── io ──
+    unit/io/test_io.cpp
+
+    # ── data ──
+    unit/data/test_data.cpp
+
     # ── util ──
     unit/util/test_utf8.cpp
     unit/util/test_grapheme.cpp
@@ -20,7 +29,6 @@ add_executable(termchart_tests
     unit/util/test_text.cpp
     unit/util/test_format.cpp
     unit/util/test_util_misc.cpp
-    unit/util/test_data.cpp
     unit/util/test_geo.cpp
 
     # ── color ──

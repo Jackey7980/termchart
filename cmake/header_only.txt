@@ -20,6 +20,12 @@ util/random.hpp
 util/assert.hpp
 color/named_colors.hpp
 util/base64
+math/stats
+math/interpolate
+math/fft
+math/special
+io/diagnostic
+dsl/json
 scene/command.hpp
 scale/linear
 scale/log

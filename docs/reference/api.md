@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **362 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **372 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -13,11 +13,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | （顶层头） | — | 6 |
 | detail | L-1 | 9 |
 | core | L0 | 13 |
-| util | L1 | 21 |
+| math | L1 | 5 |
+| util | L1 | 17 |
 | color | L2 | 6 |
+| io | L2 | 4 |
 | math3d | L3 | 3 |
 | math4d | L3 | 3 |
 | scale | L3 | 10 |
+| data | L4 | 5 |
 | scene | L4 | 6 |
 | image | L5 | 8 |
 | raster | L6 | 9 |
@@ -376,6 +379,78 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class Color`
 - `class Style`
 
+## math（L1）
+
+### `math/fft.hpp`
+
+> math/fft.hpp —— 快速傅里叶变换（header-only）
+>
+> Radix-2 Cooley-Tukey，原地计算（除 twiddle 外零分配），re/im 双 span 布局
+> （复数交错由调用方决定，原语本身不替谁做决定）。
+> 设计约定：
+> * n 必须是 2 的幂且 re/im 等长——否则返回 false 且**不改数据**
+> （fail-loud：让调用方去 pad，不悄悄挑个邻近长度糊弄）。
+> * 逆变换缩放 1/N，保证 forward → inverse 往返恒等（与 scipy 口径一致）。
+> * twiddle 每个 stage 直接算 cos/sin 不用递推——递推的误差随 log N 累积，
+> 可视化频谱不需要为省几次 trig 赔上精度。
+> * 不抛异常；span 为空/不等长/非 2 幂均安全返回。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `math/interpolate.hpp`
+
+> math/interpolate.hpp —— 数据插值（header-only）
+>
+> 让生硬的折线瞬间丝滑：线性插值（零参数、保单调段）与自然三次样条（C² 连续）。
+> 设计约定：
+> * 输入 std::span<const double>，xs 必须**严格升序**（图表 x 轴的常态）。
+> * 越界**钳位**到首/末值（不外推：外推出的值没有数据支撑，画成图会骗人）。
+> * NaN 传播：查询点或两端任一为 NaN 时返回 NaN。
+> * 自然样条的二阶导在两端为 0；数据噪声大时可能轻微过冲，monotone (PCHIP)
+> 变体记入 backlog，刻意不塞进本文件。
+> * 与 graph/route/spline 的区别：那边是连线路由的 Catmull-Rom（途经点），
+> 这边是数据域的插值，互不相干。
+
+- `class CubicSpline`
+
+### `math/linalg.hpp`
+
+> math/linalg.hpp —— 稠密小矩阵线性代数（行主序、span、无模板）
+>
+> 定位：服务 chart3d/chart4d 的 3D/4D 矩阵与数据拟合的最小公倍集——乘法、求逆、
+> 解方程、行列式。**刻意不做**通用矩阵类型（那属于 Eigen 的生态位）：这里只认
+> span<const double> + 行主序 n×n，零分配、零模板、调用方自管缓冲。
+> * 所有尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+> * 算法：部分选主元高斯消元（numerical stability 的底线）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `math/special.hpp`
+
+> math/special.hpp —— 特殊函数（header-only）
+>
+> Gamma / lnGamma / erf / erfc：对 C++11 <cmath> 数学特殊函数的薄封装——统一 NaN
+> 边界口径（阶乘在 0 与负整数无定义，标准库回 ±Inf 的场合这里显式 NaN），
+> 行为跨平台确定（MinGW/libstdc++/libc++ 的 tgamma 边界实现不一）。
+> Bessel J 系：标准库没有，自行实现——小/中参数幂级数 + 大参数 Hankel 渐近，
+> 分界 |x| = 20（两侧均留一位数余量）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `math/stats.hpp`
+
+> math/stats.hpp —— 描述统计（header-only）
+>
+> NumPy/pandas 统计函数的最小集：均值、中位数、方差/标准差、协方差、皮尔逊相关。
+> 设计约定：
+> * 输入一律 std::span<const double>，不用模板——调用方传 vector/array/C 数组皆可，
+> 且每个 TU 只编译一份展开，守住"编译极速"。
+> * NaN 视为缺失并**跳过**（与 util/data/rolling 同口径）；空输入或全 NaN 返回 quiet NaN。
+> * 均值用 Kahan 补偿求和；方差用 Welford 单遍算法——长序列上不丢有效位。
+> * 不抛异常、不分配堆内存（median 内部的局部 vector 除外）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
 ## util（L1）
 
 ### `util/assert.hpp`
@@ -412,67 +487,6 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 避免各处手写 `1 << (n - 1)` 而错位。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
-
-### `util/data/aggregate.hpp`
-
-> util/data/aggregate.hpp —— 聚合（group by + reducer）
->
-> 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
-> 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
-> 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
-> "分组键"由第一列决定（或显式指定 key column）。
->
-> 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
->
-> 约束：单线程；不抛异常；空输入返回空结果。
-
-- `struct DataView`
-- `enum class Reducer : std::uint8_t`
-- `struct Group`
-- `struct MultiReduceResult`
-- `struct HistogramBin`
-- `struct Quartiles`
-
-### `util/data/fill_missing.hpp`
-
-> util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
->
-> NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
-> 三种策略：
-> ForwardFill   ：沿用前一个非缺失值（适合时间序列）
-> LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
-> Drop          ：返回新 vector 仅含非缺失值
->
-> 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
-
-- `enum class FillStrategy : std::uint8_t`
-
-### `util/data/resample.hpp`
-
-> util/data/resample.hpp —— 重采样（按规则桶聚合）
->
-> 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
-> 输出每桶的聚合值（mean / sum / min / max / first / last）。
->
-> 与 `aggregate::histogram` 的差异：resample 不要求等宽，
-> 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
-
-- `struct ResampleBin`
-
-### `util/data/rolling.hpp`
-
-> util/data/rolling.hpp —— 滚动窗口聚合
->
-> 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
-> 中心约定：
-> * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
-> 前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
-> * min_periods：窗口内最少非缺失值，少于则输出 NaN。
-> * 支持：mean / sum / stddev / min / max / median。
-> * 不抛异常；空 vector 返回空 vector。
-
-- `enum class RollingStat : std::uint8_t`
-- `struct RollingOptions`
 
 ### `util/format.hpp`
 
@@ -766,6 +780,87 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct ResolveOptions`
 - `struct ResolvedStyle`
 
+## io（L2）
+
+### `io/csv.hpp`
+
+> io/csv.hpp —— CSV 数值入口（零拷贝切分，L2）
+>
+> 与 dsl/csv_sniff 的分工（**刻意两份，不是遗漏**）：
+> * 本文件：数值数据进图表的快路径——string_view 切分 + from_chars 直转
+> double，列主序 vector<vector<double>>，空字段/NA 落 NaN；
+> * dsl/csv_sniff：方言分析与表格文档（列类型推断 → document::TableModel），
+> 它依赖 document（L8），而 io=2 不能 include L8，**结构上无法下沉合并**；
+> 未来若合并，需先把它的 TableModel 组装层拆到 L8+，记入 backlog。
+>
+> 支持范围（明确列出，避免"以为支持"）：
+> ✅ 单字符 delimiter，0 = 自动嗅探（, ; \t | 中引号外出现最多者）；
+> ✅ 表头可选；UTF-8 BOM 跳过；注释行（comment 前缀，允许前导空白）；
+> ✅ 引号字段 "..."：内含分隔符与换行；"" 表示一个字面引号；
+> 无转义的字段走零拷贝 view 快路径，含 "" 的字段退化为一次分配；
+> ✅ 行尾 LF / CRLF / CR；
+> ✅ 缺值口径：空字段与 "NaN"/"nan"/"NA"（大小写不敏感）→ quiet NaN。
+> ⛔ 非数字字段（如文本列）→ ParseError（带行列诊断）：这是数值入口，
+> 要容忍文本请走 dsl/csv_sniff 的 TableModel；
+> ⛔ 数字前导 + 号（from_chars 口径，与 io/json 一致）；
+> ⛔ 反斜杠转义、多字符分隔符、`sep=` 指令。
+
+- `struct CsvOptions`
+- `struct CsvTable`
+
+### `io/diagnostic.hpp`
+
+> io/diagnostic.hpp —— 解析诊断（header-only，L2）
+>
+> 从 dsl/parser_base.hpp 下沉而来：io 的 csv/json 解析需要同口径的诊断
+> （ErrorCode + 行列 + 字节偏移），而 io=2 不能 include dsl=17（层号硬墙）。
+> dsl/parser_base.hpp 现以 using 别名 re-export 本类型，既有调用点零改动。
+> 设计口径（与 core/error.hpp 的错误策略一致）：
+> * 解析不抛异常：错误记录进 ParseDiagnostic，由入口转成 Result 错误码；
+> * 只保留第一个错误（后续错误往往是它引发的连锁噪声）。
+
+- `struct ParseDiagnostic`
+
+### `io/json.hpp`
+
+> io/json.hpp —— JSON 解析（L2）
+>
+> 本文件于 2026-10-21 从 dsl/json.hpp 下沉收编（"数据入口归 io"）：解析核心与
+> 方言无关，dsl 及其余上层模块直接复用；dsl/json.hpp 现为 using 别名 shim，
+> 既有 dsl::JsonValue / dsl::parse_json 调用点零改动。
+>
+> 支持范围（**明确列出，避免"以为支持"**）：
+> ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
+> ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
+> 会丢精度，如实记录而非假装精确）；
+> ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
+> ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
+> ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
+> 栈爆/内存爆；
+> ✅ 诊断：首个错误带行列与字节偏移（与 io/csv 同口径）。
+> ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
+> 控制字符未转义直出（按 JSON 规范拒绝）。
+>
+> 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
+> 可选地把**首个**诊断写到 out_diagnostic。
+
+- `class JsonValue`
+- `struct JsonOptions`
+
+### `io/stream.hpp`
+
+> io/stream.hpp —— 分块行读取（L2）
+>
+> 用途：GB 级 CSV/日志不整文件入内存。内部 64KB 缓冲，逐行产出 string_view
+> （视图在下一次 next()/close() 前有效，要跨行保留请自行拷贝）。
+> 关键不变量：
+> * 任意长的单行都不 OOM：超长行走"compact + 续读"路径，缓冲最坏增长到
+> 该行自身长度（行必须放得下，没有第二条路）；
+> * 行尾口径：LF / CRLF / CR 均切行，行内容不含行尾符；
+> * 不抛异常：打开失败走 Result；读完 next() 返回 false。
+
+- `class LineReader`
+
 ## math3d（L3）
 
 ### `math3d/camera.hpp`
@@ -954,6 +1049,93 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 便于图表层识别并切换到时间刻度策略。
 
 - `class TimeScale final : public Scale`
+
+## data（L4）
+
+### `data/aggregate.hpp`
+
+> util/data/aggregate.hpp —— 聚合（group by + reducer）
+>
+> 设计目标：pandas DataFrame.groupby().agg() 的"够用版"，零依赖。
+> 数据模型：`DataView` 是对外部 std::vector<double> 的非持有视图（指针+长度），
+> 调用方负责生命周期；多列对齐靠 `Columns` —— 一组同长度 DataView，
+> "分组键"由第一列决定（或显式指定 key column）。
+>
+> 用途：等宽直方图、按类目求和、按时间桶聚合、箱线图四分位数（min/25/50/75/max）。
+>
+> 约束：单线程；不抛异常；空输入返回空结果。
+
+- `struct DataView`
+- `enum class Reducer : std::uint8_t`
+- `struct Group`
+- `struct MultiReduceResult`
+- `struct HistogramBin`
+- `struct Quartiles`
+
+### `data/fill_missing.hpp`
+
+> util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
+>
+> NaN 判定：std::isnan(value) —— IEEE 754 静默 NaN / 信号 NaN 都算缺失。
+> 三种策略：
+> ForwardFill   ：沿用前一个非缺失值（适合时间序列）
+> LinearInterp  ：相邻非缺失值线性插值（端点外用前/后端值延拓）
+> Drop          ：返回新 vector 仅含非缺失值
+>
+> 输出：就地把目标 vector 改写（Fill 类）或返回新 vector（Drop）。
+
+- `enum class FillStrategy : std::uint8_t`
+
+### `data/ohlc.hpp`
+
+> data/ohlc.hpp —— 时间轴重采样 → K 线 OHLC（L4）
+>
+> 按等宽时间桶把 (timestamp, value) 序列聚合成 K 线四价：open/high/low/close。
+> 与 resample.hpp 的分工：那边按**值域**分桶（直方图式），这边按**时间轴**
+> 分桶（金融序列式）——K 线图（chart/cartesian/candlestick）的数据入口。
+>
+> 约定：
+> * timestamps 必须**非降序**（时间序列常态；io/csv 读入天然有序。
+> 乱序输入行为未定义——调用方需先自行排序）；
+> * 桶边界**锚定在每个桶的首个样本**（不规则采样下的合理口径，且单遍 O(N)）；
+> * 空桶不产生 bar（顺序合并不感知未来样本，无法回填空桶）；
+> * NaN 值的样本跳过（不参与任何价格）；
+> * bucket_seconds ≤ 0 = 单桶（全量一根，用于"整段统计"）。
+> * 单位为秒（Unix 时间戳口径）；调用方持有分钟/小时刻度自行换算。
+
+- `struct OhlcBar`
+- `struct OhlcOptions`
+
+### `data/resample.hpp`
+
+> util/data/resample.hpp —— 重采样（按规则桶聚合）
+>
+> 用途：把不规则间隔的时间序列按"每 N 个一桶"或"按显式桶边界"降采样，
+> 输出每桶的聚合值（mean / sum / min / max / first / last）。
+>
+> 与 `aggregate::histogram` 的差异：resample 不要求等宽，
+> 桶边界由 `BinEdges` 显式给出（等宽也只是其中一种生成方式）。
+
+- `struct ResampleBin`
+
+### `data/rolling.hpp`
+
+> data/rolling.hpp —— 滚动窗口聚合
+>
+> 滚动统计（pandas Series.rolling(window).mean() 的最小集）。
+> 中心约定：
+> * 窗口长度 = window，**右对齐**：第 i 个输出由 [i-window+1, i] 决定；
+> 前 i < window-1 个输出按 partial = true 处理（NaN 或 min_periods 触发）。
+> * min_periods：窗口内最少非缺失值，少于则输出 NaN。
+> * 支持：mean / sum / stddev / min / max / median。
+> * 不抛异常；空 vector 返回空 vector。
+>
+> 另提供 EMA（指数移动平均）：O(N) 单遍递推，alpha = 2/(window+1)。
+> rolling() 本身为 O(N·window)（窗口内每步重算）；纯 SMA 的 O(N) 滑动求和
+> 作为已知优化点记入 backlog，刻意不在本文件展开。
+
+- `enum class RollingStat : std::uint8_t`
+- `struct RollingOptions`
 
 ## scene（L4）
 
@@ -4243,25 +4425,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `dsl/json.hpp`
 
-> json.hpp —— JSON 解析（L17）
+> dsl/json.hpp —— JSON 解析入口（compat shim，L17）
 >
-> 支持范围（**明确列出，避免"以为支持"**）：
-> ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
-> ✅ 数字：负号、小数、科学计数法（1e5、-2.5E-3）；按 double 存储（大整数
-> 会丢精度，如实记录而非假装精确）；
-> ✅ 字符串转义：\" \\ \/ \b \f \n \r \t \uXXXX（含代理对 → UTF-8）；
-> ✅ 对象保持**插入序**（vector<pair> 而非 map），重复键后者覆盖前者；
-> ✅ 嵌套深度上限（默认 64）与输入长度上限（默认 16MB），超限返回错误而非
-> 栈爆/内存爆；
-> ✅ 诊断：首个错误带行列与字节偏移（与 csv_sniff 同口径）。
-> ⛔ 不支持：注释、尾逗号、单引号字符串、NaN/Infinity、数字前导 + 号、
-> 控制字符未转义直出（按 JSON 规范拒绝）。
->
-> 错误：解析失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument，
-> 可选地把**首个**诊断写到 out_diagnostic。
+> 实现已于 2026-10-21 下沉收编至 io/json.hpp（L2，"数据入口归 io"）。本头保留
+> 原 dsl 命名空间的入口语义：dsl::JsonValue / dsl::JsonOptions / dsl::parse_json
+> 均为 io 命名空间对应符号的别名，既有调用点与测试零改动。
+> 新代码请直接 include "termchart/io/json.hpp"。
 
-- `class JsonValue`
-- `struct JsonOptions`
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `dsl/lexer.hpp`
 
@@ -4416,7 +4587,6 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * 只保留**第一个**错误（后续错误往往是它引发的连锁噪声）；
 > * 关键不变量：任何循环都必须保证 index 前进，否则 fuzz 输入会让解析器挂死。
 
-- `struct ParseDiagnostic`
 - `class ParserBase`
 
 ### `dsl/plantuml.hpp`
