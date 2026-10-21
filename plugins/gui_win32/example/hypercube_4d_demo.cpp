@@ -22,6 +22,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -33,9 +34,11 @@
 #include "termchart/core/point.hpp"
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/gui/font.hpp"
 #include "termchart/gui/scene_renderer.hpp"
 #include "termchart/image/bitmap.hpp"
 #include "termchart/image/png_encode.hpp"
+#include "termchart/scene/builder.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/math4d/camera4.hpp"
 #include "termchart/math4d/mat5.hpp"
@@ -114,7 +117,7 @@ Bitmap render_hypercube_frame(double width, double height, const HypercubeState&
     o.point_size = std::max(3.0, width / 180.0);  // 顶点方块：随画布缩几像素
     o.edge_width = 2.0;  // GUI 像素画布：2px 抗锯齿边线（终端用默认 1.0）
     o.draw_vertices = true;
-    const auto scene = termchart::chart4d::wire4d(verts, edges, o, projector);
+    auto scene = termchart::chart4d::wire4d(verts, edges, o, projector);
 
     termchart::gui::RenderOptions ro;
     ro.width = static_cast<std::uint32_t>(std::lround(width));
@@ -126,6 +129,27 @@ Bitmap render_hypercube_frame(double width, double height, const HypercubeState&
     ro.background = Rgb{14, 16, 24};
     ro.text_cell_w = 6.0;
     ro.text_cell_h = 8.0;
+
+    // 中文叠加层：FontBackend 组合链让非 ASCII 码点走系统 TTF（Windows 自动试
+    // msyh.ttc/simhei.ttf），ASCII 仍走点阵；SceneBuilder 只持引用不清空，
+    // 可直接往 wire4d 的 Scene 上追文本（文本路径按最终分辨率直绘并置顶）。
+    {
+        using termchart::Color;
+        using termchart::Point;
+        using termchart::Style;
+        termchart::scene::SceneBuilder b(scene);
+        Style title;
+        title.set_fg(Color::rgb(termchart::Rgb{235, 235, 235}));
+        Style hint;
+        hint.set_fg(Color::rgb(termchart::Rgb{150, 150, 150}));
+        constexpr std::string_view kTitle = "四维超立方体";
+        constexpr std::string_view kHint =
+            "拖拽旋转 · 滚轮缩放 · 空格暂停 · R 复位 · ESC 退出";
+        b.text(Point{14.0, 12.0}, kTitle, title);
+        const double hint_w =
+            termchart::gui::measure_text(kHint, ro.text_cell_w, ro.text_cell_h).width;
+        b.text(Point{width - 14.0 - hint_w, height - ro.text_cell_h - 10.0}, kHint, hint);
+    }
 
     termchart::gui::SceneRenderer renderer(ro);
     return renderer.render(scene);

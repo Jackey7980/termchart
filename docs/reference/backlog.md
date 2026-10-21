@@ -19,6 +19,16 @@
 - [x] **tests/fixtures 7 份待补**（2026-10-13）：新增 `tools/gen_fixtures.py`，补齐
   `sample_data.hpp` / `sample_graph.hpp` / `sample_grapheme.txt` 三份（前 4 份仍由
   `gen_dsl_samples.py` 产出）；**7 份全部就位**，且都有消费方 `tests/unit/test_fixtures.cpp`。
+- [x] **「数据帝国」三模块**（2026-10-21）：math(L1) / io(L2) / data(L4) 落地——
+  math：stats / interpolate / fft / linalg / special 五头（详见 ROADMAP 修订记录）；
+  io：csv 零拷贝数值入口、json（dsl/json 核心下沉收编，dsl 留 shim）、stream 分块行读取；
+  data：util/data 四件套上移（git mv，namespace termchart::data）+ ema + ohlc。
+  验证：doctest 1103 用例 / 194733 断言 0 失败、ctest 79/79、check_all 全绿。
+- [ ] **已知遗留小项**（2026-10-21 登记）：① `data::rolling` 的纯 SMA 仍 O(N·window)，
+  滑动求和 O(N) 化属局部优化（EMA 已 O(N)）；② `math::interpolate` 的 monotone (PCHIP)
+  变体未做（自然样条在噪声数据上轻微过冲）；③ `io/csv` 与 `dsl/csv_sniff` 两份解析器
+  的合并需先把 csv_sniff 的 document::TableModel 组装层拆到 L8+（层号硬墙），记后续；
+  ④ `chart`(L12) 对 `data`(L4)/`io`(L2) 的消费尚未接线（"CSV→均线→出图"端到端示例）。
 
 ## 二、工程 / CI 设施（ROADMAP 阶段 0 未勾选项）
 
@@ -40,6 +50,17 @@
     字符的路径**，设 `GCOV_PREFIX` 指向 ASCII 目录后正常产出 382 份 `.gcda`；
   * 因此把 asan / tsan / coverage 三项都挂进 CI 的 **ubuntu** 作业（本次新增 tsan + coverage），
     让"全绿"这件事在 CI 上可验证，而不是只在本地口头声称。
+- [x] **CI 三平台矩阵**（2026-10-21）：ci.yml 补 **macos (clang, macos-14)** 作业
+  （`cmake --preset ninja` + 全量 ctest）。核实后确认风险两点均不存在：仓库无任何目标启用
+  `-Werror`（`TERMCHART_WARNINGS_AS_ERRORS` 默认 OFF 且无调用方传 `WERROR`），clang 的
+  `-Wconversion` 新告警不会炸构建；`TERMCHART_BUILD_PYTHON` 默认 OFF，CI 不依赖 pybind11。
+  Linux 早在 2026-10-13 即在矩阵内，macOS 是此前的唯一缺口。
+- [ ] **WASM (Emscripten) 目标**（2026-10-21 登记，未开工）：`HeadlessBackend` 产出的
+  `image::Bitmap` 加 Emscripten 胶水（`encode_png` → `<canvas>` drawImage / WebGL 纹理）
+  即可刷网页，渲染核心（scene/gui/SceneRenderer，L4 及以下）无需改动；主要成本在
+  构建侧（`-s USE_PTHREADS`、文件系统虚拟化、`term/` 平台代码在无 tty 环境的退化已验证），
+  以及一个 `<canvas>` 示例与 `emcmake` preset。刻意不并入 CI（runner 生态差异大），
+  留作发布渠道工作。
 
 ## 三、质量与一致性（精简，逐条证据见 `quality_todo.md`）
 

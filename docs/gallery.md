@@ -75,4 +75,7 @@
 | `70_export_pdf` | （源文件首行注释未写职责，待补） | [文本快照](gallery/70_export_pdf.txt) |
 | `71_fetch_stb` | 用 termchart 自己的 network 后端拉取 vendored STB 头文件 | [文本快照](gallery/71_fetch_stb.txt) |
 | `72_3d` | 3D 曲面/散点（规格外补充示例） | [文本快照](gallery/72_3d.txt) |
+| `73_gui_cjk` | GUI 文本出口接系统 TTF 后的中文上屏验证 | [文本快照](gallery/73_gui_cjk.txt) |
+| `74_hypercube_4d` | 4D 超立方体：绕 XW/YZ 平面自转，两阶段投影到终端 | [文本快照](gallery/74_hypercube_4d.txt) |
+| `75_gui_cjk_4d` | 终极缝合怪：4D 超立方体 + TTF 中文 + GUI 像素画布 | [文本快照](gallery/75_gui_cjk_4d.txt) |
 

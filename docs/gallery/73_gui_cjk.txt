@@ -1,0 +1,3 @@
+system CJK font: C:/Windows/Fonts/msyh.ttc (found)
+title band ink: 446 px (x-axis CJK labels drawn below)
+encoded 3240988 bytes (no output path given)

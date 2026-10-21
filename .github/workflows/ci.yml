@@ -1,7 +1,8 @@
 # ci.yml —— 最小可信 CI
 #
 # 原则（与 ROADMAP/协议一致）：
-#   * 两平台：ubuntu（TSan/ASan 可跑）+ windows（本仓库的主开发平台，MinGW）；
+#   * 三平台：ubuntu（TSan/ASan 可跑）+ macos（clang，第三个工具链哨兵）+
+#     windows（本仓库的主开发平台，MinGW）；
 #   * 护栏与测试同门槛：check_layers / check_header_only / 生成器 --check 与 ctest
 #     一起进必过清单——护栏只在本地跑等于没有护栏；
 #   * 不追矩阵花样：preset 名与 CMakePresets.json 一一对应，改预设必须同步这里。
@@ -52,6 +53,18 @@ jobs:
         run: cmake --build build/debug -j 4
       - name: 测试
         run: ctest --test-dir build/debug --output-on-failure
+
+  macos:
+    name: macos (clang)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置
+        run: cmake --preset ninja
+      - name: 构建
+        run: cmake --build build/ninja -j 4
+      - name: 测试
+        run: ctest --test-dir build/ninja --output-on-failure
 
   windows:
     name: windows (mingw)
