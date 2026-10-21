@@ -25,6 +25,7 @@ struct Wire4dOpts {
     double cols = 72.0;       // 画布宽（格）
     double rows = 28.0;       // 画布高（格）
     double point_size = 0.9;  // 顶点方块边长（格）
+    double edge_width = 1.0;  // 边线宽（Scene 单位；终端 1.0 细线，GUI 像素画布可调粗）
     bool draw_vertices = true;  // 是否在边之外叠加顶点标记
 };
 
@@ -48,7 +49,7 @@ inline scene::Scene wire4d(const std::vector<math4d::Vec4>& verts,
         if (!p0.visible || !p1.visible) {
             continue;
         }
-        s.push(scene::StrokeOp{chart3d::shade((p0.depth + p1.depth) * 0.5), 1.0});
+        s.push(scene::StrokeOp{chart3d::shade((p0.depth + p1.depth) * 0.5), o.edge_width});
         s.push(scene::MoveTo{Point{p0.x, p0.y}});
         s.push(scene::LineTo{Point{p1.x, p1.y}});
     }

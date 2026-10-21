@@ -64,3 +64,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 set_target_properties(weather_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+
+# 4D 超立方体：math4d + chart4d::Projector4D 两阶段投影 → chart4d::wire4d 产 Scene →
+# SceneRenderer（超采样抗锯齿真彩）→ TkCanvas::blit 上真窗口。拖拽轨道 / 滚轮缩放 /
+# 空格暂停自转 / R 复位；--png 无头出图（CI 可验证，无需桌面）。
+add_executable(hypercube_4d_demo example/hypercube_4d_demo.cpp)
+target_link_libraries(hypercube_4d_demo PRIVATE termchart_gui_win32)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hypercube_4d_demo PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+set_target_properties(hypercube_4d_demo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
