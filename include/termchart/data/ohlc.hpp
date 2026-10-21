@@ -19,6 +19,7 @@
 #include <span>
 #include <vector>
 
+#include "termchart/core/expected.hpp"
 #include "termchart/export.hpp"
 
 namespace termchart::data {
@@ -37,9 +38,12 @@ struct OhlcOptions {
 };
 
 // 聚合为 OHLC 序列。t/v 取较短长度；空输入返回空 vector。
-[[nodiscard]] TERMCHART_API std::vector<OhlcBar> ohlc(std::span<const double> timestamps,
-                                                      std::span<const double> values,
-                                                      const OhlcOptions& options = {}) noexcept;
+// timestamps 必须**非降序**——违反时 fail-loud 返回 InvalidArgument
+// （2026-10-22 加固：无序输入会把 K 线切成一堆错乱桶，静默产出比报错
+// 更糟；并发收到的数据请调用方先自行排序）。
+[[nodiscard]] TERMCHART_API Result<std::vector<OhlcBar>> ohlc(
+    std::span<const double> timestamps, std::span<const double> values,
+    const OhlcOptions& options = {}) noexcept;
 
 }  // namespace termchart::data
 

@@ -1,5 +1,6 @@
 #include "termchart/data/ohlc.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <span>
@@ -7,11 +8,17 @@
 
 namespace termchart::data {
 
-std::vector<OhlcBar> ohlc(std::span<const double> timestamps, std::span<const double> values,
-                          const OhlcOptions& options) noexcept {
+Result<std::vector<OhlcBar>> ohlc(std::span<const double> timestamps,
+                                  std::span<const double> values,
+                                  const OhlcOptions& options) noexcept {
     std::vector<OhlcBar> bars;
-    const std::size_t n = timestamps.size() < values.size() ? timestamps.size() : values.size();
-    if (n == 0) return bars;
+    const std::size_t n =
+        timestamps.size() < values.size() ? timestamps.size() : values.size();
+    if (n == 0) return Result<std::vector<OhlcBar>>{std::move(bars)};
+    // 非降序是分桶算法的前提；违反即 fail-loud（不静默切错桶）。
+    if (!std::is_sorted(timestamps.begin(), timestamps.end())) {
+        return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+    }
 
     // 单桶模式（bucket_seconds ≤ 0）：全量一根。
     if (!(options.bucket_seconds > 0.0)) {
@@ -31,7 +38,7 @@ std::vector<OhlcBar> ohlc(std::span<const double> timestamps, std::span<const do
             ++bar.count;
         }
         if (bar.count > 0) bars.push_back(bar);
-        return bars;
+        return Result<std::vector<OhlcBar>>{std::move(bars)};
     }
 
     // 分桶模式：桶边界锚定在桶内首个样本，顺序合并。
@@ -59,7 +66,7 @@ std::vector<OhlcBar> ohlc(std::span<const double> timestamps, std::span<const do
         ++cur.count;
     }
     if (has) bars.push_back(cur);
-    return bars;
+    return Result<std::vector<OhlcBar>>{std::move(bars)};
 }
 
 }  // namespace termchart::data

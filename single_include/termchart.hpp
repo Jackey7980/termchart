@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 372 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 373 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -3511,6 +3511,20 @@ namespace termchart::math {
     return sum / static_cast<double>(n);
 }
 
+// Kahan 补偿求和（避免长序列大数吃小数）；NaN 跳过。
+[[nodiscard]] inline double sum(std::span<const double> xs) noexcept {
+    double s = 0.0;
+    double comp = 0.0;  // Kahan 补偿项
+    for (const double x : xs) {
+        if (std::isnan(x)) continue;
+        const double y = x - comp;
+        const double t = s + y;
+        comp = (t - s) - y;
+        s = t;
+    }
+    return s;
+}
+
 // 中位数。偶数个取中间两个的均值；O(N) 平均复杂度（nth_element）。
 [[nodiscard]] inline double median(std::span<const double> xs) noexcept {
     std::vector<double> v;
@@ -6065,7 +6079,6 @@ private:
 
 
 
-
 namespace termchart::data {
 
 struct DataView {
@@ -6081,7 +6094,13 @@ enum class Reducer : std::uint8_t {
 
 struct Group {
     double                key = 0.0;       // 分组键（NaN 不参与聚合）
-    std::vector<DataView> values_per_col;  // 每列在原数组中的"段"
+    // 每列一个非持有视图。**所有权在 owned**：values_per_col[i] 指向
+    // owned[i] 的堆缓冲——vector<vector> 移动只转 24 字节描述符，内层
+    // 堆数据不动，指针跨 Group 移动/out push_back 始终有效。
+    // （2026-10-22 修复：此前在循环内声明 flat 后存 DataView，flat 析构
+    // 即成悬垂指针——UB，小数据下"碰巧不崩"正是其阴险处。）
+    std::vector<std::vector<double>> owned;
+    std::vector<DataView>            values_per_col;
 };
 
 // 基础聚合：单列按 key 分组，对 value 列施加 reducer。
@@ -6118,7 +6137,7 @@ struct Quartiles {
 };
 [[nodiscard]] TERMCHART_API Quartiles quartiles(DataView view);
 
-}  // namespace termchart::util::data
+}  // namespace termchart::data
 
 // ===== include/termchart/data/fill_missing.hpp =====
 // util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
@@ -6191,9 +6210,12 @@ struct OhlcOptions {
 };
 
 // 聚合为 OHLC 序列。t/v 取较短长度；空输入返回空 vector。
-[[nodiscard]] TERMCHART_API std::vector<OhlcBar> ohlc(std::span<const double> timestamps,
-                                                      std::span<const double> values,
-                                                      const OhlcOptions& options = {}) noexcept;
+// timestamps 必须**非降序**——违反时 fail-loud 返回 InvalidArgument
+// （2026-10-22 加固：无序输入会把 K 线切成一堆错乱桶，静默产出比报错
+// 更糟；并发收到的数据请调用方先自行排序）。
+[[nodiscard]] TERMCHART_API Result<std::vector<OhlcBar>> ohlc(
+    std::span<const double> timestamps, std::span<const double> values,
+    const OhlcOptions& options = {}) noexcept;
 
 }  // namespace termchart::data
 
@@ -6269,6 +6291,50 @@ rolling(const std::vector<double>& values, RollingStat stat,
 //   * window == 0 或空输入返回空 vector。
 [[nodiscard]] TERMCHART_API std::vector<double>
 ema(const std::vector<double>& values, std::size_t window) noexcept;
+
+}  // namespace termchart::data
+
+// ===== include/termchart/data/scalar_parse.hpp =====
+// data/scalar_parse.hpp —— 脏标量解析（"赛博法医"入口，L4）
+//
+// 真实世界的数值从来不是干净的 double：财报里是 "1,234.50"、UI 上是 "15%"、
+// 会计系统导出 "(123.45)"、中日韩环境混用全角空格与 U+2212 负号、缺失是
+// "NA"/"N/A"/"null"/"-"。io/csv 的数值入口遇到这些只能报错——本文件就是
+// 在报错之前的那道法医层：**尽力从脏字符串里提取数值**，提不出就明确说
+// 提不出（NotNumeric），是缺失记号就明确说是缺失（Empty/NaN）。
+//
+// 支持（可组合）：
+//   * 前后空白（ASCII + 全角 U+3000）；
+//   * 千分位逗号 "1,234.50"；
+//   * 货币符号 "$" "¥" "€" "£" 与词 "RMB" "USD" "CNY"，中文后缀 "元"；
+//   * 百分号 "15%" → 0.15；
+//   * 会计括号 "(123.45)" → -123.45；
+//   * Unicode 负号 U+2212 "−123"；
+//   * 缺失记号（NA 族，大小写不敏感）→ NaN + Empty；
+// 科学计数法由 std::from_chars 原生支持（"1e3"）。
+
+
+namespace termchart::data {
+
+enum class ScalarParseStatus : std::uint8_t {
+    Ok,          // 解析出数值
+    Empty,       // 缺失记号（NA 族或纯空白）→ value = NaN
+    NotNumeric,  // 不是数值（提不出）→ value = NaN
+};
+
+struct ScalarParseResult {
+    double value = 0.0;
+    ScalarParseStatus status = ScalarParseStatus::Ok;
+
+    [[nodiscard]] bool ok() const noexcept { return status == ScalarParseStatus::Ok; }
+    [[nodiscard]] bool missing() const noexcept { return status == ScalarParseStatus::Empty; }
+};
+
+// 脏标量 → 数值。不抛异常；永不崩（任意字节序列都是合法输入）。
+[[nodiscard]] ScalarParseResult parse_scalar(std::string_view text) noexcept;
+
+// 是否为缺失记号（NA 族 / 纯空白）。
+[[nodiscard]] bool is_missing_token(std::string_view text) noexcept;
 
 }  // namespace termchart::data
 

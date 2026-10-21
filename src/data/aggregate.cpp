@@ -64,6 +64,9 @@ bucketize(DataView key_view, std::size_t num_cols,
 
 std::vector<Group>
 group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reducer) {
+    // reducer 参数：保留在 API 面（pandas groupby().agg() 心智），当前只产出
+    // 分组视图；聚合值由调用方对 values_per_col 施加 reducer 得到。
+    (void)reducer;
     std::vector<Group> out;
     if (key_view.data == nullptr || key_view.size == 0 || value_views.empty()) return out;
 
@@ -73,8 +76,11 @@ group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reduc
         Group g;
         g.key = k;
         g.values_per_col.reserve(value_views.size());
+        g.owned.reserve(value_views.size());
         for (auto& v : value_views) {
-            // 拼接所有段为一段 DataView（聚合 reducer 不关心顺序）
+            // 拼接所有段为一段（聚合 reducer 不关心顺序）。
+            // 关键顺序：先搬进 owned（Group 成员，生命周期与 Group 一致），
+            // 再从 owned 取指针——绝不能再"循环内临时 vector 存指针"。
             std::vector<double> flat;
             flat.reserve(key_view.size);
             for (auto& s : segs) {
@@ -82,7 +88,9 @@ group_reduce(DataView key_view, std::vector<DataView> value_views, Reducer reduc
                     flat.push_back(v.data[i]);
                 }
             }
-            g.values_per_col.push_back(DataView{flat.data(), flat.size()});
+            g.owned.push_back(std::move(flat));
+            g.values_per_col.push_back(
+                DataView{g.owned.back().data(), g.owned.back().size()});
         }
         out.push_back(std::move(g));
     }
@@ -96,16 +104,30 @@ group_reduce_multi(DataView key_view,
     MultiReduceResult res;
     if (reducers.empty()) return res;
     res.reducers = reducers;
+    if (key_view.data == nullptr || key_view.size == 0 || value_views.empty()) return res;
+    // 与 group_reduce 同构：按 key 分桶后，对**每个 value 列**收集段视图。
+    // （历史 bug：此处曾把 key_view 当值列塞进 values_per_col、且忽略 value_views——
+    // 那只会回显键，毫无意义；现修正为真正分组 value 列。）
     auto buckets = bucketize(key_view, value_views.size(), {});
     res.groups.reserve(buckets.size());
     for (auto& [k, segs] : buckets) {
         Group g;
         g.key = k;
-        std::vector<double> flat;
-        for (auto& s : segs) {
-            for (std::size_t i = s.begin; i < s.end; ++i) flat.push_back(key_view.data[i]);
+        g.values_per_col.reserve(value_views.size());
+        g.owned.reserve(value_views.size());
+        for (auto& v : value_views) {
+            std::vector<double> flat;
+            flat.reserve(key_view.size);
+            for (auto& s : segs) {
+                for (std::size_t i = s.begin; i < s.end && i < v.size; ++i) {
+                    flat.push_back(v.data[i]);
+                }
+            }
+            // owned 持有，view 指向（勿再临时 vector 存指针）。
+            g.owned.push_back(std::move(flat));
+            g.values_per_col.push_back(
+                DataView{g.owned.back().data(), g.owned.back().size()});
         }
-        g.values_per_col.push_back(DataView{flat.data(), flat.size()});
         res.groups.push_back(std::move(g));
     }
     return res;

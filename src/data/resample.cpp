@@ -1,7 +1,17 @@
+// resample.cpp —— 重采样（按桶边界聚合）
+//
+// 2026-10-22 重写：旧实现遍历 values 最多三遍（Count 一遍、累加一遍、
+// Median/Stddev **每桶一遍** = O(B×N)）。现单遍定位+收集，每桶一次规约：
+// O(N + B·W log W)（Median 的 sort 只在桶内）。统计量复用 math::stats
+// （Kahan/mean、nth_element/median、Welford/variance），比内联循环更准。
 #include "termchart/data/resample.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <span>
+#include <vector>
+
+#include "termchart/math/stats.hpp"
 
 namespace termchart::data {
 
@@ -31,85 +41,39 @@ resample(const std::vector<double>& values, const std::vector<double>& edges,
         out[i].count = 0;
     }
 
-    for (double v : values) {
+    // 单遍：每个样本二分定位桶号并落入该桶收集器。
+    std::vector<std::vector<double>> bins(out.size());
+    for (const double v : values) {
         if (std::isnan(v)) continue;
-        // 二分定位桶
-        auto it = std::upper_bound(edges.begin(), edges.end(), v);
+        const auto it = std::upper_bound(edges.begin(), edges.end(), v);
         std::size_t idx = static_cast<std::size_t>(it - edges.begin());
-        if (idx == 0) continue;          // 小于首边界
+        if (idx == 0) continue;  // 小于首边界：不进任何桶
         if (idx >= edges.size()) {
-            // 越过末边界：归到末桶（最后一桶含 hi）
-            if (v == edges.back()) idx = edges.size() - 1;
-            else continue;
+            if (v == edges.back()) {
+                idx = edges.size() - 1;  // 恰好等于末边界：归末桶（末桶含 hi）
+            } else {
+                continue;  // 越过末边界：丢弃
+            }
         }
-        const std::size_t bucket = idx - 1;
-        // 累加器：用均值类需要累加求和
-        if (reducer == Reducer::Count) {
-            out[bucket].count++;
-        }
-        // 把样本值存到 out[bucket].value 的 NaN 占位里：用 resample 的输出 value
-        // 设计简化：分两次走（先聚合再规约）
+        bins[idx - 1].push_back(v);
     }
 
-    // 第二遍：每个桶聚合（除非 Count）
-    if (reducer == Reducer::Count) {
-        for (auto& b : out) b.value = static_cast<double>(b.count);
-        return out;
-    }
-    // 其他 reducer：累加 sum / 跟踪 min/max 等
-    std::vector<double> sums(out.size(), 0.0);
-    std::vector<double> mns(out.size(), 0.0);
-    std::vector<double> mxs(out.size(), 0.0);
-    std::vector<bool>   any(out.size(), false);
-    std::vector<double> firsts(out.size(), 0.0);
-    std::vector<double> lasts(out.size(), 0.0);
-    for (double v : values) {
-        if (std::isnan(v)) continue;
-        auto it = std::upper_bound(edges.begin(), edges.end(), v);
-        std::size_t idx = static_cast<std::size_t>(it - edges.begin());
-        if (idx == 0 || idx >= edges.size()) continue;
-        const std::size_t bucket = idx - 1;
-        sums[bucket] += v;
-        if (!any[bucket]) { mns[bucket] = v; mxs[bucket] = v; firsts[bucket] = v; }
-        else { mxs[bucket] = std::max(mxs[bucket], v); mns[bucket] = std::min(mns[bucket], v); }
-        any[bucket] = true;
-        lasts[bucket] = v;
-        out[bucket].count++;
-    }
+    // 每桶一次规约。桶内顺序 = 输入顺序（First/Last 依赖它）。
     for (std::size_t i = 0; i < out.size(); ++i) {
-        if (!any[i]) continue;
+        const std::vector<double>& bv = bins[i];
+        out[i].count = bv.size();
+        if (bv.empty()) continue;  // value 保持 NaN（空桶口径）
+        const std::span<const double> s{bv.data(), bv.size()};
         switch (reducer) {
-        case Reducer::Sum:    out[i].value = sums[i]; break;
-        case Reducer::Mean:   out[i].value = sums[i] / static_cast<double>(out[i].count); break;
-        case Reducer::Min:    out[i].value = mns[i]; break;
-        case Reducer::Max:    out[i].value = mxs[i]; break;
-        case Reducer::First:  out[i].value = firsts[i]; break;
-        case Reducer::Last:   out[i].value = lasts[i]; break;
-        case Reducer::Median:
-        case Reducer::Stddev: {
-            std::vector<double> bucket_vals;
-            for (double v : values) {
-                if (std::isnan(v)) continue;
-                auto it = std::upper_bound(edges.begin(), edges.end(), v);
-                std::size_t idx = static_cast<std::size_t>(it - edges.begin());
-                if (idx == 0 || idx >= edges.size()) continue;
-                if (idx - 1 == i) bucket_vals.push_back(v);
-            }
-            if (reducer == Reducer::Median) {
-                std::sort(bucket_vals.begin(), bucket_vals.end());
-                const std::size_t n = bucket_vals.size();
-                if (n == 0) break;
-                if (n % 2 == 1) out[i].value = bucket_vals[n / 2];
-                else out[i].value = 0.5 * (bucket_vals[n / 2 - 1] + bucket_vals[n / 2]);
-            } else {
-                const double m = sums[i] / static_cast<double>(out[i].count);
-                double ss = 0;
-                for (double v : bucket_vals) { const double d = v - m; ss += d * d; }
-                out[i].value = std::sqrt(ss / static_cast<double>(out[i].count));
-            }
-            break;
-        }
-        default: out[i].value = sums[i] / static_cast<double>(std::max<std::size_t>(out[i].count, 1)); break;
+        case Reducer::Sum:     out[i].value = math::sum(s); break;
+        case Reducer::Mean:    out[i].value = math::mean(s); break;
+        case Reducer::Min:     out[i].value = *std::min_element(bv.begin(), bv.end()); break;
+        case Reducer::Max:     out[i].value = *std::max_element(bv.begin(), bv.end()); break;
+        case Reducer::Count:   out[i].value = static_cast<double>(bv.size()); break;
+        case Reducer::First:   out[i].value = bv.front(); break;
+        case Reducer::Last:    out[i].value = bv.back(); break;
+        case Reducer::Median:  out[i].value = math::median(s); break;
+        case Reducer::Stddev:  out[i].value = std::sqrt(math::variance(s)); break;
         }
     }
     return out;

@@ -35,6 +35,20 @@ namespace termchart::math {
     return sum / static_cast<double>(n);
 }
 
+// Kahan 补偿求和（避免长序列大数吃小数）；NaN 跳过。
+[[nodiscard]] inline double sum(std::span<const double> xs) noexcept {
+    double s = 0.0;
+    double comp = 0.0;  // Kahan 补偿项
+    for (const double x : xs) {
+        if (std::isnan(x)) continue;
+        const double y = x - comp;
+        const double t = s + y;
+        comp = (t - s) - y;
+        s = t;
+    }
+    return s;
+}
+
 // 中位数。偶数个取中间两个的均值；O(N) 平均复杂度（nth_element）。
 [[nodiscard]] inline double median(std::span<const double> xs) noexcept {
     std::vector<double> v;

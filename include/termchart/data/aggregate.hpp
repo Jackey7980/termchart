@@ -20,8 +20,6 @@
 
 #include "termchart/export.hpp"
 
-#include "termchart/export.hpp"
-
 namespace termchart::data {
 
 struct DataView {
@@ -37,7 +35,13 @@ enum class Reducer : std::uint8_t {
 
 struct Group {
     double                key = 0.0;       // 分组键（NaN 不参与聚合）
-    std::vector<DataView> values_per_col;  // 每列在原数组中的"段"
+    // 每列一个非持有视图。**所有权在 owned**：values_per_col[i] 指向
+    // owned[i] 的堆缓冲——vector<vector> 移动只转 24 字节描述符，内层
+    // 堆数据不动，指针跨 Group 移动/out push_back 始终有效。
+    // （2026-10-22 修复：此前在循环内声明 flat 后存 DataView，flat 析构
+    // 即成悬垂指针——UB，小数据下"碰巧不崩"正是其阴险处。）
+    std::vector<std::vector<double>> owned;
+    std::vector<DataView>            values_per_col;
 };
 
 // 基础聚合：单列按 key 分组，对 value 列施加 reducer。
@@ -74,6 +78,6 @@ struct Quartiles {
 };
 [[nodiscard]] TERMCHART_API Quartiles quartiles(DataView view);
 
-}  // namespace termchart::util::data
+}  // namespace termchart::data
 
 #endif  // TERMCHART_DATA_AGGREGATE_HPP

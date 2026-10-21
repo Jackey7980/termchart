@@ -1,6 +1,8 @@
 #include "termchart/data/fill_missing.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 namespace termchart::data {
 
@@ -34,34 +36,40 @@ fill_missing(std::vector<double>& values, FillStrategy strategy) noexcept {
     }
 
     if (strategy == FillStrategy::LinearInterp) {
-        // 第一/最后一个非 NaN 值
-        std::size_t first_idx = values.size(), last_idx = values.size();
+        // 2026-10-22 重写为两遍 O(N)：旧实现对每个空洞向后扫描下一个非 NaN
+        // （连续 k 个 NaN 时 O(k²)）。第一遍收集非 NaN 下标，第二遍在相邻
+        // 锚点之间插值；首/尾空洞用最近锚点延拓（与旧口径一致）。
+        if (values.empty()) return 0;
+        std::vector<std::size_t> anchors;  // 非 NaN 下标，升序
+        anchors.reserve(values.size());
         for (std::size_t i = 0; i < values.size(); ++i) {
-            if (!std::isnan(values[i])) { first_idx = i; break; }
+            if (!std::isnan(values[i])) anchors.push_back(i);
         }
-        for (std::size_t i = values.size(); i > 0; --i) {
-            if (!std::isnan(values[i - 1])) { last_idx = i - 1; break; }
-        }
-        if (first_idx >= values.size()) return 0;  // 全 NaN
+        if (anchors.empty()) return 0;  // 全 NaN：无可填充
+
+        std::size_t filled = 0;
+        std::size_t a = 0;  // 当前区间的左锚点在 anchors 中的位置
         for (std::size_t i = 0; i < values.size(); ++i) {
-            if (!std::isnan(values[i])) continue;
-            if (i < first_idx)      values[i] = values[first_idx];
-            else if (i > last_idx)  values[i] = values[last_idx];
-            else {
-                // 找 i 之前最近非 NaN（值在 prev-1 处），i 之后最近非 NaN（值在 next+1 处）。
-                std::size_t prev = i;
-                while (prev > 0 && std::isnan(values[prev - 1])) --prev;
-                std::size_t next = i;
-                while (next + 1 < values.size() && std::isnan(values[next + 1])) ++next;
-                const double v_prev = values[prev - 1];
-                const double v_next = values[next + 1];
-                const double denom = static_cast<double>(next + 1) - static_cast<double>(prev - 1);
-                const double t = denom > 0.0
-                    ? (static_cast<double>(i) - static_cast<double>(prev - 1)) / denom
-                    : 0.5;
-                values[i] = v_prev * (1.0 - t) + v_next * t;
+            if (!std::isnan(values[i])) {
+                // 推进左锚点：anchors[a] <= i。
+                while (a + 1 < anchors.size() && anchors[a + 1] <= i) ++a;
+                continue;
             }
             ++filled;
+            if (i < anchors.front()) {
+                values[i] = values[anchors.front()];  // 首锚点前：延拓
+                continue;
+            }
+            if (i > anchors.back()) {
+                values[i] = values[anchors.back()];   // 末锚点后：延拓
+                continue;
+            }
+            // 区间 (anchors[a], anchors[a+1]) 内线性插值。
+            const std::size_t left = anchors[a];
+            const std::size_t right = anchors[a + 1];
+            const double denom = static_cast<double>(right - left);
+            const double t = static_cast<double>(i - left) / denom;
+            values[i] = values[left] * (1.0 - t) + values[right] * t;
         }
         return filled;
     }
