@@ -22,6 +22,7 @@ add_executable(termchart_tests
     # ── data ──
     unit/data/test_data.cpp
     unit/data/test_scalar_parse.cpp
+    unit/data/test_dataframe.cpp
 
     # ── util ──
     unit/util/test_utf8.cpp
