@@ -441,7 +441,7 @@ int run_gui(int argc, char** argv) {
 
     // 后端选择：启用 Win32 插件 → 真窗口（鼠标点击）；否则零依赖 TuiBackend（终端 halfblock）。
 #ifdef TERMCHART_BUILD_GUI_WIN32
-    Win32Backend backend(W, H, "spatiotemporal network");
+    termchart_gui_win32::Win32Backend backend(W, H, "spatiotemporal network");
     if (!backend.valid()) {
         std::fprintf(stderr, "Win32 backend unavailable\n");
         return 2;

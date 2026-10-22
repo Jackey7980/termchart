@@ -112,9 +112,19 @@ set_target_properties(65_gui_interactive PROPERTIES
 add_executable(81_spatiotemporal_network_demo 81_spatiotemporal_network_demo.cpp)
 target_link_libraries(81_spatiotemporal_network_demo PRIVATE termchart_gui)
 if(TERMCHART_BUILD_GUI_WIN32)
-  # --gui 走真实 Win32 窗口后端（建 HWND + StretchDIBits 上屏 + OS 事件泵）。默认 OFF：
-  # 此时 --gui 退化为零依赖的 TuiBackend 终端 halfblock（不是窗口）。
+  # 把选项转成编译宏，让源码里的 #ifdef TERMCHART_BUILD_GUI_WIN32 真正生效
+  # （此前只有 option()、从没 add_compile_definitions，导致 Win32 分支从未编入）。
+  # --gui 走真实 Win32 窗口后端（建 HWND + StretchDIBits 上屏 + OS 事件泵）。
+  target_compile_definitions(81_spatiotemporal_network_demo PRIVATE TERMCHART_BUILD_GUI_WIN32)
   target_link_libraries(81_spatiotemporal_network_demo PRIVATE termchart_gui_win32)
+
+  # 81b：临时纯 GUI 示例，零回退（只在插件启用时存在；文件内含 #error 兜底）。
+  add_executable(81b_gui_only 81b_gui_only.cpp)
+  target_compile_definitions(81b_gui_only PRIVATE TERMCHART_BUILD_GUI_WIN32)
+  target_link_libraries(81b_gui_only PRIVATE termchart_gui_win32)
+  termchart_set_warnings(81b_gui_only)
+  set_target_properties(81b_gui_only PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 endif()
 termchart_set_warnings(81_spatiotemporal_network_demo)
 set_target_properties(81_spatiotemporal_network_demo PROPERTIES
