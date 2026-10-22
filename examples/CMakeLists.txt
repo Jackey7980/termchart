@@ -111,6 +111,11 @@ set_target_properties(65_gui_interactive PROPERTIES
 # 自动化测试。手动跑：81_spatiotemporal_network_demo（TUI）/ --gui（GUI）。
 add_executable(81_spatiotemporal_network_demo 81_spatiotemporal_network_demo.cpp)
 target_link_libraries(81_spatiotemporal_network_demo PRIVATE termchart_gui)
+if(TERMCHART_BUILD_GUI_WIN32)
+  # --gui 走真实 Win32 窗口后端（建 HWND + StretchDIBits 上屏 + OS 事件泵）。默认 OFF：
+  # 此时 --gui 退化为零依赖的 TuiBackend 终端 halfblock（不是窗口）。
+  target_link_libraries(81_spatiotemporal_network_demo PRIVATE termchart_gui_win32)
+endif()
 termchart_set_warnings(81_spatiotemporal_network_demo)
 set_target_properties(81_spatiotemporal_network_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
