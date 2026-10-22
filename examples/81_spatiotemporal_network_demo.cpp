@@ -19,7 +19,8 @@
 //     方向性暂以"源→目标"的连线顺序表达，未画箭头——TODO: 缺箭头 API。
 //
 // 跑法：
-//   默认（无参）进入 TUI 终端交互：+ / - 缩放，r 复位，q 退出（Windows 用 conio 非阻塞读键）。
+//   默认（无参）进入 TUI 终端交互：+ / - 缩放，r 复位，q 退出（Windows 直接读控制台句柄
+//   WaitForSingleObject+ReadFile 非阻塞，不依赖 conio.h；缩放走 interaction::Viewport）。
 //   --gui     进入 GUI：顶部固定高度工具栏放 [+] / [-] 按钮，下方画布满剩余空间；点击按钮
 //             缩放并重绘（Win32 真窗口 或 零依赖 TuiBackend 终端 halfblock）。
 //   --png FILE  用 HeadlessBackend 离屏渲染 TUI 同款“平行偏移线”场景并导出 PNG，
@@ -36,15 +37,22 @@
 #include <variant>
 #include <vector>
 #include <fstream>
+#include <atomic>
 
-// 非阻塞读键：Windows 用 <conio.h> 的 _kbhit/_getch（直接读控制台输入缓冲，无需回车、
-// 也不受 term 的 raw 模式影响）；其余平台用 fcntl 把 stdin 设为 O_NONBLOCK 单字节读。
+// 非阻塞读键：Windows 直接读控制台输入句柄（与 term::Terminal::enter() 的 raw 模式
+// 同一个 STD_INPUT_HANDLE）：WaitForSingleObject(h,0) 探活 + ReadFile —— 不依赖 conio.h，
+// 且真非阻塞（Windows 控制台句柄不支持 O_NONBLOCK，裸 ReadFile/_read 无输入时会阻塞等键，
+// 那正是当初 fread 卡死的根因）。其余平台用 fcntl 把 stdin 设为 O_NONBLOCK 单字节读。
 #ifdef _WIN32
-#include <conio.h>
+#include <windows.h>
+// windows.h 把 near/far 定义成宏，会破坏 termchart 头里 cam.near/cam.far 的成员访问。
+#undef near
+#undef far
 #else
 #include <unistd.h>
 #include <fcntl.h>
 #include <cerrno>
+#include <csignal>
 #endif
 
 // ── L0–L14：核心 / 数学3D / 图表3D / 画布 / 渲染 / 终端 / 交互 ──
@@ -63,6 +71,7 @@
 #include "termchart/interaction/input_parser.hpp"
 #include "termchart/interaction/event.hpp"
 #include "termchart/interaction/key.hpp"
+#include "termchart/interaction/zoom.hpp"  // interaction::Viewport（缩放/平移/夹取）
 
 // ── 平行 GUI 栈（header-only，链接 termchart_gui）──
 #include "termchart_gui/gui.hpp"
@@ -153,25 +162,37 @@ void bounds(const Network& net, math3d::Vec3& center, double& radius) {
 // ── L12：生成 Scene（3D 投影到 2D 图元）。被 TUI 与 GUI 共用。──────────────
 // faux_width=true → 用平行偏移的若干条线模拟线宽（TUI：Canvas 忽略 StrokeOp.width）；
 // faux_width=false → 直接设 StrokeOp.width（GUI：gui::SceneRenderer 尊重线宽）。
-scene::Scene build_scene(const Network& net, int cols, int rows, double zoom, bool faux_width) {
+scene::Scene build_scene(const Network& net, int cols, int rows,
+                         const interaction::Viewport& vp, bool faux_width) {
     scene::Scene s;
     math3d::Vec3 center;
     double radius = 0.0;
     bounds(net, center, radius);
 
-    // 缩放：zoom>1 拉近（半径变小 → 物体变大）。
-    const double z = std::max(0.4, std::min(4.0, zoom));
-    math3d::Camera cam = chart3d::make_camera(
+    // 基准投影（zoom=1，无缩放）：把 3D 节点投影进 cols×rows 屏幕格。真正的缩放/平移交给
+    // interaction::Viewport——它在屏幕格空间里维护"可见窗口"，自带夹取（不会飞出屏外 / 平移
+    // 越界），zoom_at 的锚点保证缩放中心不动。
+    const math3d::Camera cam = chart3d::make_camera(
         static_cast<double>(cols), static_cast<double>(rows),
-        35.0, 22.0, 55.0, center, radius / z);
+        35.0, 22.0, 55.0, center, radius);
+
+    // 基准屏幕坐标 p 经 Viewport 映射到最终屏幕坐标（reset 时恒等，缩放时放大/平移）。
+    const auto map_pt = [&](const math3d::Projected& p) -> Point {
+        return Point{
+            vp.normalized_x(p.x) * static_cast<double>(cols),
+            vp.normalized_y(p.y) * static_cast<double>(rows),
+        };
+    };
 
     // 边：StrokeOp + MoveTo + LineTo。
     for (const auto& e : net.edges) {
-        const auto a = cam.project(net.nodes[static_cast<std::size_t>(e.from)].pos,
-                                   static_cast<double>(cols), static_cast<double>(rows));
-        const auto b = cam.project(net.nodes[static_cast<std::size_t>(e.to)].pos,
-                                   static_cast<double>(cols), static_cast<double>(rows));
-        if (!a.visible || !b.visible) continue;
+        const auto pa = cam.project(net.nodes[static_cast<std::size_t>(e.from)].pos,
+                                    static_cast<double>(cols), static_cast<double>(rows));
+        const auto pb = cam.project(net.nodes[static_cast<std::size_t>(e.to)].pos,
+                                    static_cast<double>(cols), static_cast<double>(rows));
+        if (!pa.visible || !pb.visible) continue;
+        const Point a = map_pt(pa);
+        const Point b = map_pt(pb);
         const Color c = weather_color(e.weather);
         const double w = flow_width(e.flow);
         if (faux_width) {
@@ -199,22 +220,24 @@ scene::Scene build_scene(const Network& net, int cols, int rows, double zoom, bo
     for (const auto& nd : net.nodes) {
         const auto p = cam.project(nd.pos, static_cast<double>(cols), static_cast<double>(rows));
         if (!p.visible) continue;
+        const Point q = map_pt(p);
         s.push(scene::FillOp{chart3d::shade(p.depth)});
-        s.push(scene::RectOp{Rect{p.x - 0.45, p.y - 0.45, 0.9, 0.9}});
-        s.push(scene::TextOp{Point{p.x + 0.6, p.y - 0.3}, nd.id, Style{}});
+        s.push(scene::RectOp{Rect{q.x - 0.45, q.y - 0.45, 0.9, 0.9}});
+        s.push(scene::TextOp{Point{q.x + 0.6, q.y - 0.3}, nd.id, Style{}});
     }
     return s;
 }
 
 // ── TUI：Scene → Canvas → CellBuffer → 差分重绘 ───────────────────────────
-void render_tui_frame(CellBuffer& buf, const Network& net, double zoom, const std::string& last_key) {
+void render_tui_frame(CellBuffer& buf, const Network& net, const interaction::Viewport& vp,
+                      const std::string& last_key) {
     const int cols = static_cast<int>(buf.width());
     const int rows = static_cast<int>(buf.height());
     canvas::Canvas canvas(static_cast<std::uint32_t>(cols),
                           static_cast<std::uint32_t>(rows));
 
     // L12 生成 + L10 光栅化（braille/halfblock）。
-    const scene::Scene s = build_scene(net, cols, rows, zoom, /*faux_width=*/true);
+    const scene::Scene s = build_scene(net, cols, rows, vp, /*faux_width=*/true);
     canvas::render_scene(s, canvas);
 
     // 右上角伪按钮 [+] [-]（固定位置）。
@@ -226,8 +249,8 @@ void render_tui_frame(CellBuffer& buf, const Network& net, double zoom, const st
     // 底部状态行（含调试用的 last key 回显，避免写实时终端导致花屏）。
     char status[192];
     std::snprintf(status, sizeof(status),
-                  "zoom=%.2f  nodes=%zu  edges=%zu   last=%s   [+/- zoom][r reset][q quit]",
-                  zoom, net.nodes.size(), net.edges.size(), last_key.c_str());
+                  "scale=%.2f  nodes=%zu  edges=%zu   last=%s   [+/- zoom][r reset][q quit]",
+                  vp.scale_x(), net.nodes.size(), net.edges.size(), last_key.c_str());
     canvas.draw_text(Point{1.0, static_cast<double>(rows - 1)}, status,
                      Style{}.set_fg(Color::rgb(180, 200, 220)));
 
@@ -240,13 +263,24 @@ void render_tui_frame(CellBuffer& buf, const Network& net, double zoom, const st
     }
 }
 
-// 非阻塞读一个键（Windows=conio；其它=fcntl O_NONBLOCK）。命中返回 true 并写入 out（UTF-8）。
+// 非阻塞读一个键。Windows 直接读控制台输入句柄（与 term::Terminal::enter() 的 raw 模式
+// 同一 HANDLE）：WaitForSingleObject(h,0) 探活 + ReadFile —— 不依赖 conio.h，且真非阻塞
+// （Windows 控制台句柄不支持 O_NONBLOCK，裸 ReadFile/_read 无输入时会阻塞等键，那正是
+// 当初 fread 卡死的根因）。其它平台用 fcntl 把 stdin 设为 O_NONBLOCK 单字节读。
 #ifdef _WIN32
 static bool read_key(std::string& out) {
-    if (!_kbhit()) return false;
-    const int c = _getch();
-    if (c == 0x00 || c == 0xE0) { (void)_getch(); return false; }  // 功能/方向键：丢次字节
-    out.assign(1, static_cast<char>(static_cast<unsigned char>(c)));
+    const HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (WaitForSingleObject(h, 0) != WAIT_OBJECT_0) return false;  // 无输入 → 立即返回
+    unsigned char c = 0;
+    DWORD n = 0;
+    if (!ReadFile(h, &c, 1, &n, nullptr) || n != 1) return false;
+    if (c == 0x00 || c == 0xE0) {  // 方向/功能键：丢弃紧随的扫描码字节，本次不产出
+        if (WaitForSingleObject(h, 0) == WAIT_OBJECT_0) {
+            unsigned char d = 0; DWORD m = 0; ReadFile(h, &d, 1, &m, nullptr);
+        }
+        return false;
+    }
+    out.assign(1, static_cast<char>(c));
     return true;
 }
 #else
@@ -264,6 +298,15 @@ static bool read_key(std::string& out) {
 }
 #endif
 
+// 跨平台：把 Ctrl-C / SIGINT 转成"优雅退出"标志，确保循环结束后 term 的 RAII 析构能恢复
+// 终端（光标 / alt-screen / raw 模式）。否则某些终端下 Ctrl-C 直接杀进程会残留 raw 模式。
+static std::atomic<bool> g_interrupt{false};
+#ifdef _WIN32
+static BOOL WINAPI ctrl_handler(DWORD) { g_interrupt.store(true); return TRUE; }
+#else
+static void sigint_handler(int) { g_interrupt.store(true); }
+#endif
+
 int run_tui() {
     term::Terminal term{term::TerminalOptions{
         .raw_mode = true, .alt_screen = true, .hide_cursor = true}};
@@ -276,10 +319,24 @@ int run_tui() {
     CellBuffer buf(size.cols, size.rows);
     render::Renderer renderer;  // 内部持有 prev，render() 只发变化格
 
-    double zoom = 1.0;
+    // 屏幕格空间里的视口：data_bounds = 整屏；reset=全览，缩放受 min_span 夹取（不会飞出屏外）。
+    interaction::Viewport vp{interaction::ViewportOptions{
+        .data_bounds = Rect{0.0, 0.0, static_cast<double>(size.cols),
+                            static_cast<double>(size.rows)},
+        .min_span = 4.0}};
+    const Point anchor{size.cols / 2.0, size.rows / 2.0};  // 以屏幕中心为缩放锚点
+
+#ifdef _WIN32
+    SetConsoleCtrlHandler(ctrl_handler, TRUE);
+#else
+    struct sigaction sa {};
+    sa.sa_handler = sigint_handler;
+    ::sigaction(SIGINT, &sa, nullptr);
+#endif
+
     std::string last_key = "(none)";
     const auto redraw = [&]() {
-        render_tui_frame(buf, net, zoom, last_key);
+        render_tui_frame(buf, net, vp, last_key);
         term.write(renderer.render(buf));  // 首帧自动全量，之后仅变化格（绝不 cls）
         term.flush();
     };
@@ -287,7 +344,7 @@ int run_tui() {
 
     interaction::InputParser parser;
     bool running = true;
-    while (running) {
+    while (running && !g_interrupt.load()) {
         std::string key;
         if (read_key(key)) {
             for (const auto& ev : parser.feed(key)) {
@@ -301,15 +358,20 @@ int run_tui() {
                         k->ch == U'Q') {
                         running = false;
                     } else if (k->ch == U'+') {
-                        zoom *= 1.25; redraw();
+                        vp.zoom_at(1.25, anchor); redraw();
                     } else if (k->ch == U'-') {
-                        zoom /= 1.25; redraw();
+                        vp.zoom_at(0.8, anchor); redraw();
                     } else if (k->ch == U'r' || k->ch == U'R') {
-                        zoom = 1.0; redraw();
+                        vp.reset(); redraw();
                     }
                 } else if (const auto* r = std::get_if<interaction::ResizeEvent>(&ev)) {
                     buf.resize(static_cast<std::uint32_t>(r->cols),
                                static_cast<std::uint32_t>(r->rows));
+                    // 终端尺寸变了：重建视口（data_bounds 跟随新尺寸）。
+                    vp = interaction::Viewport{interaction::ViewportOptions{
+                        .data_bounds = Rect{0.0, 0.0, static_cast<double>(r->cols),
+                                            static_cast<double>(r->rows)},
+                        .min_span = 4.0}};
                     renderer.reset();  // 尺寸变 → 下一帧强制全量
                     redraw();
                 }
@@ -318,7 +380,8 @@ int run_tui() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     // term 析构（RAII）自动 leave：恢复光标 / alt-screen / raw 模式，终端状态零残留。
-    std::fprintf(stderr, "[tui] exited | last_key=%s zoom=%.2f\n", last_key.c_str(), zoom);
+    std::fprintf(stderr, "[tui] exited | last_key=%s scale=%.2f\n",
+                 last_key.c_str(), vp.scale_x());
     return 0;
 }
 
@@ -328,14 +391,18 @@ namespace gui_demo {
 using namespace termchart_gui;
 
 // 自定义画布控件：paint() 里复用与 TUI 同一份 build_scene，经 gui::SceneRenderer
-// 光栅成 Bitmap 再 blit 上屏（GUI 端真正尊重线宽）。
+// 光栅成 Bitmap 再 blit 上屏（GUI 端真正尊重线宽）。缩放走 interaction::Viewport。
 class NetworkCanvas : public Widget {
 public:
-    NetworkCanvas(std::string id, const Network& net)
-        : Widget(std::move(id)), net_(&net) {}
+    static constexpr int kCellsX = 200, kCellsY = 90;  // 离屏「单元格」视口（与 TUI 同口径）
 
-    void set_zoom(double z) noexcept { zoom_ = z; }
-    double zoom() const noexcept { return zoom_; }
+    NetworkCanvas(std::string id, const Network& net)
+        : Widget(std::move(id)), net_(&net),
+          viewport_(Rect{0.0, 0.0, static_cast<double>(kCellsX),
+                         static_cast<double>(kCellsY)},
+                    /*min_span=*/4.0) {}
+
+    interaction::Viewport& viewport() noexcept { return viewport_; }
     void set_faux(bool f) noexcept { faux_ = f; }
     bool faux() const noexcept { return faux_; }
 
@@ -344,10 +411,9 @@ public:
         c.clear(Rgb{16, 18, 24});
         const int w = static_cast<int>(g.w), h = static_cast<int>(g.h);
         if (w <= 0 || h <= 0) return;
-        // 投影用固定「单元格」视口（与 TUI 同口径）；SceneRenderer 的 autofit 再把
+        // 用 interaction::Viewport 做缩放（reset 即全览）；SceneRenderer 的 autofit 再把
         // 单元坐标缩放到 w×h 像素位图。喂像素坐标会让 autofit 把图缩成无穷小→空白。
-        constexpr int kCellsX = 200, kCellsY = 90;
-        const scene::Scene s = build_scene(*net_, kCellsX, kCellsY, zoom_, faux_);
+        const scene::Scene s = build_scene(*net_, kCellsX, kCellsY, viewport_, faux_);
         termchart::gui::SceneRenderer sr{termchart::gui::RenderOptions{
             .width = static_cast<std::uint32_t>(w),
             .height = static_cast<std::uint32_t>(h),
@@ -356,14 +422,15 @@ public:
         }};
         const termchart::image::Bitmap bmp = sr.render(s);
         c.blit(bmp, g.x, g.y);  // TODO: 缺箭头 API —— 方向仅由连线顺序表达
-        c.draw_text(g.x + 6.0, g.y + 6.0, "zoom=" + std::to_string(zoom_),
+        c.draw_text(g.x + 6.0, g.y + 6.0,
+                    "scale=" + std::to_string(viewport_.scale_x()),
                     Rgb{220, 220, 226});
     }
 
 private:
     const Network* net_ = nullptr;
-    double zoom_ = 1.0;
     bool faux_ = false;
+    interaction::Viewport viewport_;  // data_bounds = 单元格视口；reset=全览
 };
 
 }  // namespace gui_demo
@@ -403,15 +470,12 @@ int run_gui(int argc, char** argv) {
     // 下方画布区（自定义控件，默认 vpolicy=Fill → 占满工具栏以外的全部空间）。
     auto& canvas = root.emplace_child<gui_demo::NetworkCanvas>("canvas", net);
 
-    double zoom = 1.0;
     Mount mount(root, backend);
-    const auto update_zoom = [&](double z) {
-        zoom = z;
-        canvas.set_zoom(zoom);
-        mount.paint_all();  // 重建内容 + 重绘（等效 invalidate + redraw）
-    };
-    plus.set_on_click([&] { update_zoom(zoom * 1.1); });   // 点击 → 放大并重绘
-    minus.set_on_click([&] { update_zoom(zoom / 1.1); });  // 点击 → 缩小并重绘
+    // 点击按钮 → 走 interaction::Viewport 缩放（锚点=画布中心，自带夹取不会飞出）。
+    const auto db = canvas.viewport().data_bounds();
+    const Point center{db.x + db.w / 2.0, db.y + db.h / 2.0};
+    plus.set_on_click([&] { canvas.viewport().zoom_at(1.1, center); mount.paint_all(); });
+    minus.set_on_click([&] { canvas.viewport().zoom_at(1.0 / 1.1, center); mount.paint_all(); });
 
     mount.paint_all();  // 首帧
 
