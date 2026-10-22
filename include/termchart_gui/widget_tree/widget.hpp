@@ -9,6 +9,7 @@
 
 #include "termchart/core/style.hpp"
 #include "termchart_gui/fwd.hpp"
+#include "termchart_gui/layout/constraint.hpp"
 #include "termchart_gui/widget_tree/node.hpp"
 
 namespace termchart_gui {
@@ -28,6 +29,14 @@ public:
     WidgetState state() const noexcept { return state_; }
     void set_state(WidgetState s) noexcept { state_ = s; }
 
+    // 布局尺寸策略（被 FlexLayout 读取；默认 Fill 以兼容既有用法）。
+    SizePolicy hpolicy() const noexcept { return hpolicy_; }
+    SizePolicy vpolicy() const noexcept { return vpolicy_; }
+    void set_hpolicy(SizePolicy p) noexcept { hpolicy_ = p; }
+    void set_vpolicy(SizePolicy p) noexcept { vpolicy_ = p; }
+    double flex() const noexcept { return flex_; }
+    void set_flex(double f) noexcept { flex_ = f; }
+
     // 绘制：子类覆写，用 canvas 在全局坐标画自己（默认空）。
     virtual void paint(TkCanvas& canvas) const { (void)canvas; }
 
@@ -42,6 +51,9 @@ public:
 protected:
     Style style_{};
     WidgetState state_ = WidgetState::Normal;
+    SizePolicy hpolicy_ = SizePolicy::Fill;  // 主轴/交叉轴尺寸策略
+    SizePolicy vpolicy_ = SizePolicy::Fill;
+    double flex_ = 1.0;                      // Fill 时的弹性权重
 };
 
 }  // namespace termchart_gui

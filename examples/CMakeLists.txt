@@ -106,6 +106,15 @@ termchart_set_warnings(65_gui_interactive)
 set_target_properties(65_gui_interactive PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 
+# 81 验证 Demo：同时走 TUI（终端差分重绘 + 键盘缩放）与 GUI（termchart_gui widget_tree
+# + 按钮点击缩放）。故意不进 ctest：TUI 默认阻塞读 stdin、GUI 开窗口/刷终端，都会挂住
+# 自动化测试。手动跑：81_spatiotemporal_network_demo（TUI）/ --gui（GUI）。
+add_executable(81_spatiotemporal_network_demo 81_spatiotemporal_network_demo.cpp)
+target_link_libraries(81_spatiotemporal_network_demo PRIVATE termchart_gui)
+termchart_set_warnings(81_spatiotemporal_network_demo)
+set_target_properties(81_spatiotemporal_network_demo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+
 # 42 只 include 单头产物（single_include/），证明其自包含——正常 include 路径之外
 # 额外挂 single_include/；注意它仍链接 termchart 库（单头管声明与内联，实现走链接）。
 if(TARGET 42_single_header_usage)

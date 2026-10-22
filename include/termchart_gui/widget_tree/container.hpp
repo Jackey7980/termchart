@@ -44,6 +44,9 @@ public:
                 LayoutItem it;
                 it.widget = w;
                 it.content = Size{w->width(), w->height()};
+                it.hpolicy = w->hpolicy();  // 把控件声明的尺寸策略交给布局器
+                it.vpolicy = w->vpolicy();
+                it.flex = w->flex();
                 items.push_back(it);
             }
         }
