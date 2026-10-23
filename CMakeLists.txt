@@ -57,9 +57,13 @@ if(WIN32)
     target_link_libraries(termchart PRIVATE ws2_32 schannel secur32 crypt32 advapi32)
 endif()
 
-# proxy_sys_posix.cpp 在 macOS 上读 SystemConfiguration（系统框架，非第三方）。
+# proxy_sys_posix.cpp 在 macOS 上读系统代理配置（系统框架，非第三方）：
+# SystemConfiguration 提供 SCDynamicStore，CoreFoundation 提供
+# CFDictionary/CFString/CFNumber 等基础类型（SystemConfiguration 的头文件
+# 引用它们，但框架本身不传递符号，必须显式链接，否则链接期 undefined）。
 if(APPLE)
-    target_link_libraries(termchart PRIVATE "-framework SystemConfiguration")
+    target_link_libraries(termchart PRIVATE "-framework SystemConfiguration"
+                                             "-framework CoreFoundation")
 endif()
 
 if(NOT TERMCHART_BUILD_SHARED)
