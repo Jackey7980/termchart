@@ -23,7 +23,7 @@ namespace {
 constexpr const wchar_t* kSettingsKey =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
 
-std::wstring widen(std::string_view text) {
+[[maybe_unused]] std::wstring widen(std::string_view text) {
     if (text.empty()) {
         return {};
     }

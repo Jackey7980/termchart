@@ -309,7 +309,7 @@ constexpr const char* kSystemFontCandidates[] = {
     }
     file.seekg(0, std::ios::beg);
     out.resize(static_cast<std::size_t>(size));
-    file.read(reinterpret_cast<char*>(out.data()), size);
+    file.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(size));
     return file.gcount() == static_cast<std::streamsize>(size);
 }
 

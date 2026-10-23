@@ -47,7 +47,6 @@ fill_missing(std::vector<double>& values, FillStrategy strategy) noexcept {
         }
         if (anchors.empty()) return 0;  // 全 NaN：无可填充
 
-        std::size_t filled = 0;
         std::size_t a = 0;  // 当前区间的左锚点在 anchors 中的位置
         for (std::size_t i = 0; i < values.size(); ++i) {
             if (!std::isnan(values[i])) {

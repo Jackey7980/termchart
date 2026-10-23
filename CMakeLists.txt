@@ -133,6 +133,9 @@ if(TERMCHART_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+# 综合能力展示（仓库根新建目录 showcase/）：TUI 全平台 + GUI 仅 Win32 插件
+add_subdirectory(showcase)
+
 # 性能基线：零外部依赖、编译快；`--quick` 档进 ctest 冒烟（见 bench/CMakeLists.txt）。
 if(TERMCHART_BUILD_BENCH)
     add_subdirectory(bench)

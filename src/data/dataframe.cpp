@@ -178,7 +178,7 @@ DataFrame parse_dataframe(std::string_view source, const DataFrameOptions& optio
 
     std::vector<std::string_view> fields;
     std::string owned_escape;
-    std::size_t line_no = 1;
+    [[maybe_unused]] std::size_t line_no = 1;
     bool header_done = false;
 
     while (pos < source.size()) {

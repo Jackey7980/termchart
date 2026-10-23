@@ -71,7 +71,7 @@ void apply_connected_options(SOCKET fd, const SocketOptions& options) noexcept {
 
 bool set_nonblocking(SOCKET fd, bool on) noexcept {
     u_long mode = on ? 1u : 0u;
-    return ::ioctlsocket(fd, FIONBIO, &mode) == 0;
+    return ::ioctlsocket(fd, static_cast<long>(FIONBIO), &mode) == 0;
 }
 
 // connect() 带超时：非阻塞发起 → select 等待可写 → SO_ERROR 拿真实结果。

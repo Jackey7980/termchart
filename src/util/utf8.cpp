@@ -45,7 +45,7 @@ Utf8Decode decode(std::string_view bytes, std::size_t pos) noexcept {
 
     // 首字节有效位。
     std::uint32_t cp = 0;
-    int shift_bits = 0;
+    [[maybe_unused]] int shift_bits = 0;
     switch (trailing) {
         case 0:
             cp = lead;
