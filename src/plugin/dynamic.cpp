@@ -39,7 +39,9 @@ void platform_close(void* handle) noexcept {
 using EntryFn = const Manifest* (*)();
 
 EntryFn entry_of(const DynamicLibrary& library) noexcept {
-    const void* sym = library.symbol(DynamicLibrary::kEntrySymbol);
+    // symbol() 返回 void*；不能对 const void* 直接 reinterpret_cast 成函数指针
+    // （标准不允许对象指针→函数指针的限定转换，clang 报 casts away qualifiers）。
+    void* sym = library.symbol(DynamicLibrary::kEntrySymbol);
     if (sym == nullptr) {
         return nullptr;
     }

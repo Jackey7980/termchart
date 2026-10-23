@@ -308,7 +308,10 @@ TextBoxResult textbox(canvas::Canvas& canvas, Rect rect, std::string& text,
     for (std::size_t c = 0; c < start_cp; ++c) {
         start_byte = utf8_next(text, start_byte);
     }
-    const std::string_view window = text.substr(start_byte, utf8_take(text.substr(start_byte), max_cp));
+    // 必须自持字符串：text.substr() 返回临时 std::string，其 string_view 会当场
+    // 悬空（ASan stack-use-after-scope，tests/unit/widget/test_controls.cpp:144）。
+    const std::string window =
+        text.substr(start_byte, utf8_take(text.substr(start_byte), max_cp));
     canvas.draw_text(Point{text_x, rect.y}, window, base);
     const std::size_t caret_col = caret_cp - start_cp;
     const bool caret_visible = caret_col <= max_cp;

@@ -16,7 +16,8 @@ std::vector<BootstrapFn>& boot_queue() noexcept {
 }  // namespace
 
 ChartPlugin::ChartPlugin(std::string_view name, std::string_view version, ChartFactory factory)
-    : manifest_(std::string(name), std::string(version), "termchart plugin", "chart plugin"),
+    // 花括号聚合初始化：Apple Clang 15.4 不接受 Manifest(...) 的括号聚合形式。
+    : manifest_{std::string(name), std::string(version), "termchart plugin", "chart plugin"},
       factory_(std::move(factory)) {}
 
 Status ChartPlugin::on_load() noexcept {
