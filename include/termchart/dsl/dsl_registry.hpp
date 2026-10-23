@@ -59,6 +59,7 @@ public:
     [[nodiscard]] TERMCHART_API std::vector<DslDescriptor> snapshot() const;
 
     [[nodiscard]] TERMCHART_API std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
 
     // 仅供测试：清空注册表（清空后 register_builtin_dsls 会重新登记）。
     TERMCHART_API void clear_for_test() noexcept;

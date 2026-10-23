@@ -47,6 +47,14 @@ std::vector<std::string> TlsRegistry::names() const {
     return out;
 }
 
+std::size_t TlsRegistry::size() const noexcept {
+    return creators_.size();
+}
+
+bool TlsRegistry::empty() const noexcept {
+    return creators_.empty();
+}
+
 std::unique_ptr<TlsBackend> TlsRegistry::create(std::string_view name) const {
     if (const auto it = creators_.find(name); it != creators_.end()) {
         return it->second();

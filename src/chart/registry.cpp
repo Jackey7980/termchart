@@ -27,4 +27,21 @@ bool ChartRegistry::supports(std::string_view name) const {
     return factories_.find(std::string(name)) != factories_.end();
 }
 
+std::vector<std::string> ChartRegistry::names() const {
+    std::vector<std::string> out;
+    out.reserve(factories_.size());
+    for (const auto& [name, factory] : factories_) {
+        out.push_back(name);
+    }
+    return out;  // map 按字典序存储，天然确定性
+}
+
+std::size_t ChartRegistry::size() const noexcept {
+    return factories_.size();
+}
+
+bool ChartRegistry::empty() const noexcept {
+    return factories_.empty();
+}
+
 }  // namespace termchart::chart

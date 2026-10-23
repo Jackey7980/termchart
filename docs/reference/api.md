@@ -1535,6 +1535,8 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * 自定义种类：通过 register_raster(name, creator) 登记，create(name) 查表。
 > 后者是**扩展点**——新增光栅器不必改本模块的枚举或 switch（见
 > tests/integration/replace_raster_custom.cpp）。
+>
+> 全仓六个注册表统一提供 names()/size()/empty() 枚举三件套。
 
 - `class RasterRegistry`
 
@@ -2890,6 +2892,9 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 >
 > 与 RasterRegistry 同一套契约：instance() 是 function-local static，构造后只读。
 > 注册的是工厂而非原型，避免 clone 语义；create() 每次给新实例。
+> 全仓六个注册表（chart / scale / raster / plugin / dsl / tls）统一提供
+> names()/size()/empty() 枚举三件套——"已注册了什么"必须可列举，
+> AutoViz 路由、CLI --help、诊断都靠它，不许各表口径不一。
 
 - `class ChartRegistry`
 

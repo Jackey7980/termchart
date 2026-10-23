@@ -81,4 +81,12 @@ std::vector<std::string> ScaleRegistry::names() const {
     return out;
 }
 
+std::size_t ScaleRegistry::size() const noexcept {
+    return names().size();
+}
+
+bool ScaleRegistry::empty() const noexcept {
+    return names().empty();
+}
+
 }  // namespace termchart::scale

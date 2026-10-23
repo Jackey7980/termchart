@@ -1,9 +1,13 @@
 // test_raster_registry.cpp —— 注册表与自动选择
 #include <doctest.h>
 
+#include <algorithm>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "termchart/raster/auto_select.hpp"
+#include "termchart/raster/braille.hpp"
 #include "termchart/raster/registry.hpp"
 
 namespace {
@@ -28,6 +32,35 @@ TEST_CASE("raster/registry: instance 单例、按 kind/名字创建") {
     CHECK(reg.create("nope") == nullptr);
     CHECK(reg.create(static_cast<RasterKind>(-1)) == nullptr);
     CHECK(reg.supports(RasterKind::Block));
+}
+
+TEST_CASE("raster/registry: 枚举三件套 names/size/empty（内置表单一真源）") {
+    RasterRegistry& reg = RasterRegistry::instance();
+    const std::vector<std::string> names = reg.names();
+    CHECK(std::is_sorted(names.begin(), names.end()));
+    CHECK(std::adjacent_find(names.begin(), names.end()) == names.end());
+
+    // 六个内置种类必须全部可列举（曾三处硬编码名字串，漂移过；现在从
+    // kBuiltinKinds + raster_name 单表推导）。
+    for (const char* builtin : {"braille", "halfblock", "quadrant", "ascii", "block",
+                                "sextant"}) {
+        CHECK(std::find(names.begin(), names.end(), builtin) != names.end());
+        CHECK(reg.supports_name(builtin));
+    }
+    CHECK(reg.size() == names.size());
+    CHECK(reg.size() >= 6);  // 六个内置
+    CHECK_FALSE(reg.empty());
+
+    // 自定义登记进枚举；覆盖内置名不重复计。
+    reg.register_raster("zz-custom-raster", [] { return std::make_unique<BrailleRasterizer>(); });
+    const std::vector<std::string> after = reg.names();
+    CHECK(std::find(after.begin(), after.end(), "zz-custom-raster") != after.end());
+    CHECK(reg.size() == after.size());
+
+    reg.register_raster("braille", [] { return std::make_unique<BrailleRasterizer>(); });
+    const std::vector<std::string> shadowed = reg.names();
+    CHECK(std::count(shadowed.begin(), shadowed.end(), "braille") == 1);  // 去重
+    CHECK(reg.size() == shadowed.size());
 }
 
 TEST_CASE("raster/auto_select: 首选支持则用首选") {

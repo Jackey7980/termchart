@@ -75,7 +75,11 @@ public:
     // 快照语义：App 构造时调用一次，此后只读快照（浅拷贝：工厂可拷贝）。
     [[nodiscard]] TERMCHART_API Snapshot snapshot() const;
 
+    // 枚举三件套（全仓注册表统一口径）：names() 按注册序（与 snapshot 一致）。
+    [[nodiscard]] TERMCHART_API std::vector<std::string> names() const;
+
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
 
     // 仅供测试：清空注册表。
     TERMCHART_API void clear_for_test() noexcept;

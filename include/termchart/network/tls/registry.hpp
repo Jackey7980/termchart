@@ -42,6 +42,10 @@ public:
     // 已登记的后端名字（按字典序），用于"空名字时挑默认"与诊断列举。
     [[nodiscard]] std::vector<std::string> names() const;
 
+    // 枚举三件套（全仓注册表统一口径）。
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+
     // 按名字造一个后端实例；未登记返回 nullptr（调用方负责显式报错）。
     [[nodiscard]] std::unique_ptr<TlsBackend> create(std::string_view name) const;
 

@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "termchart/chart/chart.hpp"
 #include "termchart/chart/registry.hpp"
@@ -160,6 +161,30 @@ TEST_CASE("plugin/registry: 快照语义（浅拷贝，注册后追加不可见�
     auto from_snapshot = snapshot[0].factory();
     REQUIRE(from_snapshot != nullptr);
     CHECK(from_snapshot->manifest().name == "a");
+}
+
+TEST_CASE("plugin/registry: 枚举三件套 names/size/empty（注册序）") {
+    PluginRegistry& reg = PluginRegistry::instance();
+    reg.clear_for_test();
+    CHECK(reg.empty());
+    CHECK(reg.size() == 0);
+    CHECK(reg.names().empty());
+
+    Manifest a;
+    a.name = "a";
+    Manifest b;
+    b.name = "b";
+    CHECK(reg.add(a, []() { return std::make_unique<CountingPlugin>("a"); }));
+    CHECK(reg.add(b, []() { return std::make_unique<CountingPlugin>("b"); }));
+
+    const std::vector<std::string> names = reg.names();
+    REQUIRE(names.size() == 2);
+    CHECK(names[0] == "a");  // 注册序，与 snapshot 一致（非字典序）
+    CHECK(names[1] == "b");
+    CHECK(reg.size() == 2);
+    CHECK_FALSE(reg.empty());
+
+    reg.clear_for_test();
 }
 
 TEST_CASE("plugin/loader: ChartPlugin 注入图表注册表并可创建图表") {

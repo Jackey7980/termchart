@@ -5969,6 +5969,10 @@ public:
     // 全部可用名字（内置 + 自定义），按字典序去重；供快照/诊断/CLI 提示用。
     [[nodiscard]] std::vector<std::string> names() const;
 
+    // 枚举三件套（全仓注册表统一口径）：names().size() 与 size() 等价。
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+
 private:
     ScaleRegistry() = default;
     std::map<std::string, Factory, std::less<>> factories_;
@@ -7699,6 +7703,8 @@ public:
 //   * 自定义种类：通过 register_raster(name, creator) 登记，create(name) 查表。
 // 后者是**扩展点**——新增光栅器不必改本模块的枚举或 switch（见
 // tests/integration/replace_raster_custom.cpp）。
+//
+// 全仓六个注册表统一提供 names()/size()/empty() 枚举三件套。
 
 
 
@@ -7725,6 +7731,11 @@ public:
 
     [[nodiscard]] bool supports(RasterKind kind) const noexcept;
     [[nodiscard]] static const char* name(RasterKind kind) noexcept;
+
+    // 枚举三件套：内置 + 自定义去重后的全部名字（按字典序）。
+    [[nodiscard]] std::vector<std::string> names() const;
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
 
 private:
     RasterRegistry() = default;
@@ -7990,6 +8001,10 @@ public:
 
     // 已登记的后端名字（按字典序），用于"空名字时挑默认"与诊断列举。
     [[nodiscard]] std::vector<std::string> names() const;
+
+    // 枚举三件套（全仓注册表统一口径）。
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
 
     // 按名字造一个后端实例；未登记返回 nullptr（调用方负责显式报错）。
     [[nodiscard]] std::unique_ptr<TlsBackend> create(std::string_view name) const;
@@ -12046,6 +12061,9 @@ private:
 //
 // 与 RasterRegistry 同一套契约：instance() 是 function-local static，构造后只读。
 // 注册的是工厂而非原型，避免 clone 语义；create() 每次给新实例。
+// 全仓六个注册表（chart / scale / raster / plugin / dsl / tls）统一提供
+// names()/size()/empty() 枚举三件套——"已注册了什么"必须可列举，
+// AutoViz 路由、CLI --help、诊断都靠它，不许各表口径不一。
 
 
 
@@ -12060,9 +12078,15 @@ public:
     ChartRegistry(const ChartRegistry&) = delete;
     ChartRegistry& operator=(const ChartRegistry&) = delete;
 
+    // 登记图种工厂；重名以最后一次为准（与 scale/raster/tls 同口径）。
     void register_chart(std::string_view name, Factory factory);
     [[nodiscard]] std::unique_ptr<Chart> create(std::string_view name) const;
     [[nodiscard]] bool supports(std::string_view name) const;
+
+    // 枚举三件套：已注册图种名（按字典序，确定性输出）。
+    [[nodiscard]] std::vector<std::string> names() const;
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
 
 private:
     ChartRegistry() = default;
@@ -16741,6 +16765,7 @@ public:
     [[nodiscard]] TERMCHART_API std::vector<DslDescriptor> snapshot() const;
 
     [[nodiscard]] TERMCHART_API std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
 
     // 仅供测试：清空注册表（清空后 register_builtin_dsls 会重新登记）。
     TERMCHART_API void clear_for_test() noexcept;
@@ -18514,7 +18539,11 @@ public:
     // 快照语义：App 构造时调用一次，此后只读快照（浅拷贝：工厂可拷贝）。
     [[nodiscard]] TERMCHART_API Snapshot snapshot() const;
 
+    // 枚举三件套（全仓注册表统一口径）：names() 按注册序（与 snapshot 一致）。
+    [[nodiscard]] TERMCHART_API std::vector<std::string> names() const;
+
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
 
     // 仅供测试：清空注册表。
     TERMCHART_API void clear_for_test() noexcept;

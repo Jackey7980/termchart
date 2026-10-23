@@ -8,14 +8,18 @@
 //   * 自定义种类：通过 register_raster(name, creator) 登记，create(name) 查表。
 // 后者是**扩展点**——新增光栅器不必改本模块的枚举或 switch（见
 // tests/integration/replace_raster_custom.cpp）。
+//
+// 全仓六个注册表统一提供 names()/size()/empty() 枚举三件套。
 #ifndef TERMCHART_RASTER_REGISTRY_HPP
 #define TERMCHART_RASTER_REGISTRY_HPP
 
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "termchart/export.hpp"
 #include "termchart/raster/rasterizer.hpp"
@@ -43,6 +47,11 @@ public:
 
     [[nodiscard]] bool supports(RasterKind kind) const noexcept;
     [[nodiscard]] static const char* name(RasterKind kind) noexcept;
+
+    // 枚举三件套：内置 + 自定义去重后的全部名字（按字典序）。
+    [[nodiscard]] std::vector<std::string> names() const;
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
 
 private:
     RasterRegistry() = default;

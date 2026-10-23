@@ -70,3 +70,12 @@ TEST_CASE("scale/registry: 登记名覆盖内置名，names() 去重且有序") 
     CHECK(std::find(names.begin(), names.end(), "linear") != names.end());
     CHECK(std::find(names.begin(), names.end(), "doubler") != names.end());
 }
+
+TEST_CASE("scale/registry: 枚举三件套 size/empty 与 names 口径一致") {
+    ScaleRegistry& registry = ScaleRegistry::instance();
+    // 全局单例会被其他用例污染，故只断言恒等关系与内置下界，不断言绝对数。
+    CHECK(registry.size() == registry.names().size());
+    CHECK(registry.empty() == registry.names().empty());
+    CHECK(registry.size() >= 5);  // linear/log/time/category/band 五个内置
+    CHECK_FALSE(registry.empty());
+}

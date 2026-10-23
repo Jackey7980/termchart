@@ -2,19 +2,31 @@
 
 ## 契约
 
-三张注册表共用同一套契约（`docs/design/registry.md` 的口径即此）：
+六张注册表共用同一套契约（`docs/design/registry.md` 的口径即此）：
 
 | 注册表 | 头文件 | 注册内容 |
 | --- | --- | --- |
 | `chart::ChartRegistry` | chart/registry.hpp | 图表工厂 `std::function<std::unique_ptr<Chart>()>` |
 | `raster::RasterRegistry` | raster/registry.hpp | 光栅器（按 `RasterKind`） |
 | `scale::ScaleRegistry` | scale/registry.hpp | 比例尺 |
+| `plugin::PluginRegistry` | plugin/plugin.hpp | 插件（Manifest + 工厂） |
+| `dsl::DslRegistry` | dsl/dsl_registry.hpp | 方言描述符（含解析函数指针） |
+| `network::tls::TlsRegistry` | network/tls/registry.hpp | TLS 后端 |
 
 - `instance()` 一律 **function-local static**；
 - 构造后**只读**（拷贝/赋值删除）；构造期冻结浅拷贝快照——`App` 构造时冻结，
   运行期不再接受注册；
 - 注册的是**工厂而非原型**：避免 clone 语义，`create()` 每次给新实例；
-- 查询：`supports(name)`、`create(name)`（chart）、`raster_name(kind)`（raster）。
+- 查询：`supports(name)`、`create(name)`（chart）、`raster_name(kind)`（raster）；
+- **枚举三件套**（2026-10-24 统一补齐，六表一致）：
+  - `names()`：已登记名字列表。map 后端的表按字典序；vector 后端的表
+    （plugin/dsl）按注册序——都在各自头文件的注释里写明，调用方按需排序；
+  - `size()` / `empty()`：与 `names()` 严格同口径（`size() == names().size()`），
+    不存在"查得到但数不清"的名字。
+
+三件套的存在理由：AutoViz 路由、CLI `--help`、诊断列举都要求"已注册了什么"
+可编程枚举。曾出现 ChartRegistry/RasterRegistry 缺枚举、上游只能硬编码名单
+的割裂状态；现六表一致，且 `size()==names().size()` 有测试守着。
 
 ## 注册时机协议
 

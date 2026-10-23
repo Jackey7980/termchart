@@ -8,6 +8,7 @@
 //     不依赖任何外部主机（个别环境若真占用了该端口，退化为接受两种结果）。
 #include <doctest.h>
 
+#include <algorithm>
 #include <memory>
 #include <span>
 #include <string>
@@ -107,6 +108,20 @@ TEST_CASE("network/tls: 注册表登记与查询") {
     auto* fake = dynamic_cast<FakeBackend*>(backend.get());
     REQUIRE(fake != nullptr);
     CHECK(fake->tag() == 42);
+}
+
+TEST_CASE("network/tls: 枚举三件套 names/size/empty") {
+    tls::TlsRegistry& registry = tls::TlsRegistry::instance();
+    registry.register_backend("unit-test-enum", [] {
+        return std::make_unique<FakeBackend>(7);
+    });
+
+    const std::vector<std::string> names = registry.names();
+    CHECK(std::is_sorted(names.begin(), names.end()));  // map 字典序
+    CHECK(std::find(names.begin(), names.end(), "unit-test-enum") != names.end());
+    CHECK(registry.size() == names.size());
+    CHECK_FALSE(registry.empty());
+    CHECK(registry.supports("unit-test-enum"));
 }
 
 TEST_CASE("network/tls: 未登记名字返回 nullptr（fail-loud 源头）") {

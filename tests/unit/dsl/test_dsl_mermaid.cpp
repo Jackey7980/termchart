@@ -6,6 +6,7 @@
 //   * 注册表遵循 function-local static + 快照语义（与另四个注册表同构）。
 #include <doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -375,6 +376,12 @@ TEST_CASE("dsl/registry: function-local static + 快照语义") {
 
     REQUIRE(register_builtin_dsls());
     CHECK(register_builtin_dsls());  // 幂等
+
+    // 枚举三件套（全仓注册表统一口径）：内置方言登记后必然非空。
+    CHECK_FALSE(first.empty());
+    CHECK(first.size() == first.names().size());
+    CHECK(std::find(first.names().begin(), first.names().end(), "mermaid") !=
+          first.names().end());
 
     const DslDescriptor* mermaid = first.find("mermaid");
     REQUIRE(mermaid != nullptr);

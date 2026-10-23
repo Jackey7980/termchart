@@ -70,6 +70,15 @@ bool PluginRegistry::supports(std::string_view name) const noexcept {
 
 PluginRegistry::Snapshot PluginRegistry::snapshot() const { return entries_; }
 
+std::vector<std::string> PluginRegistry::names() const {
+    std::vector<std::string> out;
+    out.reserve(entries_.size());
+    for (const PluginDescriptor& entry : entries_) {
+        out.push_back(entry.manifest.name);
+    }
+    return out;  // 注册序（add 拒绝重名，天然无重复）
+}
+
 void PluginRegistry::clear_for_test() noexcept { entries_.clear(); }
 
 }  // namespace termchart::plugin

@@ -37,6 +37,10 @@ public:
     // 全部可用名字（内置 + 自定义），按字典序去重；供快照/诊断/CLI 提示用。
     [[nodiscard]] std::vector<std::string> names() const;
 
+    // 枚举三件套（全仓注册表统一口径）：names().size() 与 size() 等价。
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+
 private:
     ScaleRegistry() = default;
     std::map<std::string, Factory, std::less<>> factories_;
