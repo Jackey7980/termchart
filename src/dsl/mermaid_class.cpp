@@ -36,7 +36,10 @@ struct RelationPattern {
     bool at_target = true;
 };
 
-constexpr RelationPattern kRelations[] = {
+// 不能是 constexpr：RelationPattern 含 std::string 成员，libc++（Xcode 15.4）
+// 的 std::string 无 constexpr 构造；退运行期 const 静态数组，语义不变
+// （match_relation 返回的指针指向静态存储期对象）。
+const RelationPattern kRelations[] = {
     {"<|..", "realization", "dashed", true, true},
     {"..|>", "realization", "dashed", false, true},
     {"<|--", "inheritance", "", true, true},
