@@ -50,7 +50,9 @@ bool sample_sphere(double px, double py, double fw, double fh, double& shade,
     const double nz = std::sqrt(1.0 - r2);
     // 光照方向（左上前方）
     constexpr double lx = -0.40, ly = 0.55, lz = 0.73;
-    constexpr double ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+    // const double（非 constexpr）：libc++ 的 std::sqrt 不是 constexpr 函数，
+    // macOS/Apple Clang 编译不过。
+    const double ll = std::sqrt(lx * lx + ly * ly + lz * lz);
     const double lambert = (nx * lx + ny * ly + nz * lz) / ll;
     shade = 0.16 + 0.84 * std::max(0.0, lambert);
     // 色相绕球体一圈彩虹
