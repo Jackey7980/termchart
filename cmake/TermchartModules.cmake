@@ -48,6 +48,7 @@ set(TERMCHART_MODULE_LAYERS
     "plugin=19"
     "app=20"
     "api=21"
+    "autoviz=21"
     "gui=22"
 )
 

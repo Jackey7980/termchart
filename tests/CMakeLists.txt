@@ -25,6 +25,9 @@ add_executable(termchart_tests
     unit/data/test_dataframe.cpp
     unit/data/test_autoviz_pipeline.cpp
 
+    # ── autoviz ──
+    unit/autoviz/test_autoviz.cpp
+
     # ── util ──
     unit/util/test_utf8.cpp
     unit/util/test_grapheme.cpp

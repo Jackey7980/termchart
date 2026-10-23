@@ -38,7 +38,7 @@ set(TERMCHART_MODULES
     core util color term render api
     scale scene document canvas layout
     chart graph backend interaction
-    dsl widget app plugin
+    dsl widget app plugin autoviz
     CACHE STRING "参与构建的模块（include/termchart 下的一级目录名）")
 
 if(TERMCHART_MINIMAL_BUILD)

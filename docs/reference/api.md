@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **376 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **385 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -42,6 +42,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 4 |
+| autoviz | L21 | 9 |
 | gui | L22 | 3 |
 
 ## （顶层头）
@@ -5156,6 +5157,113 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `TERMCHART_API void init_core() noexcept`
 - `struct PlotOpts`
+
+## autoviz（L21）
+
+### `autoviz/autoviz.hpp`
+
+> autoviz/autoviz.hpp —— AutoViz 伞形头（L21）
+>
+> "脏数据 → 选对图"的一站式入口。用法（新手路径，零配置）：
+>
+> #include "termchart/autoviz/autoviz.hpp"
+> const auto result = termchart::autoviz::auto_visualize_jsonl(text);
+> if (auto chart = result->build_chosen()) {
+> termchart::api::print_chart(*chart);   // 渲染交给 api 薄壳
+> }
+>
+> 分层：本模块只回答"画什么、为什么"（探测/路由/否决/打分），不回答"怎么写到
+> 终端"——那是 api（L21 同级，刻意不互相依赖）与 gui 的事。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `autoviz/candidate.hpp`
+
+> autoviz/candidate.hpp —— 候选图：规格 + 惰性建图闭包 + 打分槽位（L21）
+
+- `struct ChartCandidate`
+
+### `autoviz/engine.hpp`
+
+> autoviz/engine.hpp —— AutoViz 入口（规格书四阶段编排，L21）
+>
+> 流程：detect_features（阶段二）→ route（阶段三）→ semantic_check（阶段四
+> 硬约束）→ analytic_score（海选）→ raster_confirm Top-N（决赛）→ 终排序。
+> 单遍 O(N) 只发生在探测与管道聚合；渲染打分只对 Top-N 付一次画布成本。
+
+- `struct AutoVizResult`
+
+### `autoviz/features.hpp`
+
+> autoviz/features.hpp —— 数据集特征探测（规格书阶段二在 autoviz 侧落地，L21）
+>
+> 在 data::ColumnProfile（列级画像）之上做**角色分配**：哪列是时间、哪两列
+> 是经纬度、哪列是可分组的分类、哪列是自由文本、哪些列该丢。探测本身极克制：
+> 复用 data 层的单遍画像 + 熔断，本文件只做归组，不再遍历数据。
+
+- `struct GeoPair`
+- `struct DatasetFeatures`
+
+### `autoviz/options.hpp`
+
+> autoviz/options.hpp —— AutoViz 入口选项与管道枚举（L21）
+>
+> 定位：autoviz 是"脏数据 → 选对图"的编排层（规格书四阶段 + 一校验）。
+> 本文件只放选项与枚举，不含逻辑；画像口径复用 data 层（L4），不重造。
+
+- `enum class PipelineKind : std::uint8_t`
+- `struct AutoVizOptions`
+
+### `autoviz/router.hpp`
+
+> autoviz/router.hpp —— 六条管道路由（规格书阶段三，L21）
+>
+> 输入 DataFrame + DatasetFeatures，输出候选图列表（每个候选带惰性建图闭包与
+> 打分元数据，不建图、不评分）。候选按管道优先级排列：Time > Geo > Event >
+> CategoryNumeric > Numeric > Text > Preview；评分与截断在 engine。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `autoviz/score.hpp`
+
+> autoviz/score.hpp —— 候选打分（规格书阶段四，L21）
+>
+> 两段式（对"全量沙盒光栅化"的刻意修正）：
+> 1. analytic_score：纯元数据解析式打分——海选全部候选，零渲染成本；
+> 2. raster_confirm：只对通过校验的 Top-N 做**画布级**光栅化复核
+> （建图 → Canvas → CellBuffer 统计墨迹/行使用率），O(N×画布) 只付一次。
+> 覆盖率/遮挡率只当"决赛裁判"：糊满全屏的饼图覆盖率最高但最难看，所以
+> 它不参与海选，只在复核里把"空"和"糊"两种失败形态挡掉。
+
+- `struct RasterStats`
+
+### `autoviz/semantic.hpp`
+
+> autoviz/semantic.hpp —— 一票否决层（规格书阶段四的硬约束，L21）
+>
+> 在沙盒打分**之前**执行：不合格的候选直接出局，根本不值得光栅化。
+> 每条否决都返回**结构化理由**（规则码: 人话）——静默丢弃候选是排障噩梦，
+> 也与全库 fail-loud 文化一致。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `autoviz/time_parse.hpp`
+
+> autoviz/time_parse.hpp —— ISO-8601 形状时间 → epoch 秒（L21）
+>
+> 为什么在 autoviz 而不在 data：data 层的 looks_like_timestamp 只判形状
+> （路由够用），"解析成可排序可聚合的 epoch" 是管道路由的具体需求，且全库
+> 没有第二处需要（data::ohlc 直接吃 epoch）。若将来 data 也要，下沉不迟。
+>
+> 口径（明确列出，避免"以为支持"）：
+> ✅ YYYY-MM-DD[ HH:MM[:SS[.fff]]]（空格或 T 分隔）
+> ✅ 后缀 Z 或 ±HH:MM / ±HHMM（按偏移换算成 UTC epoch）
+> ✅ 2 月 30 号这类非法日期**拒绝**（返回 nullopt）——与只认形状的
+> looks_like_timestamp 分工：那里管"像不像"，这里管"能不能算"。
+> ⛔ 不认时区别名（EST）、不认 Unix 时间戳数字串（那是数值列的活）、
+> 不认 "Jan 5, 2024" 等非 ISO 形态。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ## gui（L22）
 

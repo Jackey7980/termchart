@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 376 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 385 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -9959,6 +9959,12 @@ public:
     void set_options(Options opts) { opts_ = std::move(opts); }
     void set_data(std::vector<BoxStats> groups) { groups_ = std::move(groups); }
 
+    // 分组标签：与 set_data 的 groups **按下标一一对应**（无效组被剔除时按原始
+    // 下标对齐，不会串组）。缺省时 x 轴只有 "group" 统称。AutoViz 的 event
+    // 管道按 event 名分箱后必须贴标签，否则"哪个箱是哪个事件"不可读。
+    void set_labels(std::vector<std::string> labels) { labels_ = std::move(labels); }
+    [[nodiscard]] const std::vector<std::string>& labels() const noexcept { return labels_; }
+
     TERMCHART_API void draw(DrawContext ctx) override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -9966,6 +9972,7 @@ public:
 private:
     Options opts_{};
     std::vector<BoxStats> groups_;
+    std::vector<std::string> labels_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
@@ -19246,6 +19253,334 @@ namespace tc = termchart;
 namespace termchart {
 const char* version_string() noexcept;
 }
+
+// ===== include/termchart/autoviz/options.hpp =====
+// autoviz/options.hpp —— AutoViz 入口选项与管道枚举（L21）
+//
+// 定位：autoviz 是"脏数据 → 选对图"的编排层（规格书四阶段 + 一校验）。
+// 本文件只放选项与枚举，不含逻辑；画像口径复用 data 层（L4），不重造。
+
+
+
+namespace termchart::autoviz {
+
+// 六条处理管道（规格书阶段三）。Preview 是兜底：什么都画不了时出数据表格。
+enum class PipelineKind : std::uint8_t {
+    Time,             // 时间管道：ts + 数值 → 折线 / 时间×分类热力图
+    Geo,              // 地理管道：lat/lng → 散点 / Hexbin（强制去重）
+    Event,            // 事件/分类管道：低基数 event → 柱状 / 箱线 / 饼
+    CategoryNumeric,  // 分类+数值组合：分类做颜色，数值做坐标/大小
+    Text,             // 纯文本管道：词云
+    Numeric,          // 纯数值管道：1列直方图、2列散点、多列平行坐标/相关矩阵
+    Preview,          // 兜底：数据预览表格
+};
+
+[[nodiscard]] const char* pipeline_name(PipelineKind kind) noexcept;
+
+// AutoViz 选项。默认值对应规格书；探测口径全部复用 data::ProfileOptions
+// （含 CardinalityPolicy——基数分档阈值是策略值，调用方可覆盖）。
+struct AutoVizOptions {
+    // 特征探测（data 层画像）
+    data::ProfileOptions profile{};
+
+    // 脏数据剔除：**仅当没有低基数 event 列可分桶时**才做全局空值率剔除
+    // （规格书修正案：有 event 列时按桶看空值率，防止误杀事件关键字段）。
+    bool drop_high_null = true;
+    double max_null_rate = 0.6;
+    std::size_t min_rows = 2;  // 少于此行数不出数值图（Preview 兜底）
+
+    // 强制指定列（空 = 自动探测）
+    std::string_view event_column;
+    std::string_view time_column;
+
+    // 沙盒评估（规格书阶段四）
+    std::size_t max_candidates = 6;       // 进入评分的候选上限
+    std::size_t raster_confirm_top = 2;   // 只对前 N 名做画布级光栅化复核
+    std::uint32_t canvas_width = 80;      // 复核画布（与 api 默认出图一致）
+    std::uint32_t canvas_height = 24;
+};
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/candidate.hpp =====
+// autoviz/candidate.hpp —— 候选图：规格 + 惰性建图闭包 + 打分槽位（L21）
+
+
+
+namespace termchart::autoviz {
+
+// 惰性建图：路由阶段把"聚合后的干净数据"捕获进闭包，评分/渲染时才真正构造
+// Chart——沙盒评估不建图的候选零成本，通过校验的 Top-N 才建。
+using ChartBuilder = std::function<std::unique_ptr<chart::Chart>()>;
+
+// 图种标识（autoviz 表内 key，与 chart/ 下的类一一对应，便于诊断）。
+// 不改 ChartRegistry 的注册语义——那里是插件作者的扩展点；这里是 AutoViz
+// 自己的静态决策表（照 raster::pick_raster 的扁平范式）。
+namespace chart_name {
+inline constexpr const char* kLine = "line_chart";
+inline constexpr const char* kBar = "bar_chart";
+inline constexpr const char* kHist = "hist_chart";
+inline constexpr const char* kBoxplot = "boxplot_chart";
+inline constexpr const char* kScatter = "scatter_chart";
+inline constexpr const char* kBubble = "bubble_chart";
+inline constexpr const char* kPie = "pie_chart";
+inline constexpr const char* kHeatmap = "heatmap_chart";
+inline constexpr const char* kHexbin = "hexbin_chart";
+inline constexpr const char* kWordcloud = "wordcloud_chart";
+inline constexpr const char* kParallel = "parallel_chart";
+inline constexpr const char* kCorr = "corr_matrix_chart";
+inline constexpr const char* kTable = "table_chart";
+}  // namespace chart_name
+
+struct ChartCandidate {
+    // ── 规格 ──────────────────────────────────────────────────────────────
+    std::string name;  // chart_name::kXxx
+    PipelineKind pipeline = PipelineKind::Preview;
+    std::string title;
+    ChartBuilder build;  // 空 = 无效候选（路由不应产出，出现即 bug）
+
+    // ── 打分元数据（路由阶段填，不依赖建图）────────────────────────────────
+    std::size_t point_count = 0;      // 图中标记数（点/柱/词/桶）
+    std::size_t series_count = 1;     // 系列数（折线/散点）
+    std::size_t category_count = 0;   // 分类数（x 轴类别/饼图分片/词云词数）
+    double value_null_rate = 0.0;     // 值列空值率（有 event 列时为最优桶口径）
+    bool x_is_temporal = false;
+    bool x_is_categorical = false;
+    bool color_is_categorical = false;
+    data::CardinalityTier color_tier = data::CardinalityTier::Low;
+    bool has_negative_values = false;  // 饼图否决用
+    bool value_constant = false;       // 值列无差异（直方图/柱状无意义）
+    bool temporal_sorted = true;       // 时间轴是否已保证有序（管道内聚合规）
+    bool geo_deduped = true;           // 地理管道强制去重；false 触发否决
+    std::size_t axis_count = 0;        // 平行坐标轴数
+
+    // ── 打分结果 ──────────────────────────────────────────────────────────
+    double analytic_score = 0.0;
+    double raster_score = std::nan("");  // NaN = 未做画布级复核
+    std::vector<std::string> vetoes;     // 非空 = 出局（每条是结构化理由）
+
+    [[nodiscard]] bool viable() const noexcept {
+        return vetoes.empty() && static_cast<bool>(build);
+    }
+    // 综合分：未复核时等于解析分；复核过按 0.65/0.35 加权（解析式海选为主，
+    // 光栅化只做决赛裁判——不全量沙盒渲染，防止 O(候选×画布) 浪费）。
+    [[nodiscard]] double total_score() const noexcept {
+        if (!viable()) {
+            return -1.0;
+        }
+        if (std::isnan(raster_score)) {
+            return analytic_score;
+        }
+        return 0.65 * analytic_score + 0.35 * raster_score;
+    }
+};
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/features.hpp =====
+// autoviz/features.hpp —— 数据集特征探测（规格书阶段二在 autoviz 侧落地，L21）
+//
+// 在 data::ColumnProfile（列级画像）之上做**角色分配**：哪列是时间、哪两列
+// 是经纬度、哪列是可分组的分类、哪列是自由文本、哪些列该丢。探测本身极克制：
+// 复用 data 层的单遍画像 + 熔断，本文件只做归组，不再遍历数据。
+
+
+
+namespace termchart::autoviz {
+
+// 经纬度列对（lat/lng 各一列，按列序配对）。
+struct GeoPair {
+    std::size_t lat = 0;
+    std::size_t lng = 0;
+};
+
+// 数据集特征：列画像 + 角色分组 + 剔除名单。
+struct DatasetFeatures {
+    std::vector<data::ColumnProfile> profiles;  // 与 DataFrame.columns 同序对齐
+    std::vector<std::size_t> time_columns;
+    std::vector<GeoPair> geo_pairs;
+    std::vector<std::size_t> category_columns;  // Low/Mid 档分类列（可 facet）
+    std::vector<std::size_t> numeric_columns;
+    std::vector<std::size_t> text_columns;      // High 档自由文本（词云用）
+    std::vector<std::size_t> dropped;           // 常量/全空/高空值率被剔除
+    std::size_t rows = 0;
+
+    // 便捷视图
+    [[nodiscard]] const data::ColumnProfile& profile(std::size_t index) const noexcept {
+        return profiles[index];
+    }
+    [[nodiscard]] std::size_t column_count() const noexcept { return profiles.size(); }
+    [[nodiscard]] bool has_time() const noexcept { return !time_columns.empty(); }
+    [[nodiscard]] bool has_geo() const noexcept { return !geo_pairs.empty(); }
+    [[nodiscard]] bool has_category() const noexcept { return !category_columns.empty(); }
+    [[nodiscard]] bool has_numeric() const noexcept { return !numeric_columns.empty(); }
+    [[nodiscard]] bool has_text() const noexcept { return !text_columns.empty(); }
+};
+
+// 特征探测。规则（与规格书阶段二对应）：
+//   * Timestamp → time_columns；
+//   * Numeric 且列名命中 lat/latitude、lon/lng/longitude → 尝试配成 GeoPair，
+//     配不上的留在 numeric_columns；
+//   * Text/Boolean：Low/Mid 档 → category_columns，High 档 → text_columns；
+//   * Constant（distinct≤1）或 NullOnly → dropped；
+//   * **仅当不存在 Low 档分类列时**（没有 event 列可分桶），才对其余列应用
+//     全局空值率剔除（drop_high_null / max_null_rate）。
+[[nodiscard]] TERMCHART_API DatasetFeatures detect_features(const data::DataFrame& frame,
+                                                             const AutoVizOptions& options = {});
+
+// 列名是否是经纬度语义（大小写不敏感）。lat：lat/latitude；lng：lon/lng/longitude。
+[[nodiscard]] TERMCHART_API bool is_latitude_name(std::string_view name) noexcept;
+[[nodiscard]] TERMCHART_API bool is_longitude_name(std::string_view name) noexcept;
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/engine.hpp =====
+// autoviz/engine.hpp —— AutoViz 入口（规格书四阶段编排，L21）
+//
+// 流程：detect_features（阶段二）→ route（阶段三）→ semantic_check（阶段四
+// 硬约束）→ analytic_score（海选）→ raster_confirm Top-N（决赛）→ 终排序。
+// 单遍 O(N) 只发生在探测与管道聚合；渲染打分只对 Top-N 付一次画布成本。
+
+
+
+namespace termchart::autoviz {
+
+struct AutoVizResult {
+    DatasetFeatures features;
+    std::vector<ChartCandidate> candidates;  // 已打分；按 total_score 降序，否决的沉底
+
+    // 最高分的可用候选（无可用候选时 nullptr——调用方应退化到表格或报错）。
+    [[nodiscard]] const ChartCandidate* chosen() const noexcept;
+
+    // 惰性建出选中图（chosen() 为空或建图失败时返回 nullptr）。
+    [[nodiscard]] std::unique_ptr<chart::Chart> build_chosen() const;
+};
+
+// 主入口：DataFrame → 选中图 + 全部候选评分明细。
+// 空表（0 列）返回 InvalidArgument——"没有数据"不是可视化问题。
+[[nodiscard]] TERMCHART_API Result<AutoVizResult> auto_visualize(
+    const data::DataFrame& frame, const AutoVizOptions& options = {});
+
+// JSONL 一站式入口：解析（保 Key、脏行跳过计数）→ auto_visualize。
+[[nodiscard]] TERMCHART_API Result<AutoVizResult> auto_visualize_jsonl(
+    std::string_view jsonl, const AutoVizOptions& options = {});
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/router.hpp =====
+// autoviz/router.hpp —— 六条管道路由（规格书阶段三，L21）
+//
+// 输入 DataFrame + DatasetFeatures，输出候选图列表（每个候选带惰性建图闭包与
+// 打分元数据，不建图、不评分）。候选按管道优先级排列：Time > Geo > Event >
+// CategoryNumeric > Numeric > Text > Preview；评分与截断在 engine。
+
+
+
+namespace termchart::autoviz {
+
+// 路由。永不返回空表——最不济也有 Preview 表格候选（"任何输入都有答案"）。
+[[nodiscard]] TERMCHART_API std::vector<ChartCandidate> route(const data::DataFrame& frame,
+                                                              const DatasetFeatures& features,
+                                                              const AutoVizOptions& options = {});
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/score.hpp =====
+// autoviz/score.hpp —— 候选打分（规格书阶段四，L21）
+//
+// 两段式（对"全量沙盒光栅化"的刻意修正）：
+//   1. analytic_score：纯元数据解析式打分——海选全部候选，零渲染成本；
+//   2. raster_confirm：只对通过校验的 Top-N 做**画布级**光栅化复核
+//      （建图 → Canvas → CellBuffer 统计墨迹/行使用率），O(N×画布) 只付一次。
+// 覆盖率/遮挡率只当"决赛裁判"：糊满全屏的饼图覆盖率最高但最难看，所以
+// 它不参与海选，只在复核里把"空"和"糊"两种失败形态挡掉。
+
+
+
+namespace termchart::autoviz {
+
+// 解析式打分（海选）。返回 [0,1]；否决候选得 0 分。
+[[nodiscard]] TERMCHART_API double analytic_score(const ChartCandidate& candidate) noexcept;
+
+// 画布级复核：建图 → Canvas(w,h) → CellBuffer 统计。返回 [0,1]；
+// 建图失败/画布非法返回 0.0（该候选不应被选中）。
+[[nodiscard]] TERMCHART_API double raster_confirm(const ChartCandidate& candidate,
+                                                  std::uint32_t width,
+                                                  std::uint32_t height) noexcept;
+
+// 复核统计的明细（测试与诊断用）。
+struct RasterStats {
+    double coverage = 0.0;    // 非空格占比
+    double row_usage = 0.0;   // 有墨迹的行占比
+    std::size_t ink_cells = 0;
+    std::size_t total_cells = 0;
+};
+
+[[nodiscard]] TERMCHART_API RasterStats raster_stats(const ChartCandidate& candidate,
+                                                     std::uint32_t width,
+                                                     std::uint32_t height);
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/semantic.hpp =====
+// autoviz/semantic.hpp —— 一票否决层（规格书阶段四的硬约束，L21）
+//
+// 在沙盒打分**之前**执行：不合格的候选直接出局，根本不值得光栅化。
+// 每条否决都返回**结构化理由**（规则码: 人话）——静默丢弃候选是排障噩梦，
+// 也与全库 fail-loud 文化一致。
+
+
+
+namespace termchart::autoviz {
+
+// 返回空 vector = 通过；否则每条是 "规则码: 说明"。
+[[nodiscard]] TERMCHART_API std::vector<std::string> semantic_check(const ChartCandidate& candidate);
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/time_parse.hpp =====
+// autoviz/time_parse.hpp —— ISO-8601 形状时间 → epoch 秒（L21）
+//
+// 为什么在 autoviz 而不在 data：data 层的 looks_like_timestamp 只判形状
+// （路由够用），"解析成可排序可聚合的 epoch" 是管道路由的具体需求，且全库
+// 没有第二处需要（data::ohlc 直接吃 epoch）。若将来 data 也要，下沉不迟。
+//
+// 口径（明确列出，避免"以为支持"）：
+//   ✅ YYYY-MM-DD[ HH:MM[:SS[.fff]]]（空格或 T 分隔）
+//   ✅ 后缀 Z 或 ±HH:MM / ±HHMM（按偏移换算成 UTC epoch）
+//   ✅ 2 月 30 号这类非法日期**拒绝**（返回 nullopt）——与只认形状的
+//      looks_like_timestamp 分工：那里管"像不像"，这里管"能不能算"。
+//   ⛔ 不认时区别名（EST）、不认 Unix 时间戳数字串（那是数值列的活）、
+//      不认 "Jan 5, 2024" 等非 ISO 形态。
+
+
+
+namespace termchart::autoviz {
+
+// 解析为 epoch 秒（double，1970-01-01T00:00:00Z 起）。无时区后缀按 UTC 解释
+// （naive——可视化排序分桶不涉及时区显示，避免引入 tz 数据库依赖）。
+[[nodiscard]] TERMCHART_API std::optional<double> parse_timestamp(std::string_view text) noexcept;
+
+// 把 [t0, t1] 切成不超过 target_buckets 个等宽桶，返回桶宽（秒）。
+// 桶宽取 1-2-5 阶梯上不小于区间/target 的最小档；t1<=t0 或非有限时返回 1.0。
+[[nodiscard]] TERMCHART_API double nice_bucket_seconds(double t0, double t1,
+                                                       std::size_t target_buckets) noexcept;
+
+}  // namespace termchart::autoviz
+
+// ===== include/termchart/autoviz/autoviz.hpp =====
+// autoviz/autoviz.hpp —— AutoViz 伞形头（L21）
+//
+// "脏数据 → 选对图"的一站式入口。用法（新手路径，零配置）：
+//
+//   #include "termchart/autoviz/autoviz.hpp"
+//   const auto result = termchart::autoviz::auto_visualize_jsonl(text);
+//   if (auto chart = result->build_chosen()) {
+//       termchart::api::print_chart(*chart);   // 渲染交给 api 薄壳
+//   }
+//
+// 分层：本模块只回答"画什么、为什么"（探测/路由/否决/打分），不回答"怎么写到
+// 终端"——那是 api（L21 同级，刻意不互相依赖）与 gui 的事。
 
 // ===== include/termchart/gui/font.hpp =====
 // font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）

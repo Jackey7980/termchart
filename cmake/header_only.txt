@@ -64,3 +64,5 @@ widget/border
 widget/styles
 widget/style_sheet
 widget/theme
+autoviz/autoviz
+autoviz/candidate

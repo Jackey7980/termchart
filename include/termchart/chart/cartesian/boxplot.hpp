@@ -34,6 +34,12 @@ public:
     void set_options(Options opts) { opts_ = std::move(opts); }
     void set_data(std::vector<BoxStats> groups) { groups_ = std::move(groups); }
 
+    // 分组标签：与 set_data 的 groups **按下标一一对应**（无效组被剔除时按原始
+    // 下标对齐，不会串组）。缺省时 x 轴只有 "group" 统称。AutoViz 的 event
+    // 管道按 event 名分箱后必须贴标签，否则"哪个箱是哪个事件"不可读。
+    void set_labels(std::vector<std::string> labels) { labels_ = std::move(labels); }
+    [[nodiscard]] const std::vector<std::string>& labels() const noexcept { return labels_; }
+
     TERMCHART_API void draw(DrawContext ctx) override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -41,6 +47,7 @@ public:
 private:
     Options opts_{};
     std::vector<BoxStats> groups_;
+    std::vector<std::string> labels_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 

@@ -3,11 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <utility>
 
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
+#include "termchart/util/wcwidth.hpp"
 
 namespace termchart::chart {
 namespace {
@@ -26,11 +29,13 @@ bool valid_group(const BoxPlotChart::BoxStats& g) noexcept {
 }  // namespace
 
 void BoxPlotChart::draw(DrawContext ctx) {
-    std::vector<BoxStats> groups;
+    // 无效组整体剔除，但保留**原始下标**——labels_ 按 set_data 的次序对齐，
+    // 剔除后若用紧凑下标贴标签会串组。
+    std::vector<std::pair<std::size_t, BoxStats>> groups;
     groups.reserve(groups_.size());
-    for (const BoxStats& g : groups_) {
-        if (valid_group(g)) {
-            groups.push_back(g);
+    for (std::size_t i = 0; i < groups_.size(); ++i) {
+        if (valid_group(groups_[i])) {
+            groups.emplace_back(i, groups_[i]);
         }
     }
     if (groups.empty()) {
@@ -38,9 +43,9 @@ void BoxPlotChart::draw(DrawContext ctx) {
     }
 
     // y 域把离群点也算进来（它们必须可见），非有限的离群点直接丢。
-    double ymin = groups.front().lo;
-    double ymax = groups.front().hi;
-    for (const BoxStats& g : groups) {
+    double ymin = groups.front().second.lo;
+    double ymax = groups.front().second.hi;
+    for (const auto& [index, g] : groups) {
         ymin = std::min(ymin, g.lo);
         ymax = std::max(ymax, g.hi);
         for (double o : g.outliers) {
@@ -65,7 +70,9 @@ void BoxPlotChart::draw(DrawContext ctx) {
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
     if (ctx.draw_axes) {
-        layout::draw_axis_x(ctx.canvas, area_, xticks, "group", axis_style);
+        // 有分组标签时 x 轴标题留空（标签即轴标题，避免与 "group" 叠字）。
+        const char* x_title = labels_.empty() ? "group" : "";
+        layout::draw_axis_x(ctx.canvas, area_, xticks, x_title, axis_style);
         layout::draw_axis_y(ctx.canvas, area_, yticks, "value", axis_style);
     }
 
@@ -74,7 +81,7 @@ void BoxPlotChart::draw(DrawContext ctx) {
     const double bw = std::max(1.0, inner.w / n * 0.6);
 
     for (std::size_t i = 0; i < groups.size(); ++i) {
-        const BoxStats& g = groups[i];
+        const auto& [original, g] = groups[i];
         const double xc = area_.x_scale().forward(static_cast<double>(i));
         const double y_lo = area_.y_scale().forward(g.lo);
         const double y_q1 = area_.y_scale().forward(g.q1);
@@ -103,6 +110,15 @@ void BoxPlotChart::draw(DrawContext ctx) {
                     ctx.canvas.put(area_.cell_of(static_cast<double>(i), o), kOutlierChar, st);
                 }
             }
+        }
+
+        // 分组标签：按**原始下标**取，居中贴在箱体下方一行的轴标签带。
+        if (original < labels_.size() && !labels_[original].empty()) {
+            const std::string& label = labels_[original];
+            const double label_w =
+                static_cast<double>(util::display_width(label));
+            ctx.canvas.draw_text(Point{xc - label_w / 2.0, inner.y + inner.h + 1.0}, label,
+                                 axis_style);
         }
     }
 
