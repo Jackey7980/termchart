@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -74,11 +75,26 @@ bool field_to_double(std::string_view f, double& out) noexcept {
             return true;
         }
     }
+    // libstdc++/MSVC 有浮点 from_chars；libc++（Xcode 15.4 及更早）没有该重载，
+    // 退 strtod + 字符白名单（挡掉十六进制浮点/inf/nan，口径与 from_chars 一致）。
     const char* first = f.data();
     const char* last = f.data() + f.size();
     double value = 0.0;
+#if defined(_LIBCPP_VERSION)
+    for (const char* p = first; p != last; ++p) {
+        const char ch = *p;
+        const bool ok = (ch >= '0' && ch <= '9') || ch == '.' || ch == 'e' || ch == 'E' ||
+                        ch == '-' || ch == '+';
+        if (!ok) return false;
+    }
+    const std::string buf(f);
+    char* end = nullptr;
+    value = std::strtod(buf.c_str(), &end);
+    if (end != buf.c_str() + buf.size()) return false;
+#else
     const auto [ptr, ec] = std::from_chars(first, last, value);
     if (ec != std::errc() || ptr != last) return false;
+#endif
     out = value;
     return true;
 }

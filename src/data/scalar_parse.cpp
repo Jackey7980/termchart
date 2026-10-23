@@ -11,6 +11,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -139,22 +140,37 @@ std::string normalize_fullwidth(std::string_view s, bool& fullwidth) {
     return out;
 }
 
-bool from_chars_strict(std::string_view text, double& out) noexcept {
+// 严格解析 double（必须全量消费、有限值）：
+//   * libstdc++ / MSVC：浮点 std::from_chars 可用，locale 无关、无分配；
+//   * libc++（Xcode 15.4 及更早，LLVM ≤ 16）：没有浮点 from_chars 重载，退
+//     std::strtod + 字符白名单。白名单顺带挡掉 strtod 独有的十六进制浮点
+//     （"0x1p3"）与 inf/nan 字面量，保证两个平台口径与 libstdc++ 的
+//     from_chars 完全一致（"+5" 的前导 '+' 已在调用前剥掉）。
+bool parse_double_strict(std::string_view text, double& out) noexcept {
     if (text.empty()) return false;
-    std::string buf;
-    std::string_view body = text;
-    if (text.front() == '+') {  // from_chars 拒前导 '+'；"+5" 容忍掉
-        buf.assign(text.substr(1));
-        body = buf;
+#if defined(_LIBCPP_VERSION)
+    for (const char ch : text) {
+        const bool ok = (ch >= '0' && ch <= '9') || ch == '.' || ch == 'e' || ch == 'E' ||
+                        ch == '-' || ch == '+';
+        if (!ok) return false;
     }
-    const char* first = body.data();
-    const char* last = body.data() + body.size();
+    const std::string buf(text);
+    char* end = nullptr;
+    const double value = std::strtod(buf.c_str(), &end);
+    if (end != buf.c_str() + buf.size()) return false;  // 尾部有杂质
+    if (!std::isfinite(value)) return false;            // inf/nan 字面量
+    out = value;
+    return true;
+#else
+    const char* first = text.data();
+    const char* last = text.data() + text.size();
     double value = 0.0;
     const auto result = std::from_chars(first, last, value);
     if (result.ec != std::errc{} || result.ptr != last) return false;  // 尾部有杂质
     if (!std::isfinite(value)) return false;                          // inf/nan 字面量
     out = value;
     return true;
+#endif
 }
 
 }  // namespace
@@ -253,9 +269,11 @@ ParsedScalar parse_scalar(std::string_view text) {
     std::string normalized = normalize_fullwidth(cleaned, fullwidth);
     if (fullwidth) result.flags = result.flags | ScalarFlag::FullWidth;
 
-    // 9) 严格 from_chars。
+    // 9) 严格解析（from_chars 不接受前导 '+'，"+5" 先剥掉再解析）。
+    std::string_view body = normalized;
+    if (!body.empty() && body.front() == '+') body.remove_prefix(1);
     double value = 0.0;
-    if (!from_chars_strict(normalized, value)) {
+    if (!parse_double_strict(body, value)) {
         result.status = ScalarStatus::Invalid;
         return result;
     }

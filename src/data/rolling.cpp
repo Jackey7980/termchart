@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <deque>
 #include <iterator>
+#include <limits>
 #include <queue>
 #include <set>
 #include <utility>
@@ -37,7 +38,8 @@ const char* rolling_stat_name(RollingStat s) noexcept {
 
 namespace {
 
-constexpr double kNaN = std::nan("");
+// quiet_NaN() 是 constexpr；std::nan("") 在 libc++（macOS）不是 constexpr 函数。
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 // ── 滑窗累加器家族 ─────────────────────────────────────────────────────
 // 共同契约：add/remove 由调用方按窗口滑动驱动；NaN 值在调用方侧跳过，
