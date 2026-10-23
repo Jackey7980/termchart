@@ -43,11 +43,27 @@ bool is_header_controlled(std::string_view name) noexcept {
     return lower == "host" || lower == "connection";
 }
 
-// 头部字段（名与值）与 path 里不允许出现的控制字符：CR/LF 是请求走私的
+// method / path / host / 头部字段"名"里不允许出现的控制字符：CR/LF 是请求走私的
 // 客户端侧源头，NUL 会截断 C 风格处理。拒绝而非转义——本库不做转义猜测。
 bool has_control_chars(std::string_view text) noexcept {
     for (const char ch : text) {
         const auto uch = static_cast<unsigned char>(ch);
+        if (uch <= 0x1F || uch == 0x7F) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 头部字段"值"专用：HTTP 合法字段值含 SP / HTAB / visible / obs-text，故额外放行
+// HTAB(0x09)，仍拒 CR/LF/NUL 等其余控制字符与 DEL(0x7F)。这样"合法值不因安全被
+// 误伤"，而注入面（CR/LF）与截断面（NUL）照样 fail-loud。
+bool has_disallowed_value_chars(std::string_view text) noexcept {
+    for (const char ch : text) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (uch == 0x09) {
+            continue;  // HTAB 合法
+        }
         if (uch <= 0x1F || uch == 0x7F) {
             return true;
         }
@@ -222,13 +238,14 @@ std::string_view Response::content_type() const noexcept {
 // ── 串行化 ──────────────────────────────────────────────────────────────────
 
 Result<std::string> serialize_request(const Request& request) noexcept {
-    // 注入防护先行：method / path / 每个头的名与值都不得含控制字符。
+    // 注入防护先行：method / path / host / 头名 一律不得含控制字符；头值按 HTTP
+    // 语义放行 HTAB（合法），仍拒 CR/LF/NUL 等其余控制字符。
     if (has_control_chars(request.method) || has_control_chars(request.uri.path) ||
         has_control_chars(request.uri.host)) {
         return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
     }
     for (const auto& [key, value] : request.headers) {
-        if (has_control_chars(key) || has_control_chars(value)) {
+        if (has_control_chars(key) || has_disallowed_value_chars(value)) {
             return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
         }
     }

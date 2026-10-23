@@ -175,6 +175,20 @@ TEST_CASE("network/http: 请求串行化") {
         CHECK_FALSE(termchart::network::http::serialize_request(nul_header).has_value());
     }
 
+    SUBCASE("头值含 HTAB 合法（放行），CR/LF 仍拒") {
+        Request tabbed;
+        tabbed.uri = *Uri::parse("http://h.com/");
+        tabbed.headers = {{"X-Tab", "a\tb"}};  // HTAB 在 HTTP 字段值里合法
+        const Result<std::string> ok = termchart::network::http::serialize_request(tabbed);
+        REQUIRE(ok.has_value());
+        CHECK(ok->find("X-Tab: a\tb\r\n") != std::string::npos);
+
+        Request crlf;
+        crlf.uri = *Uri::parse("http://h.com/");
+        crlf.headers = {{"X-Tab", "a\tb\r\nX-Evil: 1"}};  // 带了 CRLF 仍必须拒
+        CHECK_FALSE(termchart::network::http::serialize_request(crlf).has_value());
+    }
+
     SUBCASE("body 二进制安全：NUL 原样透传且 Content-Length 定长") {
         Request bin;
         bin.uri = *Uri::parse("http://h.com/");
