@@ -380,8 +380,10 @@ TEST_CASE("dsl/registry: function-local static + 快照语义") {
     // 枚举三件套（全仓注册表统一口径）：内置方言登记后必然非空。
     CHECK_FALSE(first.empty());
     CHECK(first.size() == first.names().size());
-    CHECK(std::find(first.names().begin(), first.names().end(), "mermaid") !=
-          first.names().end());
+    // names() 按值返回——必须先落到局部再取迭代器，拿两个临时 vector 的
+    // 迭代器互相比是 UB（Windows 上蒙对、macOS 上翻车过）。
+    const std::vector<std::string_view> dsl_names = first.names();
+    CHECK(std::find(dsl_names.begin(), dsl_names.end(), "mermaid") != dsl_names.end());
 
     const DslDescriptor* mermaid = first.find("mermaid");
     REQUIRE(mermaid != nullptr);

@@ -336,10 +336,10 @@ TEST_CASE("autoviz/semantic: 时间轴未排序否决折线") {
     c.point_count = 10;
     c.x_is_temporal = true;
     c.temporal_sorted = false;
-    CHECK(std::any_of(semantic_check(c).begin(), semantic_check(c).end(),
-                      [](const std::string& r) {
-                          return r.find("temporal_unsorted") != std::string::npos;
-                      }));
+    const auto vetoes = semantic_check(c);
+    CHECK(std::any_of(vetoes.begin(), vetoes.end(), [](const std::string& r) {
+        return r.find("temporal_unsorted") != std::string::npos;
+    }));
 }
 
 TEST_CASE("autoviz/semantic: 高基数颜色通道与分类×分类否决") {
@@ -349,10 +349,10 @@ TEST_CASE("autoviz/semantic: 高基数颜色通道与分类×分类否决") {
     c.point_count = 10;
     c.color_is_categorical = true;
     c.color_tier = termchart::data::CardinalityTier::High;
-    CHECK(std::any_of(semantic_check(c).begin(), semantic_check(c).end(),
-                      [](const std::string& r) {
-                          return r.find("high_cardinality_color") != std::string::npos;
-                      }));
+    const auto vetoes = semantic_check(c);
+    CHECK(std::any_of(vetoes.begin(), vetoes.end(), [](const std::string& r) {
+        return r.find("high_cardinality_color") != std::string::npos;
+    }));
 
     ChartCandidate cc;
     cc.name = chart_name::kScatter;
@@ -361,10 +361,10 @@ TEST_CASE("autoviz/semantic: 高基数颜色通道与分类×分类否决") {
     cc.x_is_categorical = true;
     cc.color_is_categorical = true;
     cc.color_tier = termchart::data::CardinalityTier::Low;
-    CHECK(std::any_of(semantic_check(cc).begin(), semantic_check(cc).end(),
-                      [](const std::string& r) {
-                          return r.find("categorical_x_categorical") != std::string::npos;
-                      }));
+    const auto vetoes_cc = semantic_check(cc);
+    CHECK(std::any_of(vetoes_cc.begin(), vetoes_cc.end(), [](const std::string& r) {
+        return r.find("categorical_x_categorical") != std::string::npos;
+    }));
 }
 
 TEST_CASE("autoviz/semantic: 地理未去重否决（安全网）") {
@@ -373,10 +373,10 @@ TEST_CASE("autoviz/semantic: 地理未去重否决（安全网）") {
     c.build = []() { return std::make_unique<termchart::chart::ScatterChart>(); };
     c.point_count = 10;
     c.geo_deduped = false;
-    CHECK(std::any_of(semantic_check(c).begin(), semantic_check(c).end(),
-                      [](const std::string& r) {
-                          return r.find("geo_not_deduped") != std::string::npos;
-                      }));
+    const auto vetoes = semantic_check(c);
+    CHECK(std::any_of(vetoes.begin(), vetoes.end(), [](const std::string& r) {
+        return r.find("geo_not_deduped") != std::string::npos;
+    }));
 }
 
 TEST_CASE("autoviz/semantic: 词云/散点/平行坐标/直方图的下限否决") {
