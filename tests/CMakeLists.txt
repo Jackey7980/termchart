@@ -23,6 +23,7 @@ add_executable(termchart_tests
     unit/data/test_data.cpp
     unit/data/test_scalar_parse.cpp
     unit/data/test_dataframe.cpp
+    unit/data/test_autoviz_pipeline.cpp
 
     # ── util ──
     unit/util/test_utf8.cpp

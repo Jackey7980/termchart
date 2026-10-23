@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 374 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 376 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -5017,6 +5017,10 @@ public:
     [[nodiscard]] const JsonValue* find(std::string_view key) const noexcept;
     // 找不到返回 Null 单例。
     [[nodiscard]] const JsonValue& at(std::string_view key) const noexcept;
+    // 对象的键名列表，按**插入序**（对象保序存储的直接投影）。非对象返回空表。
+    // 存在理由：JSONL→DataFrame 需要"首个对象的键序"定列序，而 object_ 是私有的
+    // ——上层（data::dataframe_from_jsonl）只能经此枚举，不许为它开放内部结构。
+    [[nodiscard]] std::vector<std::string> keys() const;
 
     // ── 构建（程序化构造；解析产物不需要）──────────────────────────────────
     void push(JsonValue value);                    // 非 array 时忽略
@@ -6426,6 +6430,183 @@ struct DataFrameOptions {
 // 空输入返回空表（0 行 0 列），合法。
 [[nodiscard]] DataFrame parse_dataframe(std::string_view source,
                                         const DataFrameOptions& options = {});
+
+}  // namespace termchart::data
+
+// ===== include/termchart/data/column_profile.hpp =====
+// data/column_profile.hpp —— 列级画像：AutoViz 阶段二"特征探测"的底座（L4）
+//
+// 定位（对应 AutoViz 规格书阶段二）：
+//   在 DataFrame 之上做**极其克制**的单遍探测——类型判定抽样、基数熔断、
+//   空值率分桶。这里只回答"这列像什么、能干什么用"，不做任何绘图决策；
+//   路由与否决在 autoviz 模块（L21）。
+//
+// 与 dsl/csv_sniff.hpp 的 ColumnProfile 分工（刻意两份）：
+//   * dsl::ColumnProfile：服务文档表格渲染，只要 filled/empty 计数；
+//   * 本文件：服务 AutoViz，要 distinct/基数分档/空值率/极值/单调性。
+//   合并会让文档渲染背上统计成本，反过来会让 AutoViz 缺关键词，故并存。
+//
+// 性能口径：profile_columns 对整表是 O(列数 × 行数) 的单遍（每个 Cell 只
+// 碰一次），distinct 探测带熔断（超过 distinct_cap 立即停），类型判定只抽样
+// 前 sample_rows 行。不在此处计算方差/相关系数——那些按需、在聚合管线的
+// 目的地才算，防止"解析阶段算尽统计量"的性能灾难。
+
+
+
+namespace termchart::data {
+
+// 列级语义类型：Cell 级类型的聚合判定（占比 ≥ kind_ratio 即成立）。
+// 判定优先级：Timestamp > Numeric > Boolean > Text——"2024-01-01" 认不出数值
+// 归 Text，必须先过时间关；"0/1" 列留 Numeric（可当数值用），不进 Boolean。
+enum class ColumnKind : std::uint8_t {
+    Unknown,    // 0 行（空表）
+    NullOnly,   // 有行但全缺失
+    Timestamp,  // 时间格式（ISO-8601 家族，见 looks_like_timestamp）
+    Numeric,    // 数值
+    Boolean,    // true/false/yes/no（大小写不敏感）
+    Text,       // 其余（分类维度或脏文本）
+};
+
+// 基数分档：路由看的是"用途资格"，不是裸 distinct 数。
+//   Constant → 丢弃；Low → 可分组/可着色；Mid → 仅可 facet 不可着色；
+//   High → ID 列，只配去重计数。
+enum class CardinalityTier : std::uint8_t {
+    Constant,  // distinct ≤ 1
+    Low,       // 2..policy.low_max
+    Mid,       // low_max+1..policy.mid_max
+    High,      // > policy.mid_max
+};
+
+// 分档阈值是**策略值不是常量**：交易流水与传感器域对 20/200 的体感不同，
+// 调用方可覆盖。默认值对应规格书分档。
+struct CardinalityPolicy {
+    std::size_t low_max = 20;
+    std::size_t mid_max = 200;
+};
+
+[[nodiscard]] constexpr CardinalityTier tier_of(std::size_t distinct,
+                                                const CardinalityPolicy& policy = {}) noexcept {
+    if (distinct <= 1) {
+        return CardinalityTier::Constant;
+    }
+    if (distinct <= policy.low_max) {
+        return CardinalityTier::Low;
+    }
+    if (distinct <= policy.mid_max) {
+        return CardinalityTier::Mid;
+    }
+    return CardinalityTier::High;
+}
+
+[[nodiscard]] const char* cardinality_tier_name(CardinalityTier tier) noexcept;
+
+// 单列画像。
+struct ColumnProfile {
+    std::string name;
+    ColumnKind kind = ColumnKind::Unknown;
+    std::size_t rows = 0;               // 总行数
+    std::size_t non_null = 0;           // 非缺失数
+    std::size_t distinct = 0;           // 去重数（按 raw 原文计）
+    bool distinct_capped = false;       // true = 探测熔断，distinct/tier 只是**下界**
+    double null_rate = 0.0;             // 缺失率（rows=0 时为 0）
+    double min = 0.0;                   // Numeric 列有效域；其余为 NaN
+    double max = 0.0;
+    bool monotonic_nondecreasing = false;  // Numeric 列非空值是否非降序（时序轴校验用）
+    CardinalityTier tier = CardinalityTier::Constant;
+
+    [[nodiscard]] bool is_plottable_value() const noexcept {  // 可当 Y 轴/数值用
+        return kind == ColumnKind::Numeric && non_null > 0;
+    }
+    [[nodiscard]] bool is_categorical() const noexcept {  // 可当分组/分类维度用
+        return (kind == ColumnKind::Text || kind == ColumnKind::Boolean) && non_null > 0;
+    }
+};
+
+// 探测选项。默认值对应规格书；全部可调。
+struct ProfileOptions {
+    CardinalityPolicy cardinality{};      // 基数分档阈值
+    std::size_t distinct_cap = 256;       // distinct 熔断阈值（> mid_max 时 capped 必属 High）
+    std::size_t sample_rows = 200;        // 类型判定抽样行数（0 = 全量）
+    double kind_ratio = 0.8;              // 类型判定的占比阈值
+};
+
+// 对整表逐列画像。列名缺省时（headers 短于 columns）自动补 "colN"。
+[[nodiscard]] std::vector<ColumnProfile> profile_columns(const DataFrame& frame,
+                                                         const ProfileOptions& options = {});
+
+// 分桶空值率：先按 key 列分桶，再在各桶内算 value 列空值率。
+// 修正"全局空值率误杀事件关键字段"：duration_min 在 return 桶里几乎不空，
+// 全局看却可能被高缺失率一刀切——分桶后才看得见。key 单元格缺失的行无法
+// 归属，跳过（不计入任何桶）。
+struct BucketNullRate {
+    std::string key;
+    std::size_t rows = 0;
+    std::size_t non_null = 0;
+    double null_rate = 0.0;
+};
+
+// 结果按 key 字典序排列（确定性输出，便于测试与缓存）。
+[[nodiscard]] std::vector<BucketNullRate> null_rate_by_bucket(
+    const DataFrame& frame, std::string_view key_column, std::string_view value_column);
+
+// 时间格式识别（ISO-8601 家族的最小实用集）：
+//   YYYY-MM-DD
+//   YYYY-MM-DD HH:MM[:SS[.fff]]
+//   YYYY-MM-DDTHH:MM[:SS[.fff]][Z|±HH:MM|±HHMM]
+// 只认形状不认历法（2 月 30 号也过）——路由只需要"这是时间列"；
+// 真历法校验在解析成 epoch 的目的地做。列不存在/不匹配均返回 false。
+[[nodiscard]] bool looks_like_timestamp(std::string_view text) noexcept;
+
+// 布尔词表：true/false/yes/no（大小写不敏感）。刻意不含 0/1——那是数值。
+[[nodiscard]] bool looks_like_boolean(std::string_view text) noexcept;
+
+}  // namespace termchart::data
+
+// ===== include/termchart/data/dataframe_json.hpp =====
+// data/dataframe_json.hpp —— JSON/JSONL → DataFrame（保 Key 入口，L4）
+//
+// 对应 AutoViz 规格书阶段一"双轨制解析"的 JSON 轨：
+//   * **绝对保留原始 Key**：列序 = 首个对象的键插入序（io/json 的对象保序），
+//     其后对象的新键按出现顺序追加（并集），绝不重命名、绝不按字母序重排；
+//   * 嵌套对象/数组展平为**点路径**（loc.lat、tags.0）——键名不丢失，只是
+//     换了一种可列名化的写法；
+//   * 缺失键 → Empty 单元格（不编造、不错位、不用上一行的值填充）；
+//   * 单行解析失败默认跳过并计数（脏数据流不该因一行畸形全表报废），
+//     显式要 fail-loud 的调用方把 skip_invalid_lines 置 false。
+//   * 本阶段**不计算任何统计量**——输出的 DataFrame 只是轻底座，画像/路由
+//     是 column_profile 与 autoviz 的事。
+//
+// 为什么住在 data（L4）而不是 io（L2）：产物是 DataFrame（L4 类型），io 不
+// 许依赖上层；io/json 只提供 DOM 与 keys()，装配在这里做。
+
+
+
+namespace termchart::data {
+
+struct JsonFrameOptions {
+    bool skip_invalid_lines = true;  // JSONL 单行失败/非记录行：跳过并计数，而非整体失败
+    std::size_t max_lines = 0;       // 0 = 不限
+};
+
+struct JsonFrameResult {
+    DataFrame frame;
+    std::size_t lines_total = 0;    // 非空行总数（空白行不计）
+    std::size_t lines_used = 0;     // 产出行的行数
+    std::size_t lines_skipped = 0;  // 跳过的行数（skip_invalid_lines=true 时才有意义）
+};
+
+// JSONL（newline-delimited JSON，每行一个对象）→ DataFrame。
+// 顶层是对象的行按记录处理；顶层是**元素全为对象的数组**的行，其元素按多条
+// 记录处理；其余（标量、标量数组、混合数组）算非记录行，跳过并计数。
+[[nodiscard]] Result<JsonFrameResult> dataframe_from_jsonl(
+    std::string_view source, const JsonFrameOptions& options = {});
+
+// 单个 JSON 值 → DataFrame：
+//   * 数组且元素全为对象 → 多行（等价于把数组当 JSONL 展开）；
+//   * 对象 → 单行；
+//   * 其余 → InvalidArgument（调用方给的不是记录型 JSON）。
+[[nodiscard]] Result<JsonFrameResult> dataframe_from_json(
+    std::string_view source, const JsonFrameOptions& options = {});
 
 }  // namespace termchart::data
 

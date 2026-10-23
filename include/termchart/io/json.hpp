@@ -83,6 +83,10 @@ public:
     [[nodiscard]] const JsonValue* find(std::string_view key) const noexcept;
     // 找不到返回 Null 单例。
     [[nodiscard]] const JsonValue& at(std::string_view key) const noexcept;
+    // 对象的键名列表，按**插入序**（对象保序存储的直接投影）。非对象返回空表。
+    // 存在理由：JSONL→DataFrame 需要"首个对象的键序"定列序，而 object_ 是私有的
+    // ——上层（data::dataframe_from_jsonl）只能经此枚举，不许为它开放内部结构。
+    [[nodiscard]] std::vector<std::string> keys() const;
 
     // ── 构建（程序化构造；解析产物不需要）──────────────────────────────────
     void push(JsonValue value);                    // 非 array 时忽略

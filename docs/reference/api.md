@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **372 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **376 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -20,7 +20,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | math3d | L3 | 3 |
 | math4d | L3 | 3 |
 | scale | L3 | 10 |
-| data | L4 | 5 |
+| data | L4 | 9 |
 | scene | L4 | 6 |
 | image | L5 | 8 |
 | raster | L6 | 9 |
@@ -1072,6 +1072,61 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct HistogramBin`
 - `struct Quartiles`
 
+### `data/column_profile.hpp`
+
+> data/column_profile.hpp —— 列级画像：AutoViz 阶段二"特征探测"的底座（L4）
+>
+> 定位（对应 AutoViz 规格书阶段二）：
+> 在 DataFrame 之上做**极其克制**的单遍探测——类型判定抽样、基数熔断、
+> 空值率分桶。这里只回答"这列像什么、能干什么用"，不做任何绘图决策；
+> 路由与否决在 autoviz 模块（L21）。
+>
+> 与 dsl/csv_sniff.hpp 的 ColumnProfile 分工（刻意两份）：
+> * dsl::ColumnProfile：服务文档表格渲染，只要 filled/empty 计数；
+> * 本文件：服务 AutoViz，要 distinct/基数分档/空值率/极值/单调性。
+> 合并会让文档渲染背上统计成本，反过来会让 AutoViz 缺关键词，故并存。
+>
+> 性能口径：profile_columns 对整表是 O(列数 × 行数) 的单遍（每个 Cell 只
+> 碰一次），distinct 探测带熔断（超过 distinct_cap 立即停），类型判定只抽样
+> 前 sample_rows 行。不在此处计算方差/相关系数——那些按需、在聚合管线的
+> 目的地才算，防止"解析阶段算尽统计量"的性能灾难。
+
+- `enum class ColumnKind : std::uint8_t`
+- `enum class CardinalityTier : std::uint8_t`
+- `struct CardinalityPolicy`
+- `struct ColumnProfile`
+- `struct ProfileOptions`
+- `struct BucketNullRate`
+
+### `data/dataframe.hpp`
+
+- `enum class CellType : std::uint8_t`
+- `enum class CellFlag : std::uint8_t`
+- `struct Cell`
+- `struct DataFrame`
+- `struct DataFrameOptions`
+
+### `data/dataframe_json.hpp`
+
+> data/dataframe_json.hpp —— JSON/JSONL → DataFrame（保 Key 入口，L4）
+>
+> 对应 AutoViz 规格书阶段一"双轨制解析"的 JSON 轨：
+> * **绝对保留原始 Key**：列序 = 首个对象的键插入序（io/json 的对象保序），
+> 其后对象的新键按出现顺序追加（并集），绝不重命名、绝不按字母序重排；
+> * 嵌套对象/数组展平为**点路径**（loc.lat、tags.0）——键名不丢失，只是
+> 换了一种可列名化的写法；
+> * 缺失键 → Empty 单元格（不编造、不错位、不用上一行的值填充）；
+> * 单行解析失败默认跳过并计数（脏数据流不该因一行畸形全表报废），
+> 显式要 fail-loud 的调用方把 skip_invalid_lines 置 false。
+> * 本阶段**不计算任何统计量**——输出的 DataFrame 只是轻底座，画像/路由
+> 是 column_profile 与 autoviz 的事。
+>
+> 为什么住在 data（L4）而不是 io（L2）：产物是 DataFrame（L4 类型），io 不
+> 许依赖上层；io/json 只提供 DOM 与 keys()，装配在这里做。
+
+- `struct JsonFrameOptions`
+- `struct JsonFrameResult`
+
 ### `data/fill_missing.hpp`
 
 > util/data/fill_missing.hpp —— 缺失值处理（NaN 视为缺失）
@@ -1136,6 +1191,12 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class RollingStat : std::uint8_t`
 - `struct RollingOptions`
+
+### `data/scalar_parse.hpp`
+
+- `enum class ScalarStatus : std::uint8_t`
+- `enum class ScalarFlag : std::uint8_t`
+- `struct ParsedScalar`
 
 ## scene（L4）
 

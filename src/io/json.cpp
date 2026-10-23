@@ -531,6 +531,18 @@ const JsonValue& JsonValue::at(std::string_view key) const noexcept {
     return found != nullptr ? *found : null_value();
 }
 
+std::vector<std::string> JsonValue::keys() const {
+    std::vector<std::string> out;
+    if (type_ != Type::Object) {
+        return out;
+    }
+    out.reserve(object_.size());
+    for (const auto& [k, v] : object_) {
+        out.push_back(k);
+    }
+    return out;
+}
+
 void JsonValue::push(JsonValue value) {
     if (type_ == Type::Array) {
         array_.push_back(std::move(value));
