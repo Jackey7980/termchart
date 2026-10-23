@@ -173,7 +173,9 @@ private:
         while (check_kind(TokenKind::Arrow)) {
             saw_edge = true;
             const Token arrow = advance();
-            std::string_view arrow_text = arrow.text;
+            // 必须自持字符串：advance() 返回临时 Token，其 text 成员的视图会当场悬空
+            // （ASan stack-use-after-scope，tests/unit/dsl/test_dsl_mermaid.cpp:238）。
+            std::string arrow_text = arrow.text;
             std::string label;
 
             // `A -- 文字 --> B`：开箭头 + 文字 + 闭箭头
