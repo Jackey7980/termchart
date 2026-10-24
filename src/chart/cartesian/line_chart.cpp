@@ -35,7 +35,16 @@ void LineChart::draw(DrawContext ctx) {
         layout::draw_grid(ctx.canvas, area_, xticks, yticks, grid_style);
     }
     if (ctx.draw_axes) {
-        layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
+        if (x_tick_formatter_) {
+            std::vector<std::string> labels;
+            labels.reserve(xticks.size());
+            for (const double t : xticks) {
+                labels.push_back(x_tick_formatter_(t));
+            }
+            layout::draw_axis_x(ctx.canvas, area_, xticks, labels, "x", axis_style);
+        } else {
+            layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
+        }
         layout::draw_axis_y(ctx.canvas, area_, yticks, "y", axis_style);
     }
 

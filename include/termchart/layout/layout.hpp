@@ -25,6 +25,8 @@ enum class HAlign { Left, Center, Right };
 enum class VAlign { Top, Middle, Bottom };
 
 // 把刻度值格式化成短标签：大数少小数位，小数多小数位。确定性强，便于测试。
+// 量级超出 1e7 / 1e-3 时切紧凑科学计数（"2e+20"），保证长度 <= 7 列，
+// 以适配默认 8 列左边距；-0.0 归一为 "0"。
 TERMCHART_API std::string format_tick(double value) noexcept;
 
 }  // namespace termchart::layout

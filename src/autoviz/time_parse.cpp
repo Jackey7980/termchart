@@ -6,8 +6,11 @@
 #include "termchart/autoviz/time_parse.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
+#include <string>
 
 #include "termchart/data/column_profile.hpp"
 
@@ -19,9 +22,25 @@ std::int64_t days_from_civil(std::int64_t y, unsigned m, unsigned d) noexcept {
     y -= m <= 2;
     const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
     const auto yoe = static_cast<unsigned>(y - era * 400);          // [0, 399]
-    const unsigned doy = (153U * (m + (m > 2 ? -3 : 9)) + 2U) / 5U + d - 1U;  // [0, 365]
+    // 三月为年的起点：m>2 时减 3，1/2 月顺延到上一年末（写成无符号减法避免
+    // unsigned 里塞 -3 的 -Wsign-conversion）。
+    const unsigned mp = m > 2 ? m - 3U : m + 9U;
+    const unsigned doy = (153U * mp + 2U) / 5U + d - 1U;  // [0, 365]
     const unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;  // [0, 146096]
     return era * 146097 + static_cast<std::int64_t>(doe) - 719468;
+}
+
+// 天数 → 民用日期（days_from_civil 的逆）。同样出自 Howard Hinnant。
+void civil_from_days(std::int64_t z, std::int64_t& y, unsigned& m, unsigned& d) noexcept {
+    z += 719468;
+    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const auto doe = static_cast<unsigned>(z - era * 146097);            // [0, 146096]
+    const unsigned yoe = (doe - doe / 1460U + doe / 36524U - doe / 146096U) / 365U;  // [0, 399]
+    const unsigned doy = doe - (365U * yoe + yoe / 4U - yoe / 100U);     // [0, 365]
+    const unsigned mp = (5U * doy + 2U) / 153U;                          // [0, 11]
+    d = static_cast<unsigned>(doy - (153U * mp + 2U) / 5U + 1U);         // [1, 31]
+    m = mp < 10U ? mp + 3U : mp - 9U;                                    // [1, 12]
+    y = static_cast<std::int64_t>(yoe) + era * 400 + (m <= 2U ? 1 : 0);
 }
 
 bool is_leap(std::int64_t y) noexcept {
@@ -82,6 +101,55 @@ double nice_bucket_seconds(double t0, double t1, std::size_t target_buckets) noe
         }
     }
     return kBucketLadder.back();
+}
+
+std::string format_timestamp_short(double epoch, double span_seconds,
+                                   double resolution_seconds) noexcept {
+    if (!std::isfinite(epoch)) {
+        return "?";
+    }
+    const double whole = std::floor(epoch);
+    std::int64_t days = static_cast<std::int64_t>(std::floor(whole / 86400.0));
+    double sod = whole - static_cast<double>(days) * 86400.0;
+    if (sod < 0.0) {  // 负 epoch 的取整修正
+        sod += 86400.0;
+        days -= 1;
+    }
+    std::int64_t y = 0;
+    unsigned m = 0;
+    unsigned d = 0;
+    civil_from_days(days, y, m, d);
+    const int hh = static_cast<int>(sod / 3600.0);
+    const int mi = static_cast<int>((sod - static_cast<double>(hh) * 3600.0) / 60.0);
+
+    char buf[40];
+    if (span_seconds < 86400.0) {
+        std::snprintf(buf, sizeof buf, "%02d:%02d", hh, mi);
+    } else if (resolution_seconds < 86400.0) {
+        std::snprintf(buf, sizeof buf, "%02u-%02u %02d:%02d", m, d, hh, mi);
+    } else if (span_seconds < 86400.0 * 730.0) {
+        std::snprintf(buf, sizeof buf, "%02u-%02u", m, d);
+    } else {
+        std::snprintf(buf, sizeof buf, "%lld-%02u", static_cast<long long>(y), m);
+    }
+    return buf;
+}
+
+std::string format_span_human(double seconds) noexcept {
+    if (!std::isfinite(seconds) || seconds <= 0.0) {
+        return "0 秒";
+    }
+    char buf[48];
+    if (seconds >= 86400.0) {
+        std::snprintf(buf, sizeof buf, "%g 天", seconds / 86400.0);
+    } else if (seconds >= 3600.0) {
+        std::snprintf(buf, sizeof buf, "%g 小时", seconds / 3600.0);
+    } else if (seconds >= 60.0) {
+        std::snprintf(buf, sizeof buf, "%g 分钟", seconds / 60.0);
+    } else {
+        std::snprintf(buf, sizeof buf, "%g 秒", seconds);
+    }
+    return buf;
 }
 
 }  // namespace termchart::autoviz

@@ -40,10 +40,14 @@ std::vector<double> ticks_for(const Scale& scale, int target) noexcept {
     }
     const double rmin = scale.range_min();
     const double rmax = scale.range_max();
-    const double span = rmax - rmin;
+    // y 轴的 range 必然反向（数据大在上方 → 行号小），所以退化和边界检查都
+    // 必须与方向无关：写死 rmin<rmax 会让**所有**笛卡尔图的 y 刻度恒为空。
+    const double span = std::fabs(rmax - rmin);
     if (span == 0.0) {
         return out;
     }
+    const double rlo = std::min(rmin, rmax);
+    const double rhi = std::max(rmin, rmax);
 
     const double dmin = scale.domain_min();
     const double dmax = scale.domain_max();
@@ -51,10 +55,11 @@ std::vector<double> ticks_for(const Scale& scale, int target) noexcept {
     if (!(step > 0.0)) {
         return out;
     }
-    const double first = std::ceil(dmin / step - 1e-9) * step;
+    // +0.0：ceil(-1e-9) = -0.0，乘出来是 -0，标签会渲染成 "-0"（-0 + 0 = +0）。
+    const double first = std::ceil(dmin / step - 1e-9) * step + 0.0;
     for (double v = first; v <= dmax + step * 1e-9; v += step) {
         const double pixel = scale.forward(v);
-        if (pixel >= rmin - 1e-9 && pixel <= rmax + 1e-9) {
+        if (pixel >= rlo - 1e-9 && pixel <= rhi + 1e-9) {
             out.push_back(v);
         }
     }

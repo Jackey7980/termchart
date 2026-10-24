@@ -58,6 +58,23 @@ TEST_CASE("scale: ticks_for 在线性比例尺上取 nice 数据值") {
     CHECK(ticks.back() == doctest::Approx(10.0));
 }
 
+TEST_CASE("scale: ticks_for 支持反向 range（y 轴行号小 = 值大）") {
+    // 回归：y 轴的 range 永远是"底行 → 顶行"的反序（数据大在上方 → 行号小）。
+    // 旧实现写死 `pixel >= rmin && pixel <= rmax`，对反向 range 恒 false，
+    // 于是**所有**笛卡尔图的 y 刻度与网格全部消失。
+    const LinearScale scale(0.0, 10.0, 100.0, 0.0);
+    const std::vector<double> ticks = ticks_for(scale, 5);
+    CHECK(ticks.size() == 6);
+    CHECK(ticks.front() == doctest::Approx(0.0));
+    CHECK(ticks.back() == doctest::Approx(10.0));
+    CHECK(strictly_increasing(ticks));
+}
+
+TEST_CASE("scale: ticks_for 对零跨度 range 返回空而非除零") {
+    const LinearScale flat(0.0, 10.0, 5.0, 5.0);
+    CHECK(ticks_for(flat, 5).empty());
+}
+
 TEST_CASE("scale: ticks_for 在对数比例尺上取 1/10/100 而非等距") {
     const LogScale scale(1.0, 100.0, 0.0, 1.0);
     const std::vector<double> ticks = ticks_for(scale, 5);

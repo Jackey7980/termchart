@@ -244,13 +244,20 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
     const std::size_t buckets =
         static_cast<std::size_t>((*tmax - *tmin) / width) + 1;
     const std::size_t series_cap = std::min<std::size_t>(values.size(), 5);
+    const std::string value_label =
+        series_cap > 1 ? f.profiles[f.numeric_columns[0]].name + " 等 " +
+                             std::to_string(series_cap) + " 列"
+                       : f.profiles[f.numeric_columns[0]].name;
+    // 桶宽说人话：7200s 读不出来，"2 小时" 一眼就懂。
+    const std::string line_title =
+        value_label + " 随时间（按 " + format_span_human(width) + "均值）";
 
     // 候选 1：折线（每数值列一条系列，桶内取均值）。
     {
         ChartCandidate c;
         c.name = chart_name::kLine;
         c.pipeline = PipelineKind::Time;
-        c.title = "时间序列（按 " + std::to_string(static_cast<long long>(width)) + "s 桶均值）";
+        c.title = line_title;
         c.x_is_temporal = true;
         c.temporal_sorted = true;  // 桶序即时间序，聚合后天然有序
         c.point_count = buckets;
@@ -289,7 +296,10 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         auto labels = names;
         auto t0 = *tmin;
         auto w = width;
-        c.build = [ss, labels, t0, w]() {
+        auto span = *tmax - *tmin;
+        // 相邻刻度的间距（scale::ticks_for 默认目标 4-5 个）——决定标签粒度。
+        auto resolution = span / 4.0;
+        c.build = [ss, labels, t0, w, span, resolution, line_title]() {
             auto chart = std::make_unique<LineChart>();
             for (std::size_t s = 0; s < ss.size(); ++s) {
                 // 桶内聚合均值，输出按桶号升序（x 严格有序）。
@@ -313,7 +323,11 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
                 }
                 chart->add_series(std::move(series));
             }
-            chart->set_title("时间序列");
+            chart->set_title(line_title);
+            // x 是 epoch 秒：位置由 nice 刻度决定，文字换成 "03-01"/"12:00"。
+            chart->set_x_tick_formatter([span, resolution](double v) {
+                return format_timestamp_short(v, span, resolution);
+            });
             return chart;
         };
         out.push_back(std::move(c));
@@ -627,20 +641,20 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
             auto cs = categories;
             c.build = [rows, cs]() {
                 auto chart = std::make_unique<BoxPlotChart>();
-                std::vector<std::vector<double>> buckets(cs.size());
+                std::vector<std::vector<double>> group_values(cs.size());
                 for (const CategoryValue& cv : rows) {
                     if (cv.category < cs.size()) {
-                        buckets[cv.category].push_back(cv.value);
+                        group_values[cv.category].push_back(cv.value);
                     }
                 }
                 std::vector<BoxPlotChart::BoxStats> groups;
                 std::vector<std::string> labels;
                 for (std::size_t i = 0; i < cs.size(); ++i) {
-                    if (buckets[i].empty()) {
+                    if (group_values[i].empty()) {
                         continue;
                     }
-                    const data::Quartiles q =
-                        data::quartiles(data::DataView{buckets[i].data(), buckets[i].size()});
+                    const data::Quartiles q = data::quartiles(
+                        data::DataView{group_values[i].data(), group_values[i].size()});
                     BoxPlotChart::BoxStats stats;
                     stats.lo = q.minimum;
                     stats.q1 = q.q1;

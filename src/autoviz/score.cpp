@@ -14,10 +14,13 @@ namespace {
 double clamp01(double v) noexcept { return std::max(0.0, std::min(1.0, v)); }
 
 // 覆盖率满意区间：太稀 = 空图（信息不足），太满 = 糊（不可读）。
+// 行使用率**只保下限**（塌成一条线 = 没画出来）。上界必须是 1.0：
+// 任何正常图表都有标题（首行）+ x 轴与刻度标签（末行），row_usage 必然 = 1.0，
+// 把它判成"过满"会让所有候选恒定拿 0 分——"糊"这件事由 coverage 上界负责。
 constexpr double kCoverageLo = 0.02;
 constexpr double kCoverageHi = 0.35;
 constexpr double kRowUsageLo = 0.35;
-constexpr double kRowUsageHi = 0.95;
+constexpr double kRowUsageHi = 1.0;
 
 double ramp(double value, double lo, double hi) noexcept {
     if (value < lo) {

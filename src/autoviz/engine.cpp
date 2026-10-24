@@ -14,15 +14,15 @@ namespace termchart::autoviz {
 namespace {
 
 // 排序键：可用候选按综合分降序；否决的一律沉底（分再高也不选）。
+// **唯一判据是 total_score**——不按"是否做过光栅复核"排前：那会让 0.92 的
+// 复核候选压在 0.97 的未复核候选之上，而复核只是加分项里的一次修正，
+// 不是资格（复核过的分数只会被 total_score 里的乘性微调下调，不会凭空上升）。
 bool better(const ChartCandidate& a, const ChartCandidate& b) noexcept {
     if (a.viable() != b.viable()) {
         return a.viable();
     }
     if (!a.viable()) {
         return false;  // 都不可用：保持路由顺序（确定性）
-    }
-    if (std::isnan(a.raster_score) != std::isnan(b.raster_score)) {
-        return !std::isnan(a.raster_score);  // 复核过的排前（信息更全）
     }
     const double sa = a.total_score();
     const double sb = b.total_score();

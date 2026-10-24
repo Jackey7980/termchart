@@ -5,6 +5,7 @@
 #include "termchart/autoviz/autoviz.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -551,7 +552,55 @@ TEST_CASE("autoviz/score: 画布级复核对空图给低分、对正常图给高
     CHECK(raster_confirm(boom, 80, 24) == 0.0);
 }
 
-// ── 端到端 ──────────────────────────────────────────────────────────────────
+TEST_CASE("autoviz/score: 复核只做乘性下调，不给复核过的候选发奖金") {
+    ChartCandidate c;
+    c.name = chart_name::kScatter;
+    c.build = []() { return std::make_unique<termchart::chart::ScatterChart>(); };
+    c.analytic_score = 0.80;
+
+    CHECK(c.total_score() == doctest::Approx(0.80));  // 未复核（NaN）→ 原样
+
+    c.raster_score = 1.0;  // 形状健康
+    CHECK(c.total_score() == doctest::Approx(0.80));  // 乘 1.0，不上浮
+
+    c.raster_score = 0.0;  // 空图/糊图
+    CHECK(c.total_score() ==
+          doctest::Approx(0.80 * (1.0 - ChartCandidate::kRasterWeight)));
+
+    // 核心回归：解析分高但**未复核**的候选，必须压过解析分低却复核满分的候选。
+    // （旧实现把"复核过"当排序首要判据，会让低分候选凭复核翻盘。）
+    ChartCandidate unreviewed;
+    unreviewed.name = chart_name::kBar;
+    unreviewed.build = c.build;
+    unreviewed.analytic_score = 0.90;
+    CHECK(unreviewed.total_score() > c.total_score());
+
+    // 被否决的候选恒 -1，排在所有可用候选之后。
+    c.vetoes.emplace_back("test");
+    CHECK(c.total_score() == doctest::Approx(-1.0));
+}
+
+TEST_CASE("autoviz/time_parse: 轴标签粒度与人类可读跨度") {
+    const auto t = parse_timestamp("2026-03-01T08:00:00Z");
+    REQUIRE(t.has_value());
+    // span < 1 天 → 只给时刻（同一天内无歧义）
+    CHECK(format_timestamp_short(*t, 6 * 3600.0, 900.0) == "08:00");
+    // 跨天但刻度间隔按小时 → 必须带 MM-DD：否则相邻刻度全显示 "03-01"，信息为零
+    CHECK(format_timestamp_short(*t, 1.7 * 86400.0, 13 * 3600.0) == "03-01 08:00");
+    // 跨度数月、间隔按天 → MM-DD
+    CHECK(format_timestamp_short(*t, 60 * 86400.0, 7 * 86400.0) == "03-01");
+    // 多年跨度 → YYYY-MM
+    CHECK(format_timestamp_short(*t, 5 * 365 * 86400.0, 30 * 86400.0) == "2026-03");
+    // 非有限 epoch 给占位符，不把 "nan" 画到轴上
+    CHECK(format_timestamp_short(std::nan(""), 3600.0, 60.0) == "?");
+
+    // 桶宽的人类可读描述（标题里的 "按 2 小时均值"）
+    CHECK(format_span_human(7200.0) == "2 小时");
+    CHECK(format_span_human(5400.0) == "1.5 小时");
+    CHECK(format_span_human(7 * 86400.0) == "7 天");
+    CHECK(format_span_human(90.0) == "1.5 分钟");
+    CHECK(format_span_human(0.0) == "0 秒");
+}
 
 // ── 端到端 ──────────────────────────────────────────────────────────────────
 

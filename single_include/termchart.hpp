@@ -9404,6 +9404,8 @@ enum class HAlign { Left, Center, Right };
 enum class VAlign { Top, Middle, Bottom };
 
 // 把刻度值格式化成短标签：大数少小数位，小数多小数位。确定性强，便于测试。
+// 量级超出 1e7 / 1e-3 时切紧凑科学计数（"2e+20"），保证长度 <= 7 列，
+// 以适配默认 8 列左边距；-0.0 归一为 "0"。
 TERMCHART_API std::string format_tick(double value) noexcept;
 
 }  // namespace termchart::layout
@@ -9569,6 +9571,16 @@ namespace termchart::layout {
 // 下 x 轴：在 inner 底边画横线，向上长出刻度并标注数值；label 居中置于轴下方。
 TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
                                const std::vector<double>& ticks,
+                               std::string_view label = {},
+                               const Style& style = Style{});
+
+// 下 x 轴（显式标签版）：ticks 决定**刻度位置**，labels 决定**标签文本**。
+// 标签按 ticks 的下标一一对应；labels 短于 ticks 的位置回退 format_tick。
+// 分工刻意如此：layout 不认识"时间"这类语义，只负责画；"epoch 秒 → 日期字符串"
+// 由调用方（chart 的 formatter / autoviz）格式化后传进来。
+TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
+                               const std::vector<double>& ticks,
+                               const std::vector<std::string>& labels,
                                std::string_view label = {},
                                const Style& style = Style{});
 
@@ -10395,6 +10407,15 @@ public:
     }
     void set_show_legend(bool on) { show_legend_ = on; }
 
+    // x 轴刻度标签格式化钩子：**只影响标签文本，不影响刻度位置**（位置仍由
+    // scale::ticks_for 的 nice 值决定）。给时间轴用——x 是 epoch 秒这类连续
+    // 数值、但人要看 "03-01" 而不是 "1772350000" 时，由调用方注入格式化，
+    // chart 层不认识时间语义（与 layout 的字符串标签入口分层一致）。
+    // 未设置时走 layout::format_tick 的默认数字格式。
+    void set_x_tick_formatter(std::function<std::string(double)> formatter) {
+        x_tick_formatter_ = std::move(formatter);
+    }
+
     void draw(DrawContext ctx) override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
@@ -10405,6 +10426,7 @@ private:
     bool auto_domain_ = true;
     bool include_zero_ = false;
     bool show_legend_ = true;
+    std::function<std::string(double)> x_tick_formatter_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
@@ -19413,8 +19435,17 @@ struct ChartCandidate {
     [[nodiscard]] bool viable() const noexcept {
         return vetoes.empty() && static_cast<bool>(build);
     }
-    // 综合分：未复核时等于解析分；复核过按 0.65/0.35 加权（解析式海选为主，
-    // 光栅化只做决赛裁判——不全量沙盒渲染，防止 O(候选×画布) 浪费）。
+    // 光栅复核的最大扣分幅度（乘性微调，见 total_score）。
+    static constexpr double kRasterWeight = 0.15;
+
+    // 综合分：**解析分占绝对主导，复核只做下调**（乘性，不是加权平均）。
+    //   total = analytic × (1 - k + k × raster)
+    // 语义：raster=1（形状健康）→ 原样保留；raster=0（空图/糊图）→ 打 85 折；
+    //       未复核（NaN）→ 同样乘 1.0。
+    // 为什么不做"加权平均"（旧的 0.65a+0.35r）：raster 与 analytic 不同量纲，
+    // 平均会让"复核通过但形状分只有 0.5"的候选凭空掉分，等于惩罚被复核的人。
+    // 为什么乘数上界是 1.0 而不是 1.2：奖励复核过的候选，等于把"是否复核"
+    // 又偷偷塞进分数，同样扭曲排序——复核的职责是**发现问题**，不是发奖金。
     [[nodiscard]] double total_score() const noexcept {
         if (!viable()) {
             return -1.0;
@@ -19422,7 +19453,8 @@ struct ChartCandidate {
         if (std::isnan(raster_score)) {
             return analytic_score;
         }
-        return 0.65 * analytic_score + 0.35 * raster_score;
+        const double multiplier = (1.0 - kRasterWeight) + kRasterWeight * raster_score;
+        return analytic_score * multiplier;
     }
 };
 
@@ -19630,6 +19662,21 @@ namespace termchart::autoviz {
 // 桶宽取 1-2-5 阶梯上不小于区间/target 的最小档；t1<=t0 或非有限时返回 1.0。
 [[nodiscard]] TERMCHART_API double nice_bucket_seconds(double t0, double t1,
                                                        std::size_t target_buckets) noexcept;
+
+// epoch 秒 → 轴刻度短标签（parse_timestamp 的逆方向，**UTC/naive 口径**——
+// 与解析口径一致，不做本地时区换算：否则同一份数据在不同机器上显示不同时间）。
+// 粒度不能只看总跨度：跨度 1.7 天而刻度间隔 13 小时时，"MM-DD" 会让相邻两个
+// 刻度都显示 "03-01"（信息为零）。所以两参数各管一段：
+//   span < 1 天                        → "HH:MM"        （同一天内，无歧义）
+//   否则 resolution < 1 天              → "MM-DD HH:MM"  （跨天但需要小时精度）
+//   否则 span < 2 年                    → "MM-DD"
+//   否则                                → "YYYY-MM"
+// 非有限 epoch 返回 "?"。
+[[nodiscard]] TERMCHART_API std::string
+format_timestamp_short(double epoch, double span_seconds, double resolution_seconds) noexcept;
+
+// 时长 → 人类可读（"2 小时" / "90 分钟" / "7 天"），用于图表标题的桶宽描述。
+[[nodiscard]] TERMCHART_API std::string format_span_human(double seconds) noexcept;
 
 }  // namespace termchart::autoviz
 

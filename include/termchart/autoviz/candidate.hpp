@@ -69,8 +69,17 @@ struct ChartCandidate {
     [[nodiscard]] bool viable() const noexcept {
         return vetoes.empty() && static_cast<bool>(build);
     }
-    // 综合分：未复核时等于解析分；复核过按 0.65/0.35 加权（解析式海选为主，
-    // 光栅化只做决赛裁判——不全量沙盒渲染，防止 O(候选×画布) 浪费）。
+    // 光栅复核的最大扣分幅度（乘性微调，见 total_score）。
+    static constexpr double kRasterWeight = 0.15;
+
+    // 综合分：**解析分占绝对主导，复核只做下调**（乘性，不是加权平均）。
+    //   total = analytic × (1 - k + k × raster)
+    // 语义：raster=1（形状健康）→ 原样保留；raster=0（空图/糊图）→ 打 85 折；
+    //       未复核（NaN）→ 同样乘 1.0。
+    // 为什么不做"加权平均"（旧的 0.65a+0.35r）：raster 与 analytic 不同量纲，
+    // 平均会让"复核通过但形状分只有 0.5"的候选凭空掉分，等于惩罚被复核的人。
+    // 为什么乘数上界是 1.0 而不是 1.2：奖励复核过的候选，等于把"是否复核"
+    // 又偷偷塞进分数，同样扭曲排序——复核的职责是**发现问题**，不是发奖金。
     [[nodiscard]] double total_score() const noexcept {
         if (!viable()) {
             return -1.0;
@@ -78,7 +87,8 @@ struct ChartCandidate {
         if (std::isnan(raster_score)) {
             return analytic_score;
         }
-        return 0.65 * analytic_score + 0.35 * raster_score;
+        const double multiplier = (1.0 - kRasterWeight) + kRasterWeight * raster_score;
+        return analytic_score * multiplier;
     }
 };
 
