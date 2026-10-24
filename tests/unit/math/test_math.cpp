@@ -16,6 +16,9 @@
 #include "termchart/math/special.hpp"
 #include "termchart/math/stats.hpp"
 
+// 跨模块不变量测试需要 data::quartiles 作为对照真源
+#include "termchart/data/aggregate.hpp"
+
 using namespace termchart;
 using namespace termchart::math;
 
@@ -363,6 +366,105 @@ TEST_CASE("math::lab 白点与往返") {
         CHECK(std::abs(static_cast<int>(back.g) - static_cast<int>(c.g)) <= 1);
         CHECK(std::abs(static_cast<int>(back.b) - static_cast<int>(c.b)) <= 1);
     }
+}
+
+// ── stats: 分位数 / 极值篱（batch 1） ────────────────────────────────────────
+//
+// 这三者是 AutoViz 稳健 Y 轴域与 chart KDE 带宽的地基。此前仓库里分位数有两份
+// 独立实现（data::quartiles 走 sort + 线性插值、chart/statistical/distribution.cpp
+// 里的匿名 quantile），口径相同却各写一遍——"同一数字两个真源"正是分叉起点。
+// 现在以 math::stats 为唯一真源（线性插值法，pos = p·(n-1)），且 quantile(xs,0.5)
+// 必须与 math::median 严格一致。
+
+TEST_CASE("math::stats::quickselect 第 k 小 + 越界不 UB") {
+    std::vector<double> v = {3, 1, 4, 1, 5, 9, 2, 6};
+    std::vector<double> sorted = v;
+    std::sort(sorted.begin(), sorted.end());  // {1,1,2,3,4,5,6,9}
+
+    CHECK(std::isnan(quickselect(std::span<double>(v), 100)));  // 越界 → NaN，不越界
+    for (std::size_t k = 0; k < v.size(); ++k) {
+        std::vector<double> copy = v;
+        CHECK(quickselect(std::span<double>(copy), k) == doctest::Approx(sorted[k]));
+    }
+    // 只部分排序：multiset 不变（排序后相等）
+    std::vector<double> copy = v;
+    quickselect(std::span<double>(copy), 3);
+    std::sort(copy.begin(), copy.end());
+    CHECK(copy == sorted);
+}
+
+TEST_CASE("math::stats::quantile 线性插值 + 边界") {
+    const std::vector<double> odd = {1, 2, 3, 4, 5};
+    CHECK(quantile(odd, 0.0) == doctest::Approx(1.0));
+    CHECK(quantile(odd, 0.25) == doctest::Approx(2.0));
+    CHECK(quantile(odd, 0.5) == doctest::Approx(3.0));
+    CHECK(quantile(odd, 0.75) == doctest::Approx(4.0));
+    CHECK(quantile(odd, 1.0) == doctest::Approx(5.0));
+
+    const std::vector<double> even = {1, 2, 3, 4};
+    CHECK(quantile(even, 0.5) == doctest::Approx(2.5));
+    // quantile(0.5) 必须 == median——两条路径不能漂移
+    CHECK(quantile(even, 0.5) == doctest::Approx(median(even)));
+
+    // p 越界钳位；p 为 NaN → NaN
+    CHECK(quantile(odd, -1.0) == doctest::Approx(1.0));
+    CHECK(quantile(odd, 2.0) == doctest::Approx(5.0));
+    CHECK(std::isnan(quantile(odd, std::nan(""))));
+
+    // 空 / 全 NaN → NaN
+    CHECK(std::isnan(quantile(std::vector<double>{}, 0.5)));
+    CHECK(std::isnan(quantile(std::vector<double>{std::nan(""), std::nan("")}, 0.5)));
+
+    // NaN 跳过
+    const std::vector<double> withnan = {std::nan(""), 2, 4, 6, std::nan("")};
+    CHECK(quantile(withnan, 0.5) == doctest::Approx(4.0));
+}
+
+TEST_CASE("math::stats::tukey_fence 标准 + 退化 + 全 NaN") {
+    // Q1=3.25, Q3=7.75, IQR=4.5 → 篱 [−3.5, 14.5]，100 是离群
+    const std::vector<double> xs = {1, 2, 3, 4, 5, 6, 7, 8, 9, 100};
+    const TukeyFence f = tukey_fence(xs, 1.5);
+    CHECK(f.valid);
+    CHECK(f.q1 == doctest::Approx(3.25));
+    CHECK(f.q3 == doctest::Approx(7.75));
+    CHECK(f.median == doctest::Approx(5.5));
+    CHECK(f.iqr == doctest::Approx(4.5));
+    CHECK(f.lo == doctest::Approx(-3.5));
+    CHECK(f.hi == doctest::Approx(14.5));
+    CHECK(f.contains(5.0));
+    CHECK_FALSE(f.contains(100.0));
+
+    // k 可调：k=3 的"极端离群"篱更宽
+    const TukeyFence g = tukey_fence(xs, 3.0);
+    CHECK(g.lo == doctest::Approx(3.25 - 3.0 * 4.5));
+    CHECK(g.hi == doctest::Approx(7.75 + 3.0 * 4.5));
+
+    // IQR 退化（过半取值相同）：靠相对中位数的尺度撑开，绝不退化成"全判离群"
+    const TukeyFence degen = tukey_fence(std::vector<double>{5, 5, 5, 5}, 1.5);
+    CHECK(degen.valid);
+    CHECK(degen.q1 == doctest::Approx(5.0));
+    CHECK(degen.iqr == doctest::Approx(0.0));
+    CHECK(degen.lo == doctest::Approx(5.0 - 1.5 * 5.0));
+    CHECK(degen.hi == doctest::Approx(5.0 + 1.5 * 5.0));
+
+    // 单点样本：仍 valid，篱靠退化分支
+    const TukeyFence one = tukey_fence(std::vector<double>{42.0}, 1.5);
+    CHECK(one.valid);
+    CHECK(one.median == doctest::Approx(42.0));
+
+    // 全 NaN / 空 → 无效
+    CHECK_FALSE(tukey_fence(std::vector<double>{std::nan(""), std::nan("")}, 1.5).valid);
+    CHECK_FALSE(tukey_fence(std::vector<double>{}, 1.5).valid);
+}
+
+TEST_CASE("math::stats::tukey_fence 与 data::quartiles 口径一致") {
+    // 单一真源：math 的篱不得与 data 的四分位漂移
+    const std::vector<double> xs = {2, 5, 7, 1, 9, 3, 8, 4, 6, 100};
+    const TukeyFence f = tukey_fence(xs, 1.5);
+    const data::Quartiles q = data::quartiles(data::DataView{xs.data(), xs.size()});
+    CHECK(f.q1 == doctest::Approx(q.q1).epsilon(1e-9));
+    CHECK(f.median == doctest::Approx(q.median).epsilon(1e-9));
+    CHECK(f.q3 == doctest::Approx(q.q3).epsilon(1e-9));
 }
 
 }  // TEST_SUITE

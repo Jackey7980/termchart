@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "termchart/data/aggregate.hpp"
+#include "termchart/math/stats.hpp"
 
 namespace termchart::autoviz {
 namespace {
@@ -52,25 +52,12 @@ RobustDomain robust_y_domain(std::span<const double> values, double fence) noexc
         return d;  // 裁剪被显式关闭：轴域就是 [min, max]，不判越界
     }
 
-    const data::Quartiles q = data::quartiles(data::DataView{finite.data(), finite.size()});
-    d.median = q.median;
-    const double iqr = q.q3 - q.q1;
-    double fence_lo = 0.0;
-    double fence_hi = 0.0;
-    if (iqr > 0.0) {
-        fence_lo = q.q1 - fence * iqr;
-        fence_hi = q.q3 + fence * iqr;
-    } else {
-        // IQR 退化（一半以上的值完全相同，典型："999 个 1 和 1 个 1e21"）：
-        // 篱失去尺度，改用相对中位数的篱。绝对下限 1e-9 挡住 median=0 时
-        // 篱宽收缩成 0、把所有非零值都判成离群的退化。
-        const double spread = std::max(std::abs(q.median), 1e-9);
-        fence_lo = q.median - fence * spread;
-        fence_hi = q.median + fence * spread;
-    }
-
-    d.lo = std::max(d.raw_lo, fence_lo);
-    d.hi = std::min(d.raw_hi, fence_hi);
+    // 篱的数学（含 IQR 退化时改用相对中位数的尺度）在 math::tukey_fence 里，
+    // 这里只管策略：域取 [raw_lo, raw_hi] 与篱的交集，退化时撑开、越界过多则放弃。
+    const math::TukeyFence f = math::tukey_fence(finite, fence);
+    d.median = f.median;
+    d.lo = std::max(d.raw_lo, f.lo);
+    d.hi = std::min(d.raw_hi, f.hi);
     if (!(d.hi > d.lo)) {
         widen_degenerate(d);  // 篱内只剩一个值：撑开一点，保住可画的域
     }

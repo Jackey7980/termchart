@@ -119,6 +119,118 @@ namespace termchart::math {
     return covariance(xs, ys) / (sx * sy);
 }
 
+// ── 分位数与极值篱 ───────────────────────────────────────────────────────────
+//
+// 这三个是"极值裁剪"的地基：AutoViz 的稳健 Y 轴域（Tukey 篱）要它，chart 的
+// KDE 带宽（Silverman 规则）也要它。此前仓库里分散着两份实现（data::quartiles
+// 走 sort + 线性插值、chart/statistical/distribution.cpp 里一份匿名 quantile），
+// 口径相同却各写一遍——"同一个数字两个真源"正是分叉的起点。这里给出唯一真源：
+// **线性插值法**（numpy.percentile / pandas.quantile 的默认口径），
+// 即 pos = p·(n-1)，按 floor/ceil 两点插值。
+//
+// 与 math::median 严格一致：quantile(xs, 0.5) == median(xs)（含偶数样本）。
+
+namespace detail_stats {
+
+// 分位数（v 允许乱序，会被部分排序；v 中不得含 NaN）。
+[[nodiscard]] inline double quantile_of(std::vector<double>& v, double p) noexcept {
+    const std::size_t n = v.size();
+    if (n == 0) return std::nan("");
+    if (std::isnan(p)) return std::nan("");
+    if (p <= 0.0) return *std::min_element(v.begin(), v.end());
+    if (p >= 1.0) return *std::max_element(v.begin(), v.end());
+    if (n == 1) return v[0];
+
+    const double pos = p * static_cast<double>(n - 1);
+    const auto hi = static_cast<std::size_t>(std::ceil(pos));
+    const auto lo = static_cast<std::size_t>(std::floor(pos));
+    // 先把 hi 位就位，再在 [0, hi] 前缀里把 lo 位就位：两次 nth_element 都只
+    // 触碰必要区间，均摊 O(N)，比整列排序省一个 log。
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(hi), v.end());
+    const double b = v[hi];
+    if (lo == hi) return b;
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(lo),
+                     v.begin() + static_cast<std::ptrdiff_t>(hi) + 1);
+    const double a = v[lo];
+    const double t = pos - static_cast<double>(lo);
+    return a * (1.0 - t) + b * t;
+}
+
+}  // namespace detail_stats
+
+// 原地部分排序后返回第 k 小（0 基 k）的元素。
+//
+// 委托 std::nth_element——它是 introselect（期望 O(N)，最坏 O(N) 由堆排序兜底），
+// 手写 quickselect 在三数取中、大量重复键、递归深度上都更容易出错，且不会更快。
+// 这里给出的价值是**契约**：k ≥ size 或空输入返回 NaN（不越界、不 UB）；
+// NaN 元素会破坏偏序，调用方须先滤掉（quantile 已代劳）。
+[[nodiscard]] inline double quickselect(std::span<double> xs, std::size_t k) noexcept {
+    if (k >= xs.size()) return std::nan("");
+    std::nth_element(xs.begin(), xs.begin() + static_cast<std::ptrdiff_t>(k), xs.end());
+    return xs[k];
+}
+
+// 分位数 p ∈ [0,1]（越界钳位；p 为 NaN 返回 NaN）。线性插值法，见文件头口径说明。
+// NaN 元素视为缺失并跳过；有效值 0 个返回 NaN。拷贝一次（O(N) 空间），不排序整列。
+[[nodiscard]] inline double quantile(std::span<const double> xs, double p) noexcept {
+    std::vector<double> v;
+    v.reserve(xs.size());
+    for (const double x : xs) {
+        if (!std::isnan(x)) v.push_back(x);
+    }
+    return detail_stats::quantile_of(v, p);
+}
+
+// Tukey 篱（箱线图的"须"）：[Q1 - k·IQR, Q3 + k·IQR]。k = 1.5 是箱线图默认
+// （判"离群"），k = 3.0 判"极端离群"。
+//
+// IQR 退化（过半取值相同，典型："999 个 1 加 1 个 1e21"）时篱失去尺度，改用
+// median ± k·max(|median|, 1e-9)：绝对下限 1e-9 挡住 median = 0 时篱宽收缩成 0、
+// 把所有非零值都判成离群的退化。这条"统计量塌缩时怎么办"是数学决定，因此放在
+// 这里，而不是让每个调用方各写一遍。
+struct TukeyFence {
+    double lo = 0.0;      // 下篱
+    double hi = 0.0;      // 上篱
+    double q1 = 0.0;
+    double median = 0.0;
+    double q3 = 0.0;
+    double iqr = 0.0;
+    bool valid = false;   // 至少含 1 个有效值；false 时其余字段无意义
+
+    [[nodiscard]] bool contains(double v) const noexcept {
+        return valid && v >= lo && v <= hi;
+    }
+};
+
+// NaN 跳过。单点样本（n == 1）也返回 valid：q1 = q3 = median = 该值，篱靠退化
+// 分支撑开——"一个值谈不上分布"，但调用方仍需一个能画的域。
+[[nodiscard]] inline TukeyFence tukey_fence(std::span<const double> xs, double k = 1.5) noexcept {
+    TukeyFence f;
+    std::vector<double> v;
+    v.reserve(xs.size());
+    for (const double x : xs) {
+        if (!std::isnan(x)) v.push_back(x);
+    }
+    if (v.empty()) return f;
+
+    f.q1 = detail_stats::quantile_of(v, 0.25);
+    f.median = detail_stats::quantile_of(v, 0.50);
+    f.q3 = detail_stats::quantile_of(v, 0.75);
+    f.iqr = f.q3 - f.q1;
+    f.valid = true;
+    if (f.iqr > 0.0 && k > 0.0) {
+        f.lo = f.q1 - k * f.iqr;
+        f.hi = f.q3 + k * f.iqr;
+        return f;
+    }
+    // 篱退化：改用相对中位数的尺度（k ≤ 0 视作"不要篱"，但仍给出一个非零宽度的域）。
+    const double spread = std::max(std::abs(f.median), 1e-9);
+    const double kk = k > 0.0 ? k : 1.5;
+    f.lo = f.median - kk * spread;
+    f.hi = f.median + kk * spread;
+    return f;
+}
+
 }  // namespace termchart::math
 
 #endif  // TERMCHART_MATH_STATS_HPP
