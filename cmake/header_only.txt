@@ -19,6 +19,7 @@ util/math.hpp
 util/random.hpp
 util/assert.hpp
 color/named_colors.hpp
+color/rgba
 util/base64
 math/stats
 math/interpolate

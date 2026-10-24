@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 
+#include "termchart/core/rgb.hpp"
 #include "termchart/export.hpp"
 
 namespace termchart::util {
@@ -28,6 +29,11 @@ TERMCHART_API std::string format_int(std::int64_t value);
 
 // 轴标签常用：2000 → "2k"，避免长数字挤占坐标空间。
 TERMCHART_API std::string format_compact(double value, int precision = 1);
+
+// 颜色序列化："#RRGGBB"（大写，7 字节）。调试日志、JSON、CSS 输出共用一种写法，
+// 让 1.55 万的 Rgb 调用点不必各自拼 hex。Rgba 不在这里——alpha 怎么表示是
+// 各导出格式自己的事。
+TERMCHART_API std::string to_hex_string(const Rgb& color);
 
 }  // namespace termchart::util
 

@@ -91,4 +91,17 @@ std::string format_compact(double value, int precision) {
     return format_double_trimmed(value, precision);
 }
 
+std::string to_hex_string(const Rgb& color) {
+    static constexpr char kDigits[] = "0123456789ABCDEF";
+    // 预置长度直接按下标写，避免 reserve + 6 次 push_back 的容量检查。
+    std::string out(7, '#');
+    out[1] = kDigits[(color.r >> 4) & 0x0Fu];
+    out[2] = kDigits[color.r & 0x0Fu];
+    out[3] = kDigits[(color.g >> 4) & 0x0Fu];
+    out[4] = kDigits[color.g & 0x0Fu];
+    out[5] = kDigits[(color.b >> 4) & 0x0Fu];
+    out[6] = kDigits[color.b & 0x0Fu];
+    return out;
+}
+
 }  // namespace termchart::util

@@ -56,4 +56,13 @@ TEST_CASE("util: format_int") {
     CHECK(format_int(-7) == "-7");
 }
 
+TEST_CASE("util: to_hex_string") {
+    CHECK(to_hex_string(termchart::Rgb{255, 0, 0}) == "#FF0000");
+    CHECK(to_hex_string(termchart::Rgb{0, 0, 0}) == "#000000");
+    CHECK(to_hex_string(termchart::Rgb{255, 255, 255}) == "#FFFFFF");
+    // 低位补零不能塌陷：0x05 必须写成 "05"，0x0A 必须是 "0A"（大写）
+    CHECK(to_hex_string(termchart::Rgb{5, 15, 16}) == "#050F10");
+    CHECK(to_hex_string(termchart::Rgb{0x0A, 0x14, 0x1E}) == "#0A141E");
+}
+
 }  // namespace

@@ -2,12 +2,14 @@
 #include <doctest.h>
 
 #include <string>
+#include <type_traits>
 
 #include "termchart/color/colormap.hpp"
 #include "termchart/color/gradient.hpp"
 #include "termchart/color/named_colors.hpp"
 #include "termchart/color/palette.hpp"
 #include "termchart/color/quantize.hpp"
+#include "termchart/color/rgba.hpp"
 #include "termchart/core/style.hpp"
 
 namespace {
@@ -178,6 +180,56 @@ TEST_CASE("color: 命名色表的结构不变量") {
     CHECK(*lookup_named_color("navajowhite") == Rgb{255, 222, 173});
     CHECK(*lookup_named_color("lightgoldenrodyellow") == Rgb{250, 250, 210});
     CHECK_FALSE(lookup_named_color("transparent").has_value());  // 关键字不是颜色值
+}
+
+TEST_CASE("color: Rgba 转换与 over 合成") {
+    // Rgb → Rgba 隐式（不透明色是子集）；Rgba → Rgb 必须显式（丢 alpha 有损）。
+    const Rgba solid = Rgb{10, 20, 30};
+    CHECK(solid.a == 255);
+    CHECK(solid.to_rgb() == Rgb{10, 20, 30});
+    static_assert(std::is_convertible_v<Rgb, Rgba>);
+    static_assert(!std::is_convertible_v<Rgba, Rgb>);
+    CHECK(Rgba{}.a == 255);  // 默认构造是不透明黑
+
+    // 端点必须精确：a=0 得背景，a=255 得前景。
+    CHECK(blend(Rgba{200, 100, 50, 0}, Rgb{7, 8, 9}) == Rgb{7, 8, 9});
+    CHECK(blend(Rgba{200, 100, 50, 255}, Rgb{7, 8, 9}) == Rgb{200, 100, 50});
+
+    // 半透明黑压白：真值 255·127/255 = 127，整数路径必须落在 127 而不是 128。
+    CHECK(blend(Rgba{0, 0, 0, 128}, Rgb{255, 255, 255}) == Rgb{127, 127, 127});
+    // 逐通道独立，不许串色：alpha=128/255 时前景 255·128/255 = 128，背景 255·127/255 = 127。
+    CHECK(blend(Rgba{255, 0, 0, 128}, Rgb{0, 0, 255}) == Rgb{128, 0, 127});
+}
+
+TEST_CASE("color: GradientMode 只新增策略，默认仍是 sRGB") {
+    const Rgb red{255, 0, 0};
+    const Rgb green{0, 255, 0};
+
+    // 默认与显式 Rgb 都是分量插值：中点 (128,128,0)。golden 快照依赖这条。
+    CHECK(mix(red, green, 0.5) == Rgb{128, 128, 0});
+    CHECK(mix(red, green, 0.5, GradientMode::Rgb) == Rgb{128, 128, 0});
+
+    // HSV：色相 0°→120° 走最短弧，中点 60° 是纯黄，不经过脏褐。
+    CHECK(mix(red, green, 0.5, GradientMode::Hsv) == Rgb{255, 255, 0});
+    // 端点原样返回，插值不得污染两端。
+    CHECK(mix(red, green, 0.0, GradientMode::Hsv) == red);
+    CHECK(mix(red, green, 1.0, GradientMode::Hsv) == green);
+
+    // 最短弧：红 0° → 品红 300° 应经 330°（(255,0,128)），而不是绕 0→300 穿过青绿。
+    CHECK(mix(red, Rgb{255, 0, 255}, 0.5, GradientMode::Hsv) == Rgb{255, 0, 128});
+
+    // 灰没有色相：t=0 必须还是那个灰，不能借到彩端的蓝。
+    CHECK(mix(Rgb{128, 128, 128}, Rgb{0, 0, 255}, 0.0, GradientMode::Hsv) == Rgb{128, 128, 128});
+    // 两端皆灰：无色相可插，退回分量插值。
+    CHECK(mix(Rgb{0, 0, 0}, Rgb{255, 255, 255}, 0.5, GradientMode::Hsv) == Rgb{128, 128, 128});
+
+    // Gradient 类：set_mode 生效，切回后逐位还原。
+    Gradient g(red, green);
+    CHECK(g.sample(0.5) == Rgb{128, 128, 0});
+    g.set_mode(GradientMode::Hsv);
+    CHECK(g.sample(0.5) == Rgb{255, 255, 0});
+    g.set_mode(GradientMode::Rgb);
+    CHECK(g.sample(0.5) == Rgb{128, 128, 0});
 }
 
 }  // namespace

@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 389 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 390 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -4167,6 +4167,11 @@ TERMCHART_API std::string format_int(std::int64_t value);
 // 轴标签常用：2000 → "2k"，避免长数字挤占坐标空间。
 TERMCHART_API std::string format_compact(double value, int precision = 1);
 
+// 颜色序列化："#RRGGBB"（大写，7 字节）。调试日志、JSON、CSS 输出共用一种写法，
+// 让 1.55 万的 Rgb 调用点不必各自拼 hex。Rgba 不在这里——alpha 怎么表示是
+// 各导出格式自己的事。
+TERMCHART_API std::string to_hex_string(const Rgb& color);
+
 }  // namespace termchart::util
 
 // ===== include/termchart/util/geo/geojson.hpp =====
@@ -4856,10 +4861,20 @@ TERMCHART_API const char* colormap_name(ColormapKind kind) noexcept;
 
 namespace termchart::color {
 
+// 插值空间。默认 Rgb 与历史行为逐位一致（golden 快照依赖它，不许动）；
+// Hsv 让跨色相渐变（红→绿）不穿过中间的脏褐灰，代价是各色相段的感知速度不均。
+enum class GradientMode {
+    Rgb,  // sRGB 三分量直接线性插值
+    Hsv,  // 色相走最短弧，饱和度 / 明度线性插值
+};
+
 class Gradient {
 public:
     Gradient() = default;
     explicit Gradient(Rgb from, Rgb to) noexcept;
+
+    // 切换插值空间。只影响之后调用 sample / generate 的结果。
+    Gradient& set_mode(GradientMode mode) noexcept;
 
     // pos ∈ [0,1]；重复 pos 会覆盖；顺序无关（内部按 pos 排序）。
     Gradient& add_stop(double pos, Rgb color);
@@ -4876,10 +4891,14 @@ private:
         Rgb color;
     };
     std::vector<Stop> stops_;
+    GradientMode mode_ = GradientMode::Rgb;
 };
 
 // 两色之间线性插值，t 钳位到 [0,1]（sRGB 空间，不做 gamma 校正）。
 TERMCHART_API Rgb mix(Rgb from, Rgb to, double t) noexcept;
+
+// 指定插值空间。mode == Rgb 时与三参版本走同一条实现，输出逐位相同。
+TERMCHART_API Rgb mix(Rgb from, Rgb to, double t, GradientMode mode) noexcept;
 
 // 按感知亮度挑黑白之一作为前景，保证对比可读。
 TERMCHART_API Rgb contrasting_text_color(Rgb background) noexcept;
@@ -5185,6 +5204,54 @@ struct ResolvedStyle {
 // 调用方仍从原 Style 读取。
 [[nodiscard]] TERMCHART_API ResolvedStyle resolve_style(
     const Style& style, const ResolveOptions& options = {}) noexcept;
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/rgba.hpp =====
+// rgba.hpp —— 带透明度的颜色参数包（header-only，属 cmake/header_only.txt）
+//
+// 分层：这是 L2 color 层的"管线中间态"，不是底层像素格式。core::Rgb 永远只有
+// 3 字节，alpha 只活在这里与调用方手里；压平（blend）之后才落回 Rgb 上屏。
+//
+// 为什么 blend 在这里而不是 math：math 是 L1，不能 include L2 的 Rgba。把具体
+// 业务类型当参数传给 math 就是分层违规，所以混合留在这层。
+
+
+
+namespace termchart::color {
+
+struct Rgba {
+    std::uint8_t r = 0;
+    std::uint8_t g = 0;
+    std::uint8_t b = 0;
+    std::uint8_t a = 255;
+
+    constexpr Rgba() noexcept = default;
+    constexpr Rgba(std::uint8_t red, std::uint8_t green, std::uint8_t blue,
+                   std::uint8_t alpha = 255) noexcept
+        : r(red), g(green), b(blue), a(alpha) {}
+
+    // 隐式：不透明色是 Rgba 的子集，升级时 alpha = 255 没有信息损失。
+    constexpr Rgba(const Rgb& c) noexcept : r(c.r), g(c.g), b(c.b), a(255) {}
+
+    // 显式：丢弃 alpha 是**有损**的（半透明会变成全不透明），所以必须写出来。
+    [[nodiscard]] constexpr Rgb to_rgb() const noexcept { return Rgb{r, g, b}; }
+
+    constexpr bool operator==(const Rgba&) const noexcept = default;
+    constexpr bool operator!=(const Rgba&) const noexcept = default;
+};
+
+// over 合成：src 叠在 dst 之上，返回压平后的不透明色。
+//   out = src·a + dst·(1−a)
+// 整数实现（+127 四舍五入），a=0 精确得 dst、a=255 精确得 src；无浮点、无分支。
+constexpr Rgb blend(const Rgba& src, const Rgb& dst) noexcept {
+    const auto channel = [alpha = src.a](std::uint8_t s, std::uint8_t d) constexpr {
+        const unsigned inv = 255u - alpha;
+        return static_cast<std::uint8_t>(
+            (static_cast<unsigned>(s) * alpha + static_cast<unsigned>(d) * inv + 127u) / 255u);
+    };
+    return Rgb{channel(src.r, dst.r), channel(src.g, dst.g), channel(src.b, dst.b)};
+}
 
 }  // namespace termchart::color
 

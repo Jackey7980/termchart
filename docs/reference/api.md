@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **389 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **390 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -15,7 +15,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | core | L0 | 13 |
 | math | L1 | 7 |
 | util | L1 | 17 |
-| color | L2 | 6 |
+| color | L2 | 7 |
 | io | L2 | 4 |
 | math3d | L3 | 3 |
 | math4d | L3 | 3 |
@@ -530,6 +530,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `TERMCHART_API void append_double(std::string& out, double value, int precision = 2)`
 - `TERMCHART_API std::string format_int(std::int64_t value)`
 - `TERMCHART_API std::string format_compact(double value, int precision = 1)`
+- `TERMCHART_API std::string to_hex_string(const Rgb& color)`
 
 ### `util/geo/geojson.hpp`
 
@@ -742,8 +743,10 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 线性多段渐变：给色阶条、热度标尺、流式明暗用；真·连续色表走 colormap.hpp。
 > 这里是无状态值类型：构造后只读，可被 style/theme 复用。
 
+- `enum class GradientMode`
 - `class Gradient`
 - `TERMCHART_API Rgb mix(Rgb from, Rgb to, double t) noexcept`
+- `TERMCHART_API Rgb mix(Rgb from, Rgb to, double t, GradientMode mode) noexcept`
 - `TERMCHART_API Rgb contrasting_text_color(Rgb background) noexcept`
 
 ### `color/named_colors.hpp`
@@ -807,6 +810,18 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct ResolveOptions`
 - `struct ResolvedStyle`
+
+### `color/rgba.hpp`
+
+> rgba.hpp —— 带透明度的颜色参数包（header-only，属 cmake/header_only.txt）
+>
+> 分层：这是 L2 color 层的"管线中间态"，不是底层像素格式。core::Rgb 永远只有
+> 3 字节，alpha 只活在这里与调用方手里；压平（blend）之后才落回 Rgb 上屏。
+>
+> 为什么 blend 在这里而不是 math：math 是 L1，不能 include L2 的 Rgba。把具体
+> 业务类型当参数传给 math 就是分层违规，所以混合留在这层。
+
+- `struct Rgba`
 
 ## io（L2）
 
