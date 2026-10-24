@@ -40,6 +40,11 @@ __pycache__/
 # `git rm --cached a.txt shot_*.txt` 再提交。
 /a.txt
 /shot_*.txt
+# 同上，PDF/PNG 导出与截图的临时落点（示例跑一遍就会生成，不该出现在 git status 里）
+/a.pdf
+/a.png
+# showcase/ 下的一次性脚本（并行会话产物，统一以 _ 开头，扩展名不限）
+/showcase/_*
 
 # 测试与覆盖率产物
 *.gcda

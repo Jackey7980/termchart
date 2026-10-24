@@ -62,6 +62,21 @@ using termchart::data::DataFrame;
 
 // ── 列访问助手 ──────────────────────────────────────────────────────────────
 
+// 轴域留痕（标题后缀）：裁了要说"裁去 N 个"，检测到离群却放弃裁剪更要说——
+// 小样本保护闸退回原始域后，图顶端那片贴边平台会重新出现，读者若不知道
+// 那是个 1e21，就会把它当成真实的业务高峰。两种情形都不许静默。
+std::string domain_note(const RobustDomain& d) {
+    if (d.active()) {
+        return " · 裁去 " + std::to_string(d.clipped) + " 个极值";
+    }
+    if (d.abandoned()) {
+        const char* why = d.decision == ClipDecision::kSmallSample ? "有效值太少"
+                                                                  : "越界占比过高";
+        return " · " + std::to_string(d.clipped) + " 个极值未裁（" + why + "）";
+    }
+    return {};
+}
+
 // 取一列的数值样本（非缺失且有限；NaN 单元格跳过）。
 std::vector<double> numeric_samples(const DataFrame& frame, std::size_t column) {
     std::vector<double> out;
@@ -265,11 +280,9 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
                                         robust_y_domain(values[s], options.outlier_fence));
         }
     }
-    // 标题留痕：轴被裁过就必须说，否则读者会把"顶端那个平台"当成真值。
-    std::string line_title_note = line_title;
-    if (line_domain.active()) {
-        line_title_note += " · 裁去 " + std::to_string(line_domain.clipped) + " 个极值";
-    }
+    // 标题留痕：轴被裁过就必须说，否则读者会把"顶端那个平台"当成真值；
+    // 检测到离群但小样本保护闸放弃裁剪时同样要说（"未裁"）。
+    std::string line_title_note = line_title + domain_note(line_domain);
 
     // 候选 1：折线（每数值列一条系列，桶内取均值）。
     {
@@ -277,7 +290,7 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         c.name = chart_name::kLine;
         c.pipeline = PipelineKind::Time;
         c.title = line_title_note;
-        c.clipped_points = line_domain.clipped;
+        c.clipped_points = line_domain.active() ? line_domain.clipped : 0;
         c.x_is_temporal = true;
         c.temporal_sorted = true;  // 桶序即时间序，聚合后天然有序
         c.point_count = buckets;
@@ -640,19 +653,20 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
             if (options.clip_outliers) {
                 dom = robust_y_domain(means, options.outlier_fence);
             }
-            if (dom.active()) {
+            // 先定"裁不裁"再动域：把 0 并进域里会改变 active() 的判据（并 0 后
+            // 域可能不再比原始范围紧），不能一边改域一边问"裁了吗"。
+            const bool bar_clipped = dom.active();
+            const std::string bar_note = domain_note(dom);
+            if (bar_clipped) {
                 dom.lo = std::min(dom.lo, 0.0);
                 dom.hi = std::max(dom.hi, 0.0);
             }
-            std::string bar_title = "各 " + event_name + " 的 " + value_name + " 均值";
-            if (dom.active()) {
-                bar_title += " · 裁去 " + std::to_string(dom.clipped) + " 个极值";
-            }
+            std::string bar_title = "各 " + event_name + " 的 " + value_name + " 均值" + bar_note;
             ChartCandidate c;
             c.name = chart_name::kBar;
             c.pipeline = PipelineKind::Event;
             c.title = bar_title;
-            c.clipped_points = dom.clipped;
+            c.clipped_points = bar_clipped ? dom.clipped : 0;
             c.point_count = categories.size();
             c.category_count = categories.size();
             c.x_is_categorical = true;
@@ -661,7 +675,7 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
             auto ms = means;
             auto vn = value_name;
             const std::optional<scale::Domain> ydom =
-                dom.active()
+                bar_clipped && dom.usable()
                     ? std::optional<scale::Domain>{scale::Domain{dom.lo, dom.hi}}
                     : std::nullopt;
             c.build = [cs, ms, vn, bar_title, ydom]() {

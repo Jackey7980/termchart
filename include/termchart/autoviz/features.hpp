@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "termchart/autoviz/domain.hpp"
 #include "termchart/autoviz/options.hpp"
 #include "termchart/data/column_profile.hpp"
 #include "termchart/data/dataframe.hpp"
@@ -45,6 +46,10 @@ struct ValueOutlier {
     double median = 0.0;      // 主体所在
     double extreme = 0.0;     // 越界最远的实际值
     bool high = true;         // 上溢（脏大数）还是下溢（脏负数）
+    // 轴域怎么处理的：kApplied 才是真裁过；kSmallSample / kTooMany 表示检测
+    // 到了脏值但小样本保护闸放弃了裁剪（轴域仍是原始范围）——告警文案据此
+    // 区分"已裁剪"与"保持原样"，不许混为一谈。
+    ClipDecision decision = ClipDecision::kApplied;
 };
 
 // 数据集特征：列画像 + 角色分组 + 剔除名单。

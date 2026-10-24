@@ -626,14 +626,15 @@ TEST_CASE("autoviz/domain: Tukey 篱裁掉极端值、保留主体域") {
 }
 
 TEST_CASE("autoviz/domain: 小样本/常数列/全空都不硬裁") {
-    // 少于 kOutlierMinSamples 个值：分位数没有统计意义，宁可画平线也不猜。
+    // 低于 kOutlierMinSamples：检测得到离群也不许裁（见下一条保护闸用例）。
     const RobustDomain tiny = robust_y_domain(std::vector<double>{1.0, 1e21});
     CHECK_FALSE(tiny.active());
     CHECK(tiny.hi == doctest::Approx(1e21));
 
-    // 常数列 + 一个脏值：IQR 退化为 0，改用相对中位数的篱；裁完域退化时要撑开，
-    // 否则比例尺 span=0（除零），图直接烂掉。
-    const RobustDomain same = robust_y_domain(std::vector<double>{1, 1, 1, 1, 1, 1e21});
+    // 常数列 + 一个脏值（**样本足够**）：IQR 退化为 0，改用相对中位数的篱；
+    // 裁完域退化时要撑开，否则比例尺 span=0（除零），图直接烂掉。
+    const RobustDomain same =
+        robust_y_domain(std::vector<double>{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1e21});
     CHECK(same.active());
     CHECK(same.clipped == 1);
     CHECK(same.hi < 10.0);
@@ -645,6 +646,35 @@ TEST_CASE("autoviz/domain: 小样本/常数列/全空都不硬裁") {
 
     // fence <= 0 = 关闭裁剪（用户显式要"轴域就是 [min,max]"）。
     CHECK_FALSE(robust_y_domain(std::vector<double>{1, 2, 3, 4, 5, 1e21}, 0.0).active());
+}
+
+TEST_CASE("autoviz/domain: 小样本保护闸——有效值太少/越界占比过高都退回原始域") {
+    // 闸一：6 个有效值里 1 个 1e21（16.7%）。裁掉它剩 5 个点拉满整根轴，
+    // 读者会以为波动剧烈——宁可压平也不这么干。
+    const RobustDomain few = robust_y_domain(std::vector<double>{1, 1, 1, 1, 1, 1e21});
+    CHECK_FALSE(few.active());
+    CHECK(few.abandoned());
+    CHECK(few.decision == ClipDecision::kSmallSample);
+    CHECK(few.clipped == 1);                 // 检测结果照样保留（告警要用）
+    CHECK(few.lo == doctest::Approx(1.0));   // 轴域 = 原始 [min, max]
+    CHECK(few.hi == doctest::Approx(1e21));
+
+    // 闸二：12 个值里 3 个越界（25% > 20%）→ 整列本来就离散，不是少数脏值。
+    const RobustDomain many =
+        robust_y_domain(std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8, 9, 1e21, 1e21, 1e21});
+    CHECK_FALSE(many.active());
+    CHECK(many.abandoned());
+    CHECK(many.decision == ClipDecision::kTooMany);
+    CHECK(many.clipped == 3);
+    CHECK(many.hi == doctest::Approx(1e21));
+
+    // 边界：12 个值里 2 个越界（16.7% ≤ 20%）且样本 ≥ 10 → 照裁。
+    const RobustDomain ok =
+        robust_y_domain(std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1e21, 1e21});
+    CHECK(ok.active());
+    CHECK(ok.decision == ClipDecision::kApplied);
+    CHECK(ok.hi < 100.0);
+    CHECK(ok.clipped == 2);
 }
 
 TEST_CASE("autoviz/domain: 多系列域取并集、裁剪点数相加") {
@@ -663,9 +693,15 @@ TEST_CASE("autoviz: 极端离群值 → 轴域裁剪 + 标题留痕 + 体检点�
         "2024-01-01 08:00:00,1000\n"
         "2024-01-01 09:00:00,1200\n"
         "2024-01-01 10:00:00,900\n"
+        "2024-01-01 11:00:00,950\n"
+        "2024-01-01 12:00:00,1050\n"
+        "2024-01-01 13:00:00,1150\n"
         "2024-01-02 08:00:00,1100\n"
         "2024-01-02 09:00:00,1e21\n"
-        "2024-01-02 10:00:00,800\n");
+        "2024-01-02 10:00:00,800\n"
+        "2024-01-02 11:00:00,850\n"
+        "2024-01-02 12:00:00,1250\n"
+        "2024-01-02 13:00:00,700\n");
     const Result<AutoVizResult> result = auto_visualize(frame);
     REQUIRE(result.has_value());
 
@@ -673,6 +709,7 @@ TEST_CASE("autoviz: 极端离群值 → 轴域裁剪 + 标题留痕 + 体检点�
     REQUIRE(result->features.outliers.size() == 1);
     CHECK(result->features.outliers[0].name == "v");
     CHECK(result->features.outliers[0].high);
+    CHECK(result->features.outliers[0].decision == ClipDecision::kApplied);
     CHECK(result->features.outliers[0].extreme == doctest::Approx(1e21));
 
     const ChartCandidate* line = find_candidate(result, chart_name::kLine);
@@ -690,6 +727,39 @@ TEST_CASE("autoviz: 极端离群值 → 轴域裁剪 + 标题留痕 + 体检点�
     const termchart::layout::PlotArea& area = line_chart->last_area();
     CHECK(area.y_scale().domain_max() < 1e6);
     CHECK(area.y_scale().domain_min() <= 800.0);
+}
+
+// 保护闸的端到端：脏值必须被点名，但不许在小样本上裁轴制造"剧烈波动"。
+TEST_CASE("autoviz: 小样本离群值 → 不裁轴，但标题/体检都要说清楚") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2024-01-01 08:00:00,1000\n"
+        "2024-01-01 09:00:00,1200\n"
+        "2024-01-01 10:00:00,900\n"
+        "2024-01-02 08:00:00,1100\n"
+        "2024-01-02 09:00:00,1e21\n"
+        "2024-01-02 10:00:00,800\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+
+    // 体检照发：脏值该被看见，降级的是"裁不裁轴"，不是"报不报"。
+    REQUIRE(result->features.outliers.size() == 1);
+    CHECK(result->features.outliers[0].decision == ClipDecision::kSmallSample);
+
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+    CHECK(line->clipped_points == 0);  // 没裁，就别在候选里谎报裁了多少
+    CHECK(line->title.find("未裁") != std::string::npos);
+    CHECK(line->title.find("有效值太少") != std::string::npos);
+
+    // 轴域回到原始 [min, max]：1e21 又在域里（宁可压平，也不拉伸）。
+    std::unique_ptr<termchart::chart::Chart> chart = line->build();
+    REQUIRE(chart != nullptr);
+    auto* line_chart = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(line_chart != nullptr);
+    termchart::canvas::Canvas canvas(80, 24);
+    line_chart->draw(termchart::chart::DrawContext{canvas});
+    CHECK(line_chart->last_area().y_scale().domain_max() > 1e18);
 }
 
 // ── 端到端 ──────────────────────────────────────────────────────────────────

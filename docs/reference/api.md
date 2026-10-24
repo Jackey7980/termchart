@@ -5217,10 +5217,15 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > max，裁不掉任何东西；本仓库真实脏订单 CSV 只有 6 个有效值）。改用 Tukey
 > 篱 Q1/Q3 ± k·IQR（箱线图的须），5 个点就能判、对单个极端值稳健。
 >
+> 但"判得出离群"不等于"该裁轴"：样本太少（< kOutlierMinSamples）或越界占比
+> 过高（> kOutlierMaxClipRatio）时裁剪会把少数点强行拉满整根轴，读者会以为
+> 波动剧烈。两道保护闸见下，命中时退回原始域，但**告警照发**——脏值该被看见。
+>
 > 为什么不在 data::profile_columns 里算：那里是"整表单遍画像"的公共底座，
 > 目标是判定"这列像什么"，替所有调用方（含根本不画图的）付排序开销不合适。
 > 分位数只在**真要定轴**的地方算一次，且只对已聚合的少量值算。
 
+- `enum class ClipDecision`
 - `struct RobustDomain`
 
 ### `autoviz/engine.hpp`

@@ -287,11 +287,15 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
                 }
             }
             const RobustDomain dom = robust_y_domain(sample, options.outlier_fence);
-            if (!dom.active()) {
+            // 判据是"检测到越界"（clipped>0），不是"真裁了轴"（active()）：
+            // 小样本保护闸放弃裁剪时更该告警——此时图上是原始域，顶端那片
+            // 贴边平台是真值还是脏值，只有告警能说清。decision 一并带出去，
+            // 由 api 层决定文案说"已裁剪"还是"保持原始范围"。
+            if (dom.clipped == 0) {
                 continue;
             }
             f.outliers.push_back(ValueOutlier{f.profiles[idx].name, sample.size(), dom.clipped,
-                                              dom.median, dom.extreme(), dom.high});
+                                              dom.median, dom.extreme(), dom.high, dom.decision});
         }
     }
     return f;

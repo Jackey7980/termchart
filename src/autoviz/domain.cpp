@@ -17,6 +17,13 @@ void widen_degenerate(RobustDomain& d) noexcept {
     d.hi += pad;
 }
 
+// 放弃裁剪：轴域退回原始 [min, max]，但 clipped/median/high 保留——
+// 那是"检测到了脏值"的证据，告警要用它，不许因为不裁就装看不见。
+void restore_raw(RobustDomain& d) noexcept {
+    d.lo = d.raw_lo;
+    d.hi = d.raw_hi;
+}
+
 }  // namespace
 
 RobustDomain robust_y_domain(std::span<const double> values, double fence) noexcept {
@@ -37,13 +44,12 @@ RobustDomain robust_y_domain(std::span<const double> values, double fence) noexc
     d.lo = d.raw_lo;
     d.hi = d.raw_hi;
 
-    if (finite.size() < kOutlierMinSamples || !(fence > 0.0)) {
-        // 样本太少/裁剪被关闭：不做统计判断，给出原始域即可（中位数仍给，
-        // 因为告警/标题会用它做"主体在哪"的锚）。
-        const data::Quartiles q =
-            data::quartiles(data::DataView{finite.data(), finite.size()});
-        d.median = q.median;
+    if (finite.size() < 2) {
+        d.median = finite.front();  // 一个值谈不上分布，也谈不上离群
         return d;
+    }
+    if (!(fence > 0.0)) {
+        return d;  // 裁剪被显式关闭：轴域就是 [min, max]，不判越界
     }
 
     const data::Quartiles q = data::quartiles(data::DataView{finite.data(), finite.size()});
@@ -69,6 +75,7 @@ RobustDomain robust_y_domain(std::span<const double> values, double fence) noexc
         widen_degenerate(d);  // 篱内只剩一个值：撑开一点，保住可画的域
     }
 
+    // 越界统计（诊断口径：先数，再决定敢不敢裁）。
     std::size_t high_count = 0;
     std::size_t low_count = 0;
     for (const double v : finite) {
@@ -80,6 +87,27 @@ RobustDomain robust_y_domain(std::span<const double> values, double fence) noexc
     }
     d.clipped = high_count + low_count;
     d.high = high_count >= low_count;
+    if (d.clipped == 0) {
+        d.decision = ClipDecision::kNone;
+        return d;
+    }
+
+    // 保护闸一：样本太少。3~9 个点裁掉 1 个就是 11%~33%，剩下的点被强行拉满
+    // 整根轴——读者会以为波动剧烈，比略微压平更误导。
+    if (finite.size() < kOutlierMinSamples) {
+        restore_raw(d);
+        d.decision = ClipDecision::kSmallSample;
+        return d;
+    }
+    // 保护闸二：越界占比过高。那说明"整列本来就离散"，不是"少数脏值"，
+    // 裁掉两成以上的点等于人为制造趋势。
+    if (static_cast<double>(d.clipped) >
+        kOutlierMaxClipRatio * static_cast<double>(finite.size())) {
+        restore_raw(d);
+        d.decision = ClipDecision::kTooMany;
+        return d;
+    }
+    d.decision = ClipDecision::kApplied;
     return d;
 }
 
@@ -102,6 +130,9 @@ RobustDomain merge_domains(const RobustDomain& a, const RobustDomain& b) noexcep
     // 中位数不取平均（跨系列的平均毫无意义）：报告裁得更多的那一侧。
     d.median = b.clipped > a.clipped ? b.median : a.median;
     d.high = a.clipped >= b.clipped ? a.high : b.high;
+    // 并集后只要任一系列裁过，合并域就仍比合并原始域紧；是否真的更紧由
+    // active() 的 lo/hi 判定兜底（并集可能把两边的极值都包回来）。
+    d.decision = (a.active() || b.active()) ? ClipDecision::kApplied : ClipDecision::kNone;
     return d;
 }
 

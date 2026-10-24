@@ -24,6 +24,13 @@
   io：csv 零拷贝数值入口、json（dsl/json 核心下沉收编，dsl 留 shim）、stream 分块行读取；
   data：util/data 四件套上移（git mv，namespace termchart::data）+ ema + ohlc。
   验证：doctest 1103 用例 / 194733 断言 0 失败、ctest 79/79、check_all 全绿。
+- [ ] **SymLog（对称对数）轴**（2026-10-24 登记，长期，**明确不在近期做**）：`scale` 只有
+  线性与对数（对数轴拒非正值），没有 `symlog`（近零点线性、远处对数）。因此"0.001~1e21 跨十几个
+  数量级且含负值"这类列，目前靠 `autoviz` 的 Tukey 篱裁剪把极值钳到轴边缘处理（见
+  `docs/guide/autoviz.md` 的「极端离群值」）。真要做需三件套：`SymLogScale`（`linthresh` /
+  `linscale`）+ 跨零点的刻度生成（主要风险点：tick 序列与网格对齐）+ `layout` 的零线/负区约定。
+  **决策依据**：裁剪已覆盖真实脏数据场景（量级是"脏"而非"信号"），为单一图种动 `scale` 与 22 层
+  架构的收益不划算；触发条件是出现"量级本身就是业务信号"的真实需求。
 - [ ] **已知遗留小项**（2026-10-21 登记）：① `data::rolling` 的纯 SMA 仍 O(N·window)，
   滑动求和 O(N) 化属局部优化（EMA 已 O(N)）；② `math::interpolate` 的 monotone (PCHIP)
   变体未做（自然样条在噪声数据上轻微过冲）；③ `io/csv` 与 `dsl/csv_sniff` 两份解析器
