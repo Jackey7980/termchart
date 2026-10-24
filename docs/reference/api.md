@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **385 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **386 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -41,7 +41,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | widget | L18 | 18 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
-| api | L21 | 4 |
+| api | L21 | 5 |
 | autoviz | L21 | 9 |
 | gui | L22 | 3 |
 
@@ -5095,6 +5095,25 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class PostQueue`
 
 ## api（L21）
+
+### `api/autoviz_plot.hpp`
+
+> api/autoviz_plot.hpp —— AutoViz 一行出图薄壳（L21）
+>
+> 定位（对应"新手默认路径零配置"）：给一个文件路径，引擎自动清洗、探测、
+> 选图、写到 stdout。本函数是**薄壳**——不猜列、不猜图种、不写业务判断；
+> 选图是 autoviz 引擎（L21）的事，出图是 print_chart 的事。
+>
+> 边界（与 autoviz 引擎同口径，显式列出避免"以为支持"）：
+> * 仅表头（0 数据行）→ InvalidArgument：没有数据不是可视化问题；
+> * **不自动识别 Unix 时间戳数字串**：1700000000 与 18 亿访问量/ID 无法
+> 区分，强行识别会把数值列画成时序线。要时序图显式传 opts.time_column；
+> * 格式嗅探只分两家的：首个非空白字符是 '{' 走 JSONL，其余走 CSV；
+> * 画布用 print_chart 默认 80×24（不探测终端——CI/无 tty 也要可复现）；
+> * AutoViz 是**探索性分析**工具：生产环境请显式指定图表类型与列映射
+> （见 docs/guide/autoviz.md）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `api/chart.hpp`
 

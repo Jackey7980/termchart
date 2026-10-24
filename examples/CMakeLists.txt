@@ -76,7 +76,8 @@ foreach(example
         73_gui_cjk
         74_hypercube_4d
         75_gui_cjk_4d
-        76_csv_to_chart)
+        76_csv_to_chart
+        82_autoviz_csv)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE termchart)
     termchart_set_warnings(${example})
@@ -159,7 +160,8 @@ if(TERMCHART_BUILD_TESTS)
                     59_quick_plot 58_gui_hover 65_gui_interactive
                     34_export_svg 35_export_html 36_export_json 37_export_latex 38_image_sixel
                     40_advanced_master 62_zoom_pan 73_gui_cjk 74_hypercube_4d 75_gui_cjk_4d
-                    76_csv_to_chart)
+                    76_csv_to_chart
+                    82_autoviz_csv)
         add_test(NAME example_${example} COMMAND ${example})
     endforeach()
 endif()

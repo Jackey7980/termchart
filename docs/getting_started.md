@@ -69,9 +69,11 @@ chart.draw({canvas});                    // DrawContext{canvas}，开关默认�
 | 33_mermaid_flowchart | Mermaid 文本 → 图 |
 | 34/35/36_export_* | SVG / HTML / JSON 导出 |
 | 38_image_sixel | 终端显示位图 |
+| 82_autoviz_csv | 地狱级脏 CSV → 自动选图（AutoViz） |
 
 ## 下一步
 
 - 选图表：guide/choosing_chart.md
 - 导出：guide/exporting.md
+- 脏数据一键出图（探索性分析）：guide/autoviz.md
 - 显示乱码或错位：reference/faq.md（Windows 中文环境与自适应尺寸是两大常见坑）

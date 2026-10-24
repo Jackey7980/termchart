@@ -8,10 +8,12 @@
 #include <doctest.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "termchart/api/autoviz_plot.hpp"
 #include "termchart/api/chart.hpp"
 #include "termchart/api/opts.hpp"
 #include "termchart/api/print.hpp"
@@ -172,6 +174,41 @@ TEST_CASE("api: escape_for_debug 让不可打印字节可读且不回显控制�
     CHECK(escaped.find("<ESC>") != std::string::npos);
     CHECK(escaped.find("<LF>") != std::string::npos);
     CHECK(escaped.find("31m") != std::string::npos);
+}
+
+TEST_CASE("api: auto_plot 薄壳——地狱 CSV 出图、空路径/不存在文件 fail-loud") {
+    // 落一个临时文件：auto_plot 的入口是文件路径，测试走同一条真实路径。
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "termchart_test_autoviz.csv";
+    {
+        std::FILE* out = std::fopen(path.string().c_str(), "wb");
+        REQUIRE(out != nullptr);
+        static const char kCsv[] =
+            "ts,region,revenue\n"
+            "2024-01-15 08:30:00,华东,\"1,234.50\"\n"
+            "2024-01-16 09:00:00,华北,(890.25)\n"
+            "2024-02-01 10:15:30,华南,¥2,000.00\n";
+        std::fputs(kCsv, out);
+        std::fclose(out);
+    }
+
+    CHECK(auto_plot("") == ErrorCode::InvalidArgument);            // 空路径
+    CHECK(auto_plot("no/such/file.csv") == ErrorCode::InvalidArgument);  // 打不开
+    CHECK(auto_plot(path.string()) == ErrorCode::Ok);              // 真出图（写 stdout）
+
+    // 仅表头（0 数据行）：引擎层 InvalidArgument 穿透薄壳，不编造空图。
+    const std::filesystem::path header_only =
+        std::filesystem::temp_directory_path() / "termchart_test_autoviz_header.csv";
+    {
+        std::FILE* out = std::fopen(header_only.string().c_str(), "wb");
+        REQUIRE(out != nullptr);
+        std::fputs("a,b\n", out);
+        std::fclose(out);
+    }
+    CHECK(auto_plot(header_only.string()) == ErrorCode::InvalidArgument);
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(header_only);
 }
 
 TEST_CASE("api: quick::render_plot 一行折线（零配置 + 标题 + 尺寸）") {
