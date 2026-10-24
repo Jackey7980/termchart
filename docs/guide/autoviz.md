@@ -47,6 +47,7 @@ if (result) {
    │             / High(仅去重计数)                                            │
    │   空值率：有 Low 档分类列时**先按 event 分桶再查**（防误杀关键字段）；      │
    │            没有 event 列才做全局剔除（默认阈值 0.6）                       │
+   │   列名体检：度量名却是 Text / 分类名却是 Numeric → suspects（只诊断不改路由）│
    └───────────────────────────────────┬───────────────────────────────────────┘
                                        ▼
    ┌───────────────────────────────────────────────────────────────────────────┐
@@ -92,6 +93,37 @@ if (result) {
 | 时区 | naive UTC（排序分桶够用，不做时区显示） |
 
 可调项（`autoviz::AutoVizOptions`）：`cardinality`（基数分档阈值）、`max_null_rate`、`event_column` / `time_column`（逃生门）、`max_candidates` / `raster_confirm_top`、`canvas_width/height`。
+
+## 表头口径体检（suspects）
+
+CSV/Excel 最常见的脏法不是脏值，而是**表头与数据列序错位**（少写/多写一个字段，从某行起整行左移）。这类数据里每一列的类型都还能判，图也画得出来，只是名字与内容对不上——例如 `amount` 列里装的是 `ALIPAY/WECHAT/CARD`、`method` 列里装的是金额。
+
+引擎的处理分两半：
+
+- **路由照旧**：信推断类型、不信列名，所以图本身仍然是"按真实内容分组的真实度量均值"，不会因为名字而崩。
+- **另出诊断**：`DatasetFeatures::suspects` 记下列名口径矛盾，供调用方打印或自己提示。
+
+```cpp
+const auto result =
+    termchart::autoviz::auto_visualize(termchart::data::parse_dataframe(text));
+if (result) {
+    for (const auto& s : result->features.suspects) {
+        // s.name / s.expected（"numeric" | "categorical"）/ s.actual（column_kind_name）
+        std::fprintf(stderr, "列 %s 名字像%s，实际是%s——查表头是否与数据列序错位\n",
+                     s.name.c_str(), s.expected.c_str(), s.actual.c_str());
+    }
+}
+```
+
+判定规则（**刻意保守，宁漏不误**）：
+
+| 名字命中 | 推断类型 | 结论 |
+| --- | --- | --- |
+| 度量词 `amount/price/total/subtotal/revenue/income/cost/fee/tax/sum/balance/qty/quantity/count/weight/score/salary/profit/budget/discount` | `Text` | 报 `expected=numeric` |
+| 分类词 `method/gateway/currency/channel/category/brand/vendor/country/city/region` | `Numeric` 且值域不是 0/1 | 报 `expected=categorical` |
+| 分类名 + 数值只有 0/1 | `Numeric` | **不报**：flag 编码是正常口径（`status` 常这么写） |
+
+匹配按"词"而非子串：`_`、空格、`.`、`-`、中文都算分隔符，camelCase 会拆（`totalAmount`），复数视同单数（`fees`）。因此 `account` 不会被 `count` 命中，`payment_method` 走分类词而不是度量词。suspects **绝不改变路由**——修不修数据是人的决定。
 
 ## 免责声明
 

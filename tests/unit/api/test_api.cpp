@@ -23,6 +23,7 @@
 #include "termchart/core/error.hpp"
 #include "termchart/core/point.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/util/logging.hpp"
 
 namespace {
 
@@ -209,6 +210,38 @@ TEST_CASE("api: auto_plot 薄壳——地狱 CSV 出图、空路径/不存在文
 
     std::filesystem::remove(path);
     std::filesystem::remove(header_only);
+}
+
+TEST_CASE("api: auto_plot 对表头口径存疑列发 WARN（只提示，不改出图）") {
+    // 故意错位：amount 列装的是支付方式、method 列装的是金额。
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "termchart_test_autoviz_suspect.csv";
+    {
+        std::FILE* out = std::fopen(path.string().c_str(), "wb");
+        REQUIRE(out != nullptr);
+        std::fputs("payment_id,pay_time,amount,method\n"
+                   "P001,2026-03-01T08:00:00Z,ALIPAY,1234.50\n"
+                   "P002,2026-03-01T09:00:00Z,WECHAT,200.00\n"
+                   "P003,2026-03-01T10:00:00Z,CARD,99.90\n"
+                   "P004,2026-03-01T11:00:00Z,ALIPAY,1500.00\n"
+                   "P005,2026-03-01T12:00:00Z,WECHAT,75.25\n",
+                   out);
+        std::fclose(out);
+    }
+
+    termchart::util::capture_log_begin();
+    const termchart::Status status = auto_plot(path.string());
+    const std::vector<std::string> logs = termchart::util::capture_log_end();
+
+    CHECK(status == ErrorCode::Ok);  // 提示不阻断出图
+    REQUIRE(logs.size() == 2);       // 恰好两条（amount / method），不误报其他列
+    CHECK(logs[0].find("warn") != std::string::npos);
+    CHECK(logs[0].find("amount") != std::string::npos);
+    CHECK(logs[0].find("numeric") != std::string::npos);
+    CHECK(logs[1].find("method") != std::string::npos);
+    CHECK(logs[1].find("categorical") != std::string::npos);
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("api: quick::render_plot 一行折线（零配置 + 标题 + 尺寸）") {

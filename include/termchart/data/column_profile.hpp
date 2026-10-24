@@ -73,6 +73,8 @@ struct CardinalityPolicy {
 
 [[nodiscard]] const char* cardinality_tier_name(CardinalityTier tier) noexcept;
 
+[[nodiscard]] const char* column_kind_name(ColumnKind kind) noexcept;
+
 // 单列画像。
 struct ColumnProfile {
     std::string name;

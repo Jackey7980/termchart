@@ -79,4 +79,5 @@
 | `74_hypercube_4d` | 4D 超立方体：绕 XW/YZ 平面自转，两阶段投影到终端 | [文本快照](gallery/74_hypercube_4d.txt) |
 | `75_gui_cjk_4d` | 终极缝合怪：4D 超立方体 + TTF 中文 + GUI 像素画布 | [文本快照](gallery/75_gui_cjk_4d.txt) |
 | `76_csv_to_chart` | 数据管线端到端：CSV → 清洗 → 均线 → 终端图 | [文本快照](gallery/76_csv_to_chart.txt) |
+| `82_autoviz_csv` | AutoViz 一行出图：地狱级脏 CSV 全自动 | [文本快照](gallery/82_autoviz_csv.txt) |
 

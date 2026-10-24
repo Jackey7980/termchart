@@ -51,12 +51,6 @@ bool has_pipeline(const Result<AutoVizResult>& result, PipelineKind kind) {
     return false;
 }
 
-// 某图种是否被语义否决。
-bool is_vetoed(const Result<AutoVizResult>& result, const std::string& name) {
-    const ChartCandidate* c = find_candidate(result, name);
-    return c != nullptr && !c->vetoes.empty();
-}
-
 // 单候选是否含指定规则码的否决理由。
 bool has_veto_rule(const ChartCandidate& c, const std::string& rule) {
     return std::any_of(c.vetoes.begin(), c.vetoes.end(), [&rule](const std::string& r) {
@@ -595,6 +589,10 @@ O012,C012,2026-03-02 18:00,WEB,-100,USD,"{""city"":""南京"",""zip"":""210000""
     CHECK(f.numeric_columns.size() == 1);
     CHECK(f.profiles[f.numeric_columns.front()].name == "total_amount");
 
+    // 该表列序与表头一致 → 体检不误报（total_amount 是 Numeric，
+    // channel/currency 是 Text，均与该有的口径相符）。
+    CHECK(f.suspects.empty());
+
     // ② 事件键是分组力最强的分类列（currency 3 类 / channel 4 类在前，
     //    order_id 12 类、customer_id 13 类沉底）——绝不再是 order_id。
     CHECK(f.profiles[f.category_columns.front()].name == "currency");
@@ -620,6 +618,61 @@ O012,C012,2026-03-02 18:00,WEB,-100,USD,"{""city"":""南京"",""zip"":""210000""
             CHECK(s.points[i - 1].x <= s.points[i].x);
         }
     }
+}
+
+// 真实脏支付数据（用户提供，2026-10-24）：表头与数据列序错位——从 P003 起
+// 每行少一个 amount 字段，amount/method 两列整体错位；再叠加未加引号的 ¥2,000
+// 冲行、2026/13/40 非法日期、Unix epoch、1e21 级大数、(123.45)、15%、JSON 内
+// null、mojibake、status 混 success/1/0/NULL。
+// 期望：引擎**信类型不信名字**，照错位的真实内容路由（图本身语义仍成立），
+// 同时由 suspects 体检报出两条口径矛盾提示——人据此去修表，而不是被静默放过。
+TEST_CASE("autoviz/engine: 真实脏支付 CSV（torture，表头错位体检报出 amount/method）") {
+    const char* kPayments = R"(payment_id,order_id,pay_time,amount,method,gateway_json,status
+P001,O001,2026-03-01T08:01:00Z,"1,234.50",ALIPAY,"{""trade"":""T001"",""ip"":""1.1.1.1"",""ok"":true}",success
+P002,O002,2026/03/01 09:01,WECHAT,¥2,000,"{""trade"":""T002"",""ip"":""2.2.2.2"",""ok"":true}",SUCCESS
+P003,O999,2026.03.01 10:01,CARD,-150.00,"{""trade"":""T003"",""ip"":null}", 
+P004,O003,1740787260,ALIPAY,1.2e3,"{""trade"":""T004"",""ok"":1}",1
+P005,O004,2026-03-01 11:01:00+08:00,WECHAT,(123.45),"{""trade"":""T005"",""ip"":""5.5.5.5"",""ok"":false}",0
+P006,O005,2026/13/40,CARD,1000000,"{""trade"":""T006"",""ip"":""6.6.6.6""}",success
+P007,O006,2026-03-02T12:01:00Z,ALIPAY,0.000001,"{""trade"":""T007"",""ip"":""7.7.7.7"",""ok"":true}",success
+P008,O007,2026年3月2日,WECHAT,"1,000,000","{""trade"":""T008"",""ip"":""8.8.8.8""}",SUCCESS
+P001,O008,2026-03-02 14:01,CARD,500,"{""trade"":""T009"",""ip"":""9.9.9.9"",""ok"":true}",success
+P009,O009,2026-03-02 15:01,ALIPAY,,"{""trade"":""T010"",""ip"":""10.0.0.1""}",NULL
+P010,O010,2026-03-02 16:01,WECHAT,15%,"{""trade"":""T011"",""ip"":""11.1.1.1""}",success
+P011,O011,2026-03-02 17:01,CARD,999999999999999999999,"{""trade"":""T012"",""ip"":""12.2.2.2""}",success
+P012,O012,2026-03-02 18:01,ALIPAY,-100,"{""trade"":""T013"",""ip"":""13.3.3.3""}",refunded)";
+
+    const Result<AutoVizResult> result =
+        auto_visualize(termchart::data::parse_dataframe(kPayments));
+    REQUIRE(result.has_value());
+    const DatasetFeatures& f = result->features;
+
+    // 错位的实证：amount 列里装的是支付方式（Text），method 列里装的是金额（Numeric）。
+    CHECK(f.profiles[3].name == "amount");
+    CHECK(f.profiles[3].kind == termchart::data::ColumnKind::Text);
+    CHECK(f.profiles[4].name == "method");
+    CHECK(f.profiles[4].kind == termchart::data::ColumnKind::Numeric);
+
+    // 体检报出两条口径矛盾（只诊断、不改路由）。
+    REQUIRE(f.suspects.size() == 2);
+    CHECK(f.suspects[0].name == "amount");
+    CHECK(f.suspects[0].expected == "numeric");
+    CHECK(f.suspects[0].actual == "text");
+    CHECK(f.suspects[1].name == "method");
+    CHECK(f.suspects[1].expected == "categorical");
+    CHECK(f.suspects[1].actual == "numeric");
+
+    // 路由未被体检干预：仍是"按 amount 列的取值分组、对 method 列求均值"——
+    // 分组维度是真实内容（4 类支付方式），度量是真实金额，图本身没错。
+    CHECK(f.numeric_columns.size() == 1);
+    CHECK(f.profiles[f.numeric_columns.front()].name == "method");
+    REQUIRE_FALSE(f.category_columns.empty());
+    CHECK(f.profiles[f.category_columns.front()].name == "amount");
+
+    const ChartCandidate* chosen = result->chosen();
+    REQUIRE(chosen != nullptr);
+    CHECK(chosen->name == chart_name::kBar);
+    CHECK(chosen->pipeline == PipelineKind::Event);
 }
 
 TEST_CASE("autoviz/time_parse: 多分隔符族解析 + 历法拒绝 + epoch 不认") {

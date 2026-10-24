@@ -10,6 +10,8 @@
 //     区分，强行识别会把数值列画成时序线。要时序图显式传 opts.time_column；
 //   * 格式嗅探只分两家的：首个非空白字符是 '{' 走 JSONL，其余走 CSV；
 //   * 画布用 print_chart 默认 80×24（不探测终端——CI/无 tty 也要可复现）；
+//   * 列名口径存疑（`DatasetFeatures::suspects`，如 amount 列里装的是支付方式）
+//     → 经 util::write_log(Warn) 提示（默认 stderr），**只提示不参与选图**；
 //   * AutoViz 是**探索性分析**工具：生产环境请显式指定图表类型与列映射
 //     （见 docs/guide/autoviz.md）。
 #ifndef TERMCHART_API_AUTOVIZ_PLOT_HPP

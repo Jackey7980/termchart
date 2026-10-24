@@ -221,6 +221,18 @@ const char* cardinality_tier_name(CardinalityTier tier) noexcept {
     return "?";
 }
 
+const char* column_kind_name(ColumnKind kind) noexcept {
+    switch (kind) {
+    case ColumnKind::Unknown:   return "unknown";
+    case ColumnKind::NullOnly:  return "null_only";
+    case ColumnKind::Timestamp: return "timestamp";
+    case ColumnKind::Numeric:   return "numeric";
+    case ColumnKind::Boolean:   return "boolean";
+    case ColumnKind::Text:      return "text";
+    }
+    return "?";
+}
+
 bool looks_like_boolean(std::string_view text) noexcept {
     if (text.empty() || text.size() > 5) {
         return false;

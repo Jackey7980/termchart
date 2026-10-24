@@ -2,6 +2,7 @@
 #include "termchart/autoviz/features.hpp"
 
 #include <algorithm>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 
@@ -40,6 +41,74 @@ bool contains(const std::vector<std::size_t>& v, std::size_t x) noexcept {
 
 void remove_from(std::vector<std::size_t>& v, std::size_t x) noexcept {
     v.erase(std::remove(v.begin(), v.end(), x), v.end());
+}
+
+// —— 列名语义体检（只诊断，不改路由）——
+// 列名按"词"匹配：非字母数字（下划线/空格/点/连字符/中文）都当分隔符，
+// camelCase 也拆（totalAmount → total/amount），全小写后逐词比对，末尾复数 s
+// 视同单数（fees → fee）。用词而非子串：account 不会被 count 命中。
+bool is_ascii_alnum(char c) noexcept {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+char ascii_lower(char c) noexcept {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+std::vector<std::string> name_tokens(std::string_view name) {
+    std::vector<std::string> tokens;
+    std::string cur;
+    auto flush = [&] {
+        if (!cur.empty()) {
+            tokens.push_back(cur);
+            cur.clear();
+        }
+    };
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        const char c = name[i];
+        if (!is_ascii_alnum(c)) {
+            flush();
+            continue;
+        }
+        // camelCase / PascalCase 拆词：小写或数字后面紧跟大写即边界。
+        if (!cur.empty() && c >= 'A' && c <= 'Z') {
+            const char prev = name[i - 1];
+            if ((prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9')) {
+                flush();
+            }
+        }
+        cur.push_back(ascii_lower(c));
+    }
+    flush();
+    return tokens;
+}
+
+bool token_is(const std::string& token, std::string_view word) noexcept {
+    if (token.size() == word.size()) {
+        for (std::size_t i = 0; i < token.size(); ++i) {
+            if (token[i] != word[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // 复数：fees → fee
+    if (token.size() == word.size() + 1 && token.back() == 's') {
+        return token.compare(0, word.size(), word.data(), word.size()) == 0;
+    }
+    return false;
+}
+
+bool name_has_any(std::string_view name, std::initializer_list<std::string_view> words) {
+    const std::vector<std::string> tokens = name_tokens(name);
+    for (const std::string& token : tokens) {
+        for (const std::string_view word : words) {
+            if (token_is(token, word)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -137,7 +206,7 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
         }
     }
 
-    // 4) 全局空值率剔除：**仅当没有 Low 档分类列（无 event 可分桶）时**生效。
+    // 5) 全局空值率剔除：**仅当没有 Low 档分类列（无 event 可分桶）时**生效。
     //    有 event 列时按桶看空值率（路由阶段用 null_rate_by_bucket），防止
     //    "全局 40% 空、return 桶里 0% 空"的关键字段被一刀切。
     if (options.drop_high_null) {
@@ -161,6 +230,35 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
             drop_if_dirty(f.numeric_columns);
             drop_if_dirty(f.text_columns);
             drop_if_dirty(f.category_columns);
+        }
+    }
+
+    // 6) 列名语义体检（**只诊断，绝不改路由**）：名字口径与推断类型互相矛盾的
+    //    列记进 suspects。典型成因是表头与数据列序错位（amount/method 两列写反），
+    //    引擎信类型路由仍能画出语义正确的图，但人必须看见提示去修数据，而不是
+    //    对着 "各 amount 的 method 均值" 这种标题发呆。
+    //    刻意不报的情形：分类名 + 数值只有 0/1 → flag 编码（status 常见写法），
+    //    归 Numeric 是正常口径而非错位；名字同时命中两张词表时以分类词为准
+    //    （payment_method 是维度，不是度量）。
+    for (const data::ColumnProfile& p : f.profiles) {
+        const bool categorical_named =
+            name_has_any(p.name, {"method", "gateway", "currency", "channel", "category",
+                                  "brand", "vendor", "country", "city", "region"});
+        if (p.kind == data::ColumnKind::Numeric && categorical_named) {
+            const bool flag_like = p.min >= 0.0 && p.max <= 1.0;
+            if (!flag_like) {
+                f.suspects.push_back(ColumnSuspect{p.name, "categorical",
+                                                   data::column_kind_name(p.kind)});
+            }
+            continue;
+        }
+        if (p.kind == data::ColumnKind::Text && !categorical_named &&
+            name_has_any(p.name, {"amount", "price", "total", "subtotal", "revenue", "income",
+                                  "cost", "fee", "tax", "sum", "balance", "qty", "quantity",
+                                  "count", "weight", "score", "salary", "profit", "budget",
+                                  "discount"})) {
+            f.suspects.push_back(ColumnSuspect{p.name, "numeric",
+                                               data::column_kind_name(p.kind)});
         }
     }
     return f;

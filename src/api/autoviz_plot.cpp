@@ -12,6 +12,7 @@
 #include "termchart/api/print.hpp"
 #include "termchart/autoviz/autoviz.hpp"
 #include "termchart/data/dataframe.hpp"
+#include "termchart/util/logging.hpp"
 
 namespace termchart::api {
 namespace {
@@ -60,6 +61,14 @@ Status auto_plot(std::string_view filepath, const autoviz::AutoVizOptions& opts)
     if (!picked.has_value()) {
         return picked.error();
     }
+    // 表头口径体检的提示出口：走一行出图的用户不会去看 DatasetFeatures，
+    // 所以把 suspects 以 WARN 打到日志（默认 stderr；测试可用 capture_log 接管）。
+    // **只提示，不参与选图**——修不修数据是人的决定。
+    for (const autoviz::ColumnSuspect& s : picked->features.suspects) {
+        TERMCHART_LOG_WARN("autoviz: 列名口径存疑 " + s.name + "（名字像 " + s.expected +
+                           "，实际 " + s.actual + "）——表头与数据列序可能错位");
+    }
+
     const std::unique_ptr<chart::Chart> chart = picked->build_chosen();
     if (!chart) {
         return ErrorCode::Unsupported;  // 有候选但建不出图（路由不变量保证不可达）

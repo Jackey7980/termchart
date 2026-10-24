@@ -23,6 +23,17 @@ struct GeoPair {
     std::size_t lng = 0;
 };
 
+// 列名语义 vs 推断类型的体检提示（**仅诊断，绝不改路由**）。
+// 名字像度量（amount/price/total/revenue/...）却推断成 Text，或名字像分类
+// （method/status/channel/...）却推断成 Numeric——典型成因是表头与数据列序
+// 错位（如 amount/method 两列写反）。引擎照类型路由仍能画对图，但调用方
+// （人）应当看见这条提示去修数据，而不是对着一张口径不一的车目瞪口呆。
+struct ColumnSuspect {
+    std::string name;
+    std::string expected;  // "numeric" / "categorical"（名字暗示的口径）
+    std::string actual;    // 推断口径（column_kind_name）
+};
+
 // 数据集特征：列画像 + 角色分组 + 剔除名单。
 struct DatasetFeatures {
     std::vector<data::ColumnProfile> profiles;  // 与 DataFrame.columns 同序对齐
@@ -32,6 +43,7 @@ struct DatasetFeatures {
     std::vector<std::size_t> numeric_columns;
     std::vector<std::size_t> text_columns;      // High 档自由文本（词云用）
     std::vector<std::size_t> dropped;           // 常量/全空/高空值率被剔除
+    std::vector<ColumnSuspect> suspects;        // 表头口径存疑列（诊断用）
     std::size_t rows = 0;
 
     // 便捷视图
@@ -55,7 +67,9 @@ struct DatasetFeatures {
 //     order_id 这类高 distinct 标识列当上事件键），High 档 → text_columns；
 //   * Constant（distinct≤1）或 NullOnly → dropped；
 //   * **仅当不存在 Low 档分类列时**（没有 event 列可分桶），才对其余列应用
-//     全局空值率剔除（drop_high_null / max_null_rate）。
+//     全局空值率剔除（drop_high_null / max_null_rate）；
+//   * 列名口径体检：度量词却是 Text / 分类词却是 Numeric（且非 0/1 flag）
+//     → suspects（**只诊断，绝不改路由**）。
 [[nodiscard]] TERMCHART_API DatasetFeatures detect_features(const data::DataFrame& frame,
                                                              const AutoVizOptions& options = {});
 
