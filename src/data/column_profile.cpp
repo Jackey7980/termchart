@@ -14,8 +14,29 @@ bool is_digit(char ch) noexcept {
     return ch >= '0' && ch <= '9';
 }
 
-bool two_digits(std::string_view text, std::size_t at) noexcept {
-    return at + 1 < text.size() && is_digit(text[at]) && is_digit(text[at + 1]);
+// 多字节 UTF-8 分隔符（年月日时分秒）eat 助手。
+bool eat_sep(std::string_view text, std::size_t& i, std::string_view sep) noexcept {
+    if (text.compare(i, sep.size(), sep) != 0) {
+        return false;
+    }
+    i += sep.size();
+    return true;
+}
+
+// 1-2 位数字（真实导出常不补零："2026年3月2日"）。
+bool one_or_two_digits(std::string_view text, std::size_t& i, unsigned& out) noexcept {
+    if (i >= text.size() || !is_digit(text[i])) {
+        return false;
+    }
+    unsigned value = 0;
+    int count = 0;
+    while (i < text.size() && is_digit(text[i]) && count < 2) {
+        value = value * 10 + static_cast<unsigned>(text[i] - '0');
+        ++i;
+        ++count;
+    }
+    out = value;
+    return true;
 }
 
 // 列名：headers 缺位时补 colN（与 DataFrame 无表头命名口径一致）。
@@ -28,6 +49,168 @@ std::string column_name_at(const std::vector<std::string>& headers, std::size_t 
 
 }  // namespace
 
+bool split_timestamp_shape(std::string_view text, CivilParts& out) noexcept {
+    out = CivilParts{};
+    if (text.size() < 8) {
+        return false;  // 最短 "2026-1-1"
+    }
+    std::size_t i = 0;
+
+    // 年：严格 4 位。
+    std::int64_t year = 0;
+    for (int k = 0; k < 4; ++k) {
+        if (i >= text.size() || !is_digit(text[i])) {
+            return false;
+        }
+        year = year * 10 + (text[i] - '0');
+        ++i;
+    }
+
+    // 日期分隔符族：- / . 年 月（两侧可混用，容忍即可，无副作用）。
+    static constexpr std::string_view kDateSeps[] = {"-", "/", ".", "\xE5\xB9\xB4",
+                                                     "\xE6\x9C\x88"};
+    bool matched = false;
+    for (const std::string_view sep : kDateSeps) {
+        if (eat_sep(text, i, sep)) {
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        return false;
+    }
+    unsigned month = 0;
+    if (!one_or_two_digits(text, i, month)) {
+        return false;
+    }
+    matched = false;
+    for (const std::string_view sep : kDateSeps) {
+        if (eat_sep(text, i, sep)) {
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        return false;
+    }
+    unsigned day = 0;
+    if (!one_or_two_digits(text, i, day)) {
+        return false;
+    }
+
+    out.year = year;
+    out.month = month;
+    out.day = day;
+
+    if (i == text.size()) {
+        return true;  // 纯日期
+    }
+
+    // 日期→时间分隔：T / 空格 / 日。"日"后可无时间（中文日期结尾）。
+    static constexpr std::string_view kTimeSeps[] = {"T", " ", "\xE6\x97\xA5"};
+    matched = false;
+    for (const std::string_view sep : kTimeSeps) {
+        if (eat_sep(text, i, sep)) {
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        return false;  // 日期后有杂质
+    }
+    if (i == text.size()) {
+        return true;  // "…日" 结尾，无时间部分
+    }
+
+    unsigned hour = 0;
+    if (!one_or_two_digits(text, i, hour)) {
+        return false;
+    }
+    static constexpr std::string_view kHmSeps[] = {":", "\xE6\x97\xB6"};  // 时
+    matched = false;
+    for (const std::string_view sep : kHmSeps) {
+        if (eat_sep(text, i, sep)) {
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        return false;
+    }
+    if (i == text.size()) {
+        return true;  // "…9时" 无分（中文口语形态）
+    }
+    unsigned minute = 0;
+    if (!one_or_two_digits(text, i, minute)) {
+        return false;
+    }
+    out.has_time = true;
+    out.hour = hour;
+    out.minute = minute;
+
+    // 可选秒：":SS" / "分SS"（"…30分" 无秒也合法）。
+    static constexpr std::string_view kMsSeps[] = {":", "\xE5\x88\x86"};  // 分
+    matched = false;
+    for (const std::string_view sep : kMsSeps) {
+        if (eat_sep(text, i, sep)) {
+            matched = true;
+            break;
+        }
+    }
+    if (matched) {
+        if (i == text.size()) {
+            return true;
+        }
+        unsigned second = 0;
+        if (!one_or_two_digits(text, i, second)) {
+            return false;
+        }
+        out.second = second;
+    }
+
+    // 可选小数秒（仅在秒之后）：".fff"。
+    if (i < text.size() && text[i] == '.') {
+        ++i;
+        std::size_t digits = 0;
+        while (i < text.size() && is_digit(text[i])) {
+            ++i;
+            ++digits;
+        }
+        if (digits == 0) {
+            return false;
+        }
+    }
+
+    // 可选时区：Z / z / ±HH[:MM] / ±HHMM / ±HH。
+    if (i < text.size() && (text[i] == 'Z' || text[i] == 'z')) {
+        ++i;
+    } else if (i < text.size() && (text[i] == '+' || text[i] == '-')) {
+        const int sign = text[i] == '-' ? -1 : 1;
+        ++i;
+        unsigned off_h = 0;
+        unsigned off_m = 0;
+        if (!one_or_two_digits(text, i, off_h)) {
+            return false;
+        }
+        if (i < text.size() && text[i] == ':') {
+            ++i;
+        }
+        if (i < text.size() && is_digit(text[i])) {
+            if (!one_or_two_digits(text, i, off_m)) {
+                return false;
+            }
+        }
+        out.tz_offset_minutes = sign * static_cast<int>(off_h * 60 + off_m);
+    }
+
+    return i == text.size();  // 尾部有杂质 → 不是时间形状
+}
+
+bool looks_like_timestamp(std::string_view text) noexcept {
+    CivilParts parts;
+    return split_timestamp_shape(text, parts);
+}
+
 const char* cardinality_tier_name(CardinalityTier tier) noexcept {
     switch (tier) {
     case CardinalityTier::Constant: return "constant";
@@ -36,60 +219,6 @@ const char* cardinality_tier_name(CardinalityTier tier) noexcept {
     case CardinalityTier::High:     return "high";
     }
     return "?";
-}
-
-bool looks_like_timestamp(std::string_view text) noexcept {
-    if (text.size() < 10) {
-        return false;
-    }
-    for (std::size_t i = 0; i < 4; ++i) {
-        if (!is_digit(text[i])) return false;
-    }
-    if (text[4] != '-' || text[7] != '-') return false;
-    if (!two_digits(text, 5) || !two_digits(text, 8)) return false;
-    if (text.size() == 10) {
-        return true;  // 纯日期
-    }
-    std::size_t i = 10;
-    if (text[i] != ' ' && text[i] != 'T') return false;
-    ++i;
-    if (!two_digits(text, i)) return false;
-    i += 2;
-    if (i >= text.size() || text[i] != ':') return false;
-    ++i;
-    if (!two_digits(text, i)) return false;
-    i += 2;
-    if (i < text.size() && text[i] == ':') {  // 可选秒
-        ++i;
-        if (!two_digits(text, i)) return false;
-        i += 2;
-    }
-    if (i < text.size() && text[i] == '.') {  // 可选毫秒
-        ++i;
-        std::size_t digits = 0;
-        while (i < text.size() && is_digit(text[i])) {
-            ++i;
-            ++digits;
-        }
-        if (digits == 0) return false;
-    }
-    if (i < text.size()) {  // 可选时区
-        if (text[i] == 'Z') {
-            ++i;
-        } else if (text[i] == '+' || text[i] == '-') {
-            ++i;
-            if (!two_digits(text, i)) return false;
-            i += 2;
-            if (i < text.size() && text[i] == ':') ++i;
-            if (i < text.size()) {
-                if (!two_digits(text, i)) return false;
-                i += 2;
-            }
-        } else {
-            return false;
-        }
-    }
-    return i == text.size();
 }
 
 bool looks_like_boolean(std::string_view text) noexcept {

@@ -179,17 +179,27 @@ TEST_CASE("autoviz::stage2 column kind inference") {
     CHECK(profiles[5].kind == ColumnKind::NullOnly);
 }
 
-TEST_CASE("autoviz::stage2 timestamp shapes recognized") {
+TEST_CASE("autoviz::stage2 timestamp shapes recognized (multi-separator family)") {
+    // ISO 短横线族。
     CHECK(looks_like_timestamp("2024-01-01"));
     CHECK(looks_like_timestamp("2024-01-01 08:30"));
     CHECK(looks_like_timestamp("2024-01-01 08:30:59"));
     CHECK(looks_like_timestamp("2024-01-01 08:30:59.123"));
     CHECK(looks_like_timestamp("2024-01-01T08:30:59Z"));
     CHECK(looks_like_timestamp("2024-01-01T08:30:59+08:00"));
-    CHECK_FALSE(looks_like_timestamp("2024-1-1"));    // 未补零
-    CHECK_FALSE(looks_like_timestamp("20240101"));    // 无分隔符（归 Numeric）
+    // 斜杠/点/中文族 + 1-2 位不补零（真实导出常见；2026-10-24 按用户脏数据扩展）。
+    CHECK(looks_like_timestamp("2026/03/01 09:00"));
+    CHECK(looks_like_timestamp("2026.03.01 10:00"));
+    CHECK(looks_like_timestamp("2026年3月2日"));
+    CHECK(looks_like_timestamp("2026年3月2日9时30分"));
+    CHECK(looks_like_timestamp("2024-1-1"));      // 未补零也认（形状）
+    CHECK(looks_like_timestamp("2026/13/40"));    // 形状合法（历法非法由 parse 拒）
+    // 非时间形状。
+    CHECK_FALSE(looks_like_timestamp("20240101"));   // 无分隔符（归 Numeric）
+    CHECK_FALSE(looks_like_timestamp("1740787200")); // Unix epoch 刻意不认
     CHECK_FALSE(looks_like_timestamp("hello"));
     CHECK_FALSE(looks_like_timestamp(""));
+    CHECK_FALSE(looks_like_timestamp("2024-01"));    // 缺日
 }
 
 TEST_CASE("autoviz::stage2 cardinality tiers: constant/low/mid/high") {

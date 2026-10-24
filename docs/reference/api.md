@@ -1098,6 +1098,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct ColumnProfile`
 - `struct ProfileOptions`
 - `struct BucketNullRate`
+- `struct CivilParts`
 
 ### `data/dataframe.hpp`
 
@@ -5268,19 +5269,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `autoviz/time_parse.hpp`
 
-> autoviz/time_parse.hpp —— ISO-8601 形状时间 → epoch 秒（L21）
+> autoviz/time_parse.hpp —— 时间形状 → epoch 秒（L21）
 >
-> 为什么在 autoviz 而不在 data：data 层的 looks_like_timestamp 只判形状
-> （路由够用），"解析成可排序可聚合的 epoch" 是管道路由的具体需求，且全库
-> 没有第二处需要（data::ohlc 直接吃 epoch）。若将来 data 也要，下沉不迟。
->
-> 口径（明确列出，避免"以为支持"）：
-> ✅ YYYY-MM-DD[ HH:MM[:SS[.fff]]]（空格或 T 分隔）
-> ✅ 后缀 Z 或 ±HH:MM / ±HHMM（按偏移换算成 UTC epoch）
-> ✅ 2 月 30 号这类非法日期**拒绝**（返回 nullopt）——与只认形状的
-> looks_like_timestamp 分工：那里管"像不像"，这里管"能不能算"。
-> ⛔ 不认时区别名（EST）、不认 Unix 时间戳数字串（那是数值列的活）、
-> 不认 "Jan 5, 2024" 等非 ISO 形态。
+> 与 data::split_timestamp_shape 的分工（**唯一真源在 data 层，此处不重复
+> 实现格式族**）：那里管"像不像时间"（列画像的类型判定，只认形状不验历法），
+> 这里管"能不能算"（历法校验 + epoch 换算）。支持族见 data/column_profile.hpp
+> 的 split_timestamp_shape 文档，要点：
+> ✅ YYYY[-/./年]M[-/./月]D[ T日][H[:时]M[:分]S[.fff]]][Z|±HH[:MM]]
+> ✅ 月/日/时/分/秒 1-2 位（真实导出常不补零）；
+> ✅ 2 月 30 号、2026/13/40 这类**形状合法但历法非法 → 拒绝**（nullopt）；
+> ⛔ Unix 时间戳数字串（1740787200）刻意不认——与普通大整数不可区分，
+> 要时序图请显式 opts.time_column 或先用 data 层转好。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 

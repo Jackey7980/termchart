@@ -94,7 +94,21 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
         }
     }
 
-    // 2) 经纬度配对：按列序取最早未配对的 lat/lng 成对；配不上的退回数值列。
+    // 2) 分类列按"分组力"排序：distinct 升序（并列按列序）。
+    //    事件管道/组合管道/地理实体都取 category_columns.front()——按列序盲取
+    //    会让 order_id/customer_id 这类高 distinct 标识列当上事件键，画出
+    //    "各 order_id 的均值"这种语义废图（真实脏订单数据的实测教训）。
+    //    distinct 最小的列分组最粗、每组成员最多、聚合最稳；ID 类列只有在
+    //    没有更好分类列时才被用上。显式 event_column 仍最高优先（见下）。
+    std::sort(f.category_columns.begin(), f.category_columns.end(),
+              [&](std::size_t a, std::size_t b) {
+                  if (f.profiles[a].distinct != f.profiles[b].distinct) {
+                      return f.profiles[a].distinct < f.profiles[b].distinct;
+                  }
+                  return a < b;
+              });
+
+    // 3) 经纬度配对：按列序取最早未配对的 lat/lng 成对；配不上的退回数值列。
     while (!lat_candidates.empty() && !lng_candidates.empty()) {
         f.geo_pairs.push_back(GeoPair{lat_candidates.front(), lng_candidates.front()});
         lat_candidates.erase(lat_candidates.begin());
@@ -107,7 +121,7 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
         f.numeric_columns.push_back(i);
     }
 
-    // 3) 强制列指定（空 = 自动探测）。time_column 找到就置到队首；
+    // 4) 强制列指定（空 = 自动探测）。time_column 找到就置到队首；
     // event_column 只接受已判为分类的列（数值列当 event 没有分组语义）。
     if (!options.time_column.empty()) {
         const std::size_t idx = find_column(frame, options.time_column);

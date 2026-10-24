@@ -6553,13 +6553,31 @@ struct BucketNullRate {
 [[nodiscard]] std::vector<BucketNullRate> null_rate_by_bucket(
     const DataFrame& frame, std::string_view key_column, std::string_view value_column);
 
-// 时间格式识别（ISO-8601 家族的最小实用集）：
-//   YYYY-MM-DD
-//   YYYY-MM-DD HH:MM[:SS[.fff]]
-//   YYYY-MM-DDTHH:MM[:SS[.fff]][Z|±HH:MM|±HHMM]
-// 只认形状不认历法（2 月 30 号也过）——路由只需要"这是时间列"；
-// 真历法校验在解析成 epoch 的目的地做。列不存在/不匹配均返回 false。
-[[nodiscard]] bool looks_like_timestamp(std::string_view text) noexcept;
+// 时间形状拆解结果（只认形状，不验历法）。
+struct CivilParts {
+    std::int64_t year = 0;
+    unsigned month = 0;
+    unsigned day = 0;
+    unsigned hour = 0;
+    unsigned minute = 0;
+    unsigned second = 0;
+    int tz_offset_minutes = 0;  // 时区偏移（东为正；无时区为 0）
+    bool has_time = false;
+};
+
+// 时间形状拆解（全库唯一真源：列画像的类型判定与 autoviz::parse_timestamp
+// 的 epoch 换算共用它，避免两套格式族漂移）。支持族（**明确列出**）：
+//   YYYY[-|/|.|年]M[-|/|.|月]D            （月/日 1-2 位，不补零也认）
+//   [ T| |日]H[:|时]M[:|分]S[.fff]        （时间部分整体可选）
+//   [Z|z|±HH[:MM]|±HHMM|±HH]              （时区后缀可选）
+// 只认形状不认历法：2026/13/40 形状合法（月份越界由 autoviz::parse_timestamp
+// 拒绝——那里才做历法校验与 epoch 换算，见 autoviz/time_parse.hpp）。
+// Unix 时间戳数字串（1740787200）**刻意不认**：与普通大整数不可区分。
+[[nodiscard]] TERMCHART_API bool split_timestamp_shape(std::string_view text,
+                                                       CivilParts& out) noexcept;
+
+// 便捷包装：text 是否是时间形状。
+[[nodiscard]] TERMCHART_API bool looks_like_timestamp(std::string_view text) noexcept;
 
 // 布尔词表：true/false/yes/no（大小写不敏感）。刻意不含 0/1——那是数值。
 [[nodiscard]] bool looks_like_boolean(std::string_view text) noexcept;
@@ -19450,7 +19468,9 @@ struct DatasetFeatures {
 //   * Timestamp → time_columns；
 //   * Numeric 且列名命中 lat/latitude、lon/lng/longitude → 尝试配成 GeoPair，
 //     配不上的留在 numeric_columns；
-//   * Text/Boolean：Low/Mid 档 → category_columns，High 档 → text_columns；
+//   * Text/Boolean：Low/Mid 档 → category_columns（**按 distinct 升序排列**——
+//     取 front() 的管道因此拿到"分组力最强"的列而非列序第一列，防止
+//     order_id 这类高 distinct 标识列当上事件键），High 档 → text_columns；
 //   * Constant（distinct≤1）或 NullOnly → dropped；
 //   * **仅当不存在 Low 档分类列时**（没有 event 列可分桶），才对其余列应用
 //     全局空值率剔除（drop_high_null / max_null_rate）。
@@ -19568,26 +19588,24 @@ namespace termchart::autoviz {
 }  // namespace termchart::autoviz
 
 // ===== include/termchart/autoviz/time_parse.hpp =====
-// autoviz/time_parse.hpp —— ISO-8601 形状时间 → epoch 秒（L21）
+// autoviz/time_parse.hpp —— 时间形状 → epoch 秒（L21）
 //
-// 为什么在 autoviz 而不在 data：data 层的 looks_like_timestamp 只判形状
-// （路由够用），"解析成可排序可聚合的 epoch" 是管道路由的具体需求，且全库
-// 没有第二处需要（data::ohlc 直接吃 epoch）。若将来 data 也要，下沉不迟。
-//
-// 口径（明确列出，避免"以为支持"）：
-//   ✅ YYYY-MM-DD[ HH:MM[:SS[.fff]]]（空格或 T 分隔）
-//   ✅ 后缀 Z 或 ±HH:MM / ±HHMM（按偏移换算成 UTC epoch）
-//   ✅ 2 月 30 号这类非法日期**拒绝**（返回 nullopt）——与只认形状的
-//      looks_like_timestamp 分工：那里管"像不像"，这里管"能不能算"。
-//   ⛔ 不认时区别名（EST）、不认 Unix 时间戳数字串（那是数值列的活）、
-//      不认 "Jan 5, 2024" 等非 ISO 形态。
+// 与 data::split_timestamp_shape 的分工（**唯一真源在 data 层，此处不重复
+// 实现格式族**）：那里管"像不像时间"（列画像的类型判定，只认形状不验历法），
+// 这里管"能不能算"（历法校验 + epoch 换算）。支持族见 data/column_profile.hpp
+// 的 split_timestamp_shape 文档，要点：
+//   ✅ YYYY[-/./年]M[-/./月]D[ T日][H[:时]M[:分]S[.fff]]][Z|±HH[:MM]]
+//   ✅ 月/日/时/分/秒 1-2 位（真实导出常不补零）；
+//   ✅ 2 月 30 号、2026/13/40 这类**形状合法但历法非法 → 拒绝**（nullopt）；
+//   ⛔ Unix 时间戳数字串（1740787200）刻意不认——与普通大整数不可区分，
+//      要时序图请显式 opts.time_column 或先用 data 层转好。
 
 
 
 namespace termchart::autoviz {
 
-// 解析为 epoch 秒（double，1970-01-01T00:00:00Z 起）。无时区后缀按 UTC 解释
-// （naive——可视化排序分桶不涉及时区显示，避免引入 tz 数据库依赖）。
+// 解析为 epoch 秒（double，1970-01-01T00:00:00Z 起；时区后缀按偏移换算，
+// 无后缀按 UTC 解释——naive，不做时区显示，避免引入 tz 数据库依赖）。
 [[nodiscard]] TERMCHART_API std::optional<double> parse_timestamp(std::string_view text) noexcept;
 
 // 把 [t0, t1] 切成不超过 target_buckets 个等宽桶，返回桶宽（秒）。

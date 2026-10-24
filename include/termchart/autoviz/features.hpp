@@ -50,7 +50,9 @@ struct DatasetFeatures {
 //   * Timestamp → time_columns；
 //   * Numeric 且列名命中 lat/latitude、lon/lng/longitude → 尝试配成 GeoPair，
 //     配不上的留在 numeric_columns；
-//   * Text/Boolean：Low/Mid 档 → category_columns，High 档 → text_columns；
+//   * Text/Boolean：Low/Mid 档 → category_columns（**按 distinct 升序排列**——
+//     取 front() 的管道因此拿到"分组力最强"的列而非列序第一列，防止
+//     order_id 这类高 distinct 标识列当上事件键），High 档 → text_columns；
 //   * Constant（distinct≤1）或 NullOnly → dropped；
 //   * **仅当不存在 Low 档分类列时**（没有 event 列可分桶），才对其余列应用
 //     全局空值率剔除（drop_high_null / max_null_rate）。

@@ -1,21 +1,18 @@
-// time_parse.cpp —— ISO-8601 形状时间 → epoch 秒
+// time_parse.cpp —— ISO 家族时间 → epoch 秒
+//
+// 形状扫描复用 data::split_timestamp_shape（全库唯一真源，避免两套格式族
+// 漂移）；本文件只做它不做的事：**历法校验**（2026/13/40 形状合法但历法
+// 非法，在这里拒绝）与 epoch 换算（含时区偏移）。
 #include "termchart/autoviz/time_parse.hpp"
 
 #include <array>
 #include <cstdint>
+#include <optional>
+
+#include "termchart/data/column_profile.hpp"
 
 namespace termchart::autoviz {
 namespace {
-
-bool is_digit(char ch) noexcept { return ch >= '0' && ch <= '9'; }
-
-bool two_digits(std::string_view text, std::size_t at, int& out) noexcept {
-    if (at + 1 >= text.size() || !is_digit(text[at]) || !is_digit(text[at + 1])) {
-        return false;
-    }
-    out = (text[at] - '0') * 10 + (text[at + 1] - '0');
-    return true;
-}
 
 // 民用日期 → 天数（1970-01-01 = 0）。Howard Hinnant 的 days_from_civil。
 std::int64_t days_from_civil(std::int64_t y, unsigned m, unsigned d) noexcept {
@@ -31,7 +28,7 @@ bool is_leap(std::int64_t y) noexcept {
     return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }
 
-// 严格日期校验（与只认形状的 looks_like_timestamp 的分工在此：非法日期拒绝）。
+// 严格日期校验（与只认形状的 split_timestamp_shape 的分工在此）。
 bool valid_date(std::int64_t y, unsigned m, unsigned d) noexcept {
     if (y < 1400 || y > 9999 || m < 1 || m > 12 || d < 1) {
         return false;
@@ -53,115 +50,24 @@ constexpr std::array<double, 21> kBucketLadder = {
 }  // namespace
 
 std::optional<double> parse_timestamp(std::string_view text) noexcept {
-    if (text.size() < 10) {
+    data::CivilParts parts;
+    if (!data::split_timestamp_shape(text, parts)) {
         return std::nullopt;
     }
-    std::int64_t year = 0;
-    for (std::size_t i = 0; i < 4; ++i) {
-        if (!is_digit(text[i])) {
-            return std::nullopt;
-        }
-        year = year * 10 + (text[i] - '0');
-    }
-    if (text[4] != '-' || text[7] != '-') {
+    if (!valid_date(parts.year, parts.month, parts.day)) {
         return std::nullopt;
     }
-    int month = 0;
-    int day = 0;
-    if (!two_digits(text, 5, month) || !two_digits(text, 8, day)) {
+    if (parts.hour > 23 || parts.minute > 59 || parts.second > 60) {
         return std::nullopt;
     }
-    if (!valid_date(year, static_cast<unsigned>(month), static_cast<unsigned>(day))) {
+    constexpr int kMaxOffset = 23 * 60 + 59;  // 时区偏移 ±23:59 封顶
+    if (parts.tz_offset_minutes < -kMaxOffset || parts.tz_offset_minutes > kMaxOffset) {
         return std::nullopt;
     }
-    std::int64_t epoch = days_from_civil(year, static_cast<unsigned>(month),
-                                         static_cast<unsigned>(day)) *
-                         86400LL;
-
-    if (text.size() == 10) {
-        return static_cast<double>(epoch);
-    }
-    std::size_t i = 10;
-    if (text[i] != ' ' && text[i] != 'T') {
-        return std::nullopt;
-    }
-    ++i;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-    if (!two_digits(text, i, hour)) {
-        return std::nullopt;
-    }
-    i += 2;
-    if (i >= text.size() || text[i] != ':') {
-        return std::nullopt;
-    }
-    ++i;
-    if (!two_digits(text, i, minute)) {
-        return std::nullopt;
-    }
-    i += 2;
-    if (i < text.size() && text[i] == ':') {
-        ++i;
-        if (!two_digits(text, i, second)) {
-            return std::nullopt;
-        }
-        i += 2;
-    }
-    if (hour > 23 || minute > 59 || second > 60) {
-        return std::nullopt;
-    }
-    epoch += hour * 3600 + minute * 60 + second;
-
-    if (i < text.size() && text[i] == '.') {  // 毫秒（计入，不影响排序粒度）
-        ++i;
-        std::size_t digits = 0;
-        double fraction = 0.0;
-        double scale = 0.1;
-        while (i < text.size() && is_digit(text[i])) {
-            fraction += static_cast<double>(text[i] - '0') * scale;
-            scale *= 0.1;
-            ++i;
-            ++digits;
-        }
-        if (digits == 0) {
-            return std::nullopt;
-        }
-        epoch += static_cast<std::int64_t>(fraction);  // 只取整秒（可视化够用）
-    }
-
-    if (i < text.size()) {  // 时区后缀：Z 或 ±HH:MM / ±HHMM
-        if (text[i] == 'Z') {
-            ++i;
-        } else if (text[i] == '+' || text[i] == '-') {
-            const int sign = text[i] == '-' ? -1 : 1;
-            ++i;
-            int off_h = 0;
-            int off_m = 0;
-            if (!two_digits(text, i, off_h)) {
-                return std::nullopt;
-            }
-            i += 2;
-            if (i < text.size() && text[i] == ':') {
-                ++i;
-            }
-            if (i < text.size()) {
-                if (!two_digits(text, i, off_m)) {
-                    return std::nullopt;
-                }
-                i += 2;
-            }
-            if (off_h > 23 || off_m > 59) {
-                return std::nullopt;
-            }
-            epoch -= static_cast<std::int64_t>(sign) * (off_h * 3600 + off_m * 60);
-        } else {
-            return std::nullopt;
-        }
-    }
-    if (i != text.size()) {
-        return std::nullopt;
-    }
+    std::int64_t epoch = days_from_civil(parts.year, parts.month, parts.day) * 86400LL;
+    epoch += static_cast<std::int64_t>(parts.hour) * 3600 +
+             static_cast<std::int64_t>(parts.minute) * 60 + static_cast<std::int64_t>(parts.second);
+    epoch -= static_cast<std::int64_t>(parts.tz_offset_minutes) * 60;  // 东区 = UTC 之东
     return static_cast<double>(epoch);
 }
 

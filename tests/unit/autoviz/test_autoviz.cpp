@@ -559,6 +559,98 @@ TEST_CASE("autoviz/score: 画布级复核对空图给低分、对正常图给高
 
 // ── 端到端 ──────────────────────────────────────────────────────────────────
 
+// ── 端到端 ──────────────────────────────────────────────────────────────────
+
+// 真实脏订单数据（用户提供，2026-10-24）：斜杠/点/中文日期、Unix epoch、
+// 非法日期 2026/13/40、未加引号的 ¥2,000 冲错整行、15%、1e21、JSON 嵌套+null、
+// mojibake、status 混 1/0/NULL/空格。两个修复的回归锚点：
+//   ① order_time 靠多分隔符形状族认出 Timestamp（7/13 → 11/13 形状命中）；
+//   ② 事件键按"分组力"（distinct 升序）选列，order_id(12) 不再当分组维度。
+TEST_CASE("autoviz/engine: 真实脏订单 CSV（torture，选中时间折线 + 饼图负值否决）") {
+    const char* kOrders = R"(order_id,customer_id,order_time,channel,total_amount,currency,shipping_json,status
+O001,C001,2026-03-01T08:00:00Z,APP,"1,234.50",CNY,"{""city"":""上海"",""zip"":""200000"",""tags"":[""vip"",""fast""]}",paid
+O002,C002,2026/03/01 09:00,WEB,¥2,000,USD,"{""city"":""Beijing"",""zip"":""100000"",""tags"":[]}",PAID
+O003,C999,2026.03.01 10:00,APP,-150.00,CNY,"{""city"":""锟斤拷"",""zip"":null}", 
+O004,C003,2026-03-01 11:00:00+08:00,MINI,1.2e3,, "{}",1
+O005,C004,2026/13/40,H5,(123.45),CNY,"{""city"":""广州"",""zip"":""510000"",""tags"":[""new""]}",0
+O006,C005,1740787200,APP,1000000,CNY,"{""city"":""深圳"",""zip"":""518000""}",paid
+O007,C006,2026-03-02T12:00:00Z,WEB,0.000001,USD,"{""city"":""杭州"",""zip"":""310000"",""tags"":[""test""]}",paid
+O008,C007,2026年3月2日,APP,"1,000,000",CNY,"{""city"":""上海"",""zip"":""200001""}",PAID
+O001,C008,2026-03-02 14:00,WEB,500,CNY,"{""city"":""上海"",""zip"":""200002""}",paid
+O009,C009,2026-03-02 15:00,MINI,,CNY,"{""city"":""成都"",""zip"":""610000"",""tags"":null}",NULL
+O010,C010,2026-03-02 16:00,H5,15%,CNY,"{""city"":""武汉"",""zip"":""430000""}",paid
+O011,C011,2026-03-02 17:00,APP,999999999999999999999,CNY,"{""city"":""西安"",""zip"":""710000""}",paid
+O012,C012,2026-03-02 18:00,WEB,-100,USD,"{""city"":""南京"",""zip"":""210000"",""tags"":[""refund""]}",refunded)";
+
+    const Result<AutoVizResult> result =
+        auto_visualize(termchart::data::parse_dataframe(kOrders));
+    REQUIRE(result.has_value());
+
+    // ① order_time 认出时间列（未加引号的 ¥2,000 把 O002 行冲出第 9 列，
+    //     phantom 列因常量被丢，不影响主表 8 列）。
+    const DatasetFeatures& f = result->features;
+    CHECK(f.time_columns.size() == 1);
+    CHECK(f.profiles[f.time_columns.front()].name == "order_time");
+    CHECK(f.profiles[f.time_columns.front()].kind == termchart::data::ColumnKind::Timestamp);
+    CHECK(f.numeric_columns.size() == 1);
+    CHECK(f.profiles[f.numeric_columns.front()].name == "total_amount");
+
+    // ② 事件键是分组力最强的分类列（currency 3 类 / channel 4 类在前，
+    //    order_id 12 类、customer_id 13 类沉底）——绝不再是 order_id。
+    CHECK(f.profiles[f.category_columns.front()].name == "currency");
+
+    // 选中时间折线（订单数据的最优解）；饼图因负值被一票否决。
+    const ChartCandidate* chosen = result->chosen();
+    REQUIRE(chosen != nullptr);
+    CHECK(chosen->name == chart_name::kLine);
+    CHECK(chosen->pipeline == PipelineKind::Time);
+
+    const ChartCandidate* pie = find_candidate(result, chart_name::kPie);
+    REQUIRE(pie != nullptr);
+    CHECK(has_veto_rule(*pie, "pie_negative"));  // -150 / -123.45 / -100
+
+    // 折线真能建出来，且 x（桶中心）严格非降序。
+    auto chart = chosen->build();
+    REQUIRE(chart != nullptr);
+    const auto* lines = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(lines != nullptr);
+    REQUIRE_FALSE(lines->series().empty());
+    for (const auto& s : lines->series()) {
+        for (std::size_t i = 1; i < s.points.size(); ++i) {
+            CHECK(s.points[i - 1].x <= s.points[i].x);
+        }
+    }
+}
+
+TEST_CASE("autoviz/time_parse: 多分隔符族解析 + 历法拒绝 + epoch 不认") {
+    const double kMar1 = 1772323200.0;  // 2026-03-01T00:00:00Z
+
+    const auto t1 = parse_timestamp("2026/03/01 09:00");
+    REQUIRE(t1.has_value());
+    CHECK(*t1 == kMar1 + 9 * 3600);
+
+    const auto t2 = parse_timestamp("2026.03.01 10:00");
+    REQUIRE(t2.has_value());
+    CHECK(*t2 == kMar1 + 10 * 3600);
+
+    const auto t3 = parse_timestamp("2026年3月2日");
+    REQUIRE(t3.has_value());
+    CHECK(*t3 == kMar1 + 86400);
+
+    const auto t4 = parse_timestamp("2026年3月2日9时30分");
+    REQUIRE(t4.has_value());
+    CHECK(*t4 == kMar1 + 86400 + 9 * 3600 + 30 * 60);
+
+    const auto t5 = parse_timestamp("2026-03-01T08:00:00+01:00");
+    REQUIRE(t5.has_value());
+    CHECK(*t5 == kMar1 + 7 * 3600);  // 东一区 08:00 = UTC 07:00
+
+    CHECK_FALSE(parse_timestamp("2026/13/40").has_value());  // 形状合法、历法非法
+    CHECK_FALSE(parse_timestamp("2026-02-30").has_value());  // 2 月 30 号
+    CHECK_FALSE(parse_timestamp("1740787200").has_value());  // Unix epoch 刻意不认
+    CHECK_FALSE(parse_timestamp("2026-03-01T08:00:00+99:00").has_value());  // 偏移越界
+}
+
 TEST_CASE("autoviz/engine: JSONL 一站式入口（脏行跳过 + 选图）") {
     const char* jsonl =
         "{\"ts\":\"2024-01-01 08:00:00\",\"event\":\"login\",\"duration_min\":5}\n"
