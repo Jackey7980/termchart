@@ -111,6 +111,60 @@ namespace termchart::math {
     return c / (static_cast<double>(k) - ddof);
 }
 
+// 协方差矩阵（d×d，对称，行主序）。data 为 n×d 行主序样本；out 至少 d*d。
+// ddof = 0 为总体协方差（与上面的 covariance 默认一致），ddof = 1 为样本协方差
+// （pandas.cov / 多数 PCA 教程的默认口径）。
+// 逐行 listwise 删除：某行任一维为 NaN/Inf 则整行跳过（与 PcaChart 的清洗口径一致）。
+// 尺寸不匹配、d == 0，或有效行数 ≤ ddof 时返回 false 且不改 out。
+[[nodiscard]] inline bool covariance_matrix(std::span<const double> data, std::size_t n,
+                                            std::size_t d, std::span<double> out,
+                                            double ddof = 0.0) noexcept {
+    if (d == 0 || n == 0) return false;
+    if (data.size() < n * d || out.size() < d * d) return false;
+
+    // listwise 删除：只保留每一维都有限的整行
+    std::vector<std::size_t> rows;
+    rows.reserve(n);
+    for (std::size_t r = 0; r < n; ++r) {
+        bool ok = true;
+        for (std::size_t j = 0; j < d; ++j) {
+            if (!std::isfinite(data[r * d + j])) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) rows.push_back(r);
+    }
+    const std::size_t k = rows.size();
+    if (k == 0 || static_cast<double>(k) <= ddof) return false;
+
+    // 列均值（对有效行）
+    std::vector<double> mean(d, 0.0);
+    for (const std::size_t r : rows) {
+        for (std::size_t j = 0; j < d; ++j) {
+            mean[j] += data[r * d + j];
+        }
+    }
+    for (std::size_t j = 0; j < d; ++j) {
+        mean[j] /= static_cast<double>(k);
+    }
+
+    // 上三角计算后镜像——协方差矩阵天然对称，省一半乘法。
+    const double denom = static_cast<double>(k) - ddof;
+    for (std::size_t i = 0; i < d; ++i) {
+        for (std::size_t j = i; j < d; ++j) {
+            double acc = 0.0;
+            for (const std::size_t r : rows) {
+                acc += (data[r * d + i] - mean[i]) * (data[r * d + j] - mean[j]);
+            }
+            acc /= denom;
+            out[i * d + j] = acc;
+            out[j * d + i] = acc;
+        }
+    }
+    return true;
+}
+
 // 皮尔逊相关系数：cov / (sx * sy)。任一序列零方差（常数）时返回 NaN（无定义）。
 [[nodiscard]] inline double pearson(std::span<const double> xs, std::span<const double> ys) noexcept {
     const double sx = stddev(xs);

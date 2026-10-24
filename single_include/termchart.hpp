@@ -3414,15 +3414,58 @@ private:
                  catmull_rom(p0.y, p1.y, p2.y, p3.y, t)};
 }
 
+// ── 贝塞尔曲线（二次 / 三次） ────────────────────────────────────────────────
+//
+// 这里是全库贝塞尔求值的唯一真源：TTF 字形轮廓（glyf 表）用**二次**曲线，canvas
+// 的 Path（quadratic_to/cubic_to）两者都支持。此前 TTF 光栅化在 flatten_quad 里
+// 内联了一遍二次公式，现改为调用本文件——避免"同一公式两份实现"的漂移。
+//
+// 约定：t 不钳位（与 catmull_rom 一致，调用方负责落在 [0,1]）；t=0 返回起点、
+// t=1 返回终点。二次有 1 个控制点，三次有 2 个——**不要混用**：用二次公式套三次
+// 控制点会得到错误曲线。
+
+// 二次贝塞尔标量形：B(t) = (1-t)²·p0 + 2(1-t)t·c + t²·p1。
+[[nodiscard]] inline double quadratic_bezier(double p0, double c, double p1, double t) noexcept {
+    const double mt = 1.0 - t;
+    return mt * mt * p0 + 2.0 * mt * t * c + t * t * p1;
+}
+
+// 二次贝塞尔点形：对 x、y 各做一次标量求值。
+[[nodiscard]] inline Point quadratic_bezier(const Point& p0, const Point& c, const Point& p1,
+                                            double t) noexcept {
+    return Point{quadratic_bezier(p0.x, c.x, p1.x, t),
+                 quadratic_bezier(p0.y, c.y, p1.y, t)};
+}
+
+// 三次贝塞尔标量形：B(t) = (1-t)³·p0 + 3(1-t)²t·c1 + 3(1-t)t²·c2 + t³·p1。
+[[nodiscard]] inline double cubic_bezier(double p0, double c1, double c2, double p1,
+                                         double t) noexcept {
+    const double mt = 1.0 - t;
+    const double a = mt * mt * mt;
+    const double b = 3.0 * mt * mt * t;
+    const double c = 3.0 * mt * t * t;
+    const double d = t * t * t;
+    return a * p0 + b * c1 + c * c2 + d * p1;
+}
+
+// 三次贝塞尔点形：对 x、y 各做一次标量求值。
+[[nodiscard]] inline Point cubic_bezier(const Point& p0, const Point& c1, const Point& c2,
+                                        const Point& p1, double t) noexcept {
+    return Point{cubic_bezier(p0.x, c1.x, c2.x, p1.x, t),
+                 cubic_bezier(p0.y, c1.y, c2.y, p1.y, t)};
+}
+
 }  // namespace termchart::math
 
 // ===== include/termchart/math/linalg.hpp =====
-// math/linalg.hpp —— 稠密小矩阵线性代数（行主序、span、无模板）
+// math/linalg.hpp —— 稠密小矩阵线性代数 + 向量距离/相似度（行主序、span、无模板）
 //
 // 定位：服务 chart3d/chart4d 的 3D/4D 矩阵与数据拟合的最小公倍集——乘法、求逆、
-// 解方程、行列式。**刻意不做**通用矩阵类型（那属于 Eigen 的生态位）：这里只认
-// span<const double> + 行主序 n×n，零分配、零模板、调用方自管缓冲。
-//   * 所有尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+// 解方程、行列式，以及高维数据用的欧氏距离/余弦相似度。**刻意不做**通用矩阵类型
+// （那属于 Eigen 的生态位）：这里只认 span<const double> + 行主序 n×n，零分配、
+// 零模板、调用方自管缓冲。
+//   * 矩阵运算：尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+//   * 向量运算：长度不等取较短者；空、含 NaN 或零向量返回 NaN。
 //   * 算法：部分选主元高斯消元（numerical stability 的底线）。
 
 
@@ -3443,6 +3486,44 @@ namespace termchart::math {
 
 // 行列式（高斯消元上三角求积）。n == 0 返回 1（空矩阵约定的单位元）。
 [[nodiscard]] TERMCHART_API double determinant(std::span<const double> a, std::size_t n) noexcept;
+
+// ── 向量距离 / 相似度 ───────────────────────────────────────────────────────
+//
+// 高维样本（AutoViz 簇间距离、PCA 降维后的近邻、向量检索雏形）只需要两个数：
+// 距离和夹角余弦。都按"长度不等取较短者"处理，避免调用方先做长度检查。
+
+// 欧氏距离：√Σ(aᵢ - bᵢ)²。空输入或任一对应元素为 NaN 时返回 NaN。
+[[nodiscard]] inline double euclidean_distance(std::span<const double> a,
+                                               std::span<const double> b) noexcept {
+    const std::size_t n = a.size() < b.size() ? a.size() : b.size();
+    if (n == 0) return std::nan("");
+    double acc = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double d = a[i] - b[i];
+        if (std::isnan(d)) return std::nan("");
+        acc += d * d;
+    }
+    return std::sqrt(acc);
+}
+
+// 余弦相似度：a·b / (|a|·|b|) ∈ [-1, 1]。空输入、含 NaN 或任一零向量（无定义）
+// 返回 NaN；完全同向为 1，正交为 0，反向为 -1。
+[[nodiscard]] inline double cosine_similarity(std::span<const double> a,
+                                              std::span<const double> b) noexcept {
+    const std::size_t n = a.size() < b.size() ? a.size() : b.size();
+    if (n == 0) return std::nan("");
+    double dot = 0.0;
+    double na = 0.0;
+    double nb = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::isnan(a[i]) || std::isnan(b[i])) return std::nan("");
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if (!(na > 0.0) || !(nb > 0.0)) return std::nan("");  // 零向量
+    return dot / (std::sqrt(na) * std::sqrt(nb));
+}
 
 }  // namespace termchart::math
 
@@ -3944,6 +4025,60 @@ namespace termchart::math {
     }
     if (k == 0 || static_cast<double>(k) <= ddof) return std::nan("");
     return c / (static_cast<double>(k) - ddof);
+}
+
+// 协方差矩阵（d×d，对称，行主序）。data 为 n×d 行主序样本；out 至少 d*d。
+// ddof = 0 为总体协方差（与上面的 covariance 默认一致），ddof = 1 为样本协方差
+// （pandas.cov / 多数 PCA 教程的默认口径）。
+// 逐行 listwise 删除：某行任一维为 NaN/Inf 则整行跳过（与 PcaChart 的清洗口径一致）。
+// 尺寸不匹配、d == 0，或有效行数 ≤ ddof 时返回 false 且不改 out。
+[[nodiscard]] inline bool covariance_matrix(std::span<const double> data, std::size_t n,
+                                            std::size_t d, std::span<double> out,
+                                            double ddof = 0.0) noexcept {
+    if (d == 0 || n == 0) return false;
+    if (data.size() < n * d || out.size() < d * d) return false;
+
+    // listwise 删除：只保留每一维都有限的整行
+    std::vector<std::size_t> rows;
+    rows.reserve(n);
+    for (std::size_t r = 0; r < n; ++r) {
+        bool ok = true;
+        for (std::size_t j = 0; j < d; ++j) {
+            if (!std::isfinite(data[r * d + j])) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) rows.push_back(r);
+    }
+    const std::size_t k = rows.size();
+    if (k == 0 || static_cast<double>(k) <= ddof) return false;
+
+    // 列均值（对有效行）
+    std::vector<double> mean(d, 0.0);
+    for (const std::size_t r : rows) {
+        for (std::size_t j = 0; j < d; ++j) {
+            mean[j] += data[r * d + j];
+        }
+    }
+    for (std::size_t j = 0; j < d; ++j) {
+        mean[j] /= static_cast<double>(k);
+    }
+
+    // 上三角计算后镜像——协方差矩阵天然对称，省一半乘法。
+    const double denom = static_cast<double>(k) - ddof;
+    for (std::size_t i = 0; i < d; ++i) {
+        for (std::size_t j = i; j < d; ++j) {
+            double acc = 0.0;
+            for (const std::size_t r : rows) {
+                acc += (data[r * d + i] - mean[i]) * (data[r * d + j] - mean[j]);
+            }
+            acc /= denom;
+            out[i * d + j] = acc;
+            out[j * d + i] = acc;
+        }
+    }
+    return true;
 }
 
 // 皮尔逊相关系数：cov / (sx * sy)。任一序列零方差（常数）时返回 NaN（无定义）。

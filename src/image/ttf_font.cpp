@@ -3,6 +3,7 @@
 // sfnt 全大端。load 时整份数据拷进 Impl，各表指针直接指进去（调用方释放原
 // 缓冲无影响）。所有读取做边界检查：畸形字体返回 ParseError，不越界读。
 #include "termchart/image/ttf_font.hpp"
+#include "termchart/math/interpolate.hpp"  // 二次贝塞尔求值（与 canvas/Path 共用唯一真源）
 
 #include <algorithm>
 #include <cmath>
@@ -760,9 +761,8 @@ Result<TtfGlyph> TtfFont::glyph(char32_t codepoint, double pixel_size) noexcept 
         Vec2 prev = p0;
         for (int k = 1; k <= steps; ++k) {
             const double t = static_cast<double>(k) / steps;
-            const double mt = 1.0 - t;
-            const Vec2 cur{mt * mt * p0.x + 2.0 * mt * t * p1.x + t * t * p2.x,
-                           mt * mt * p0.y + 2.0 * mt * t * p1.y + t * t * p2.y};
+            const Vec2 cur{math::quadratic_bezier(p0.x, p1.x, p2.x, t),
+                           math::quadratic_bezier(p0.y, p1.y, p2.y, t)};
             add_edge(prev, cur);
             prev = cur;
         }

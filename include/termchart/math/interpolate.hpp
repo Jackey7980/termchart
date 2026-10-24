@@ -158,6 +158,47 @@ private:
                  catmull_rom(p0.y, p1.y, p2.y, p3.y, t)};
 }
 
+// ── 贝塞尔曲线（二次 / 三次） ────────────────────────────────────────────────
+//
+// 这里是全库贝塞尔求值的唯一真源：TTF 字形轮廓（glyf 表）用**二次**曲线，canvas
+// 的 Path（quadratic_to/cubic_to）两者都支持。此前 TTF 光栅化在 flatten_quad 里
+// 内联了一遍二次公式，现改为调用本文件——避免"同一公式两份实现"的漂移。
+//
+// 约定：t 不钳位（与 catmull_rom 一致，调用方负责落在 [0,1]）；t=0 返回起点、
+// t=1 返回终点。二次有 1 个控制点，三次有 2 个——**不要混用**：用二次公式套三次
+// 控制点会得到错误曲线。
+
+// 二次贝塞尔标量形：B(t) = (1-t)²·p0 + 2(1-t)t·c + t²·p1。
+[[nodiscard]] inline double quadratic_bezier(double p0, double c, double p1, double t) noexcept {
+    const double mt = 1.0 - t;
+    return mt * mt * p0 + 2.0 * mt * t * c + t * t * p1;
+}
+
+// 二次贝塞尔点形：对 x、y 各做一次标量求值。
+[[nodiscard]] inline Point quadratic_bezier(const Point& p0, const Point& c, const Point& p1,
+                                            double t) noexcept {
+    return Point{quadratic_bezier(p0.x, c.x, p1.x, t),
+                 quadratic_bezier(p0.y, c.y, p1.y, t)};
+}
+
+// 三次贝塞尔标量形：B(t) = (1-t)³·p0 + 3(1-t)²t·c1 + 3(1-t)t²·c2 + t³·p1。
+[[nodiscard]] inline double cubic_bezier(double p0, double c1, double c2, double p1,
+                                         double t) noexcept {
+    const double mt = 1.0 - t;
+    const double a = mt * mt * mt;
+    const double b = 3.0 * mt * mt * t;
+    const double c = 3.0 * mt * t * t;
+    const double d = t * t * t;
+    return a * p0 + b * c1 + c * c2 + d * p1;
+}
+
+// 三次贝塞尔点形：对 x、y 各做一次标量求值。
+[[nodiscard]] inline Point cubic_bezier(const Point& p0, const Point& c1, const Point& c2,
+                                        const Point& p1, double t) noexcept {
+    return Point{cubic_bezier(p0.x, c1.x, c2.x, p1.x, t),
+                 cubic_bezier(p0.y, c1.y, c2.y, p1.y, t)};
+}
+
 }  // namespace termchart::math
 
 #endif  // TERMCHART_MATH_INTERPOLATE_HPP

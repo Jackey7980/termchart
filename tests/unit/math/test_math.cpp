@@ -504,4 +504,113 @@ TEST_CASE("math::interpolate::catmull_rom 端点 + 线性精确 + 2D") {
     CHECK(a == Point{1, 1});
 }
 
+// ── linalg: 向量距离 / 余弦相似度（batch 3） ────────────────────────────────
+
+TEST_CASE("math::linalg::euclidean_distance 基本 + 边界") {
+    const std::vector<double> a = {0.0, 0.0};
+    const std::vector<double> b = {3.0, 4.0};
+    CHECK(euclidean_distance(a, b) == doctest::Approx(5.0));
+    CHECK(euclidean_distance(a, a) == doctest::Approx(0.0));
+
+    // 长度不等取较短者：第三个分量不参与
+    const std::vector<double> c = {3.0, 4.0, 100.0};
+    CHECK(euclidean_distance(a, c) == doctest::Approx(5.0));
+
+    // 空 / 含 NaN → NaN
+    CHECK(std::isnan(euclidean_distance(std::vector<double>{}, a)));
+    const std::vector<double> withnan = {0.0, std::nan("")};
+    CHECK(std::isnan(euclidean_distance(a, withnan)));
+}
+
+TEST_CASE("math::linalg::cosine_similarity 平行/正交/反向 + 零向量") {
+    const std::vector<double> x = {1.0, 0.0};
+    const std::vector<double> y = {0.0, 1.0};
+    CHECK(cosine_similarity(x, x) == doctest::Approx(1.0));
+    CHECK(cosine_similarity(x, y) == doctest::Approx(0.0));
+    const std::vector<double> neg = {-1.0, 0.0};
+    CHECK(cosine_similarity(x, neg) == doctest::Approx(-1.0));
+
+    // 零向量无定义 → NaN；空 / 含 NaN → NaN
+    const std::vector<double> zero = {0.0, 0.0};
+    CHECK(std::isnan(cosine_similarity(x, zero)));
+    CHECK(std::isnan(cosine_similarity(std::vector<double>{}, x)));
+    const std::vector<double> withnan = {1.0, std::nan("")};
+    CHECK(std::isnan(cosine_similarity(x, withnan)));
+}
+
+// ── stats: 协方差矩阵（batch 3） ─────────────────────────────────────────────
+
+TEST_CASE("math::stats::covariance_matrix 对称 + 与 covariance 同口径") {
+    // 2 维、4 个样本，行主序
+    const std::vector<double> data = {
+        1.0, 2.0,
+        2.0, 4.0,
+        3.0, 6.0,
+        4.0, 8.0,
+    };
+    const std::size_t n = 4;
+    const std::size_t d = 2;
+    std::vector<double> cov(d * d, 0.0);
+    REQUIRE(covariance_matrix(data, n, d, cov, 1.0));
+
+    const std::vector<double> col0 = {1.0, 2.0, 3.0, 4.0};
+    const std::vector<double> col1 = {2.0, 4.0, 6.0, 8.0};
+    CHECK(cov[0] == doctest::Approx(covariance(col0, col0, 1.0)));
+    CHECK(cov[3] == doctest::Approx(covariance(col1, col1, 1.0)));
+    CHECK(cov[1] == doctest::Approx(covariance(col0, col1, 1.0)));
+    CHECK(cov[1] == doctest::Approx(cov[2]));  // 对称
+    CHECK(pearson(col0, col1) == doctest::Approx(1.0));
+}
+
+TEST_CASE("math::stats::covariance_matrix 边界 + listwise 删除") {
+    const std::vector<double> data = {1.0, 2.0, 2.0, 4.0, 3.0, 6.0};
+    std::vector<double> cov(4, 0.0);
+
+    // out 太小 / d == 0 / n == 0 → false
+    CHECK_FALSE(covariance_matrix(data, 3, 2, std::span<double>(cov.data(), 3), 0.0));
+    CHECK_FALSE(covariance_matrix(data, 3, 0, cov, 0.0));
+    CHECK_FALSE(covariance_matrix(data, 0, 2, cov, 0.0));
+
+    // 某行含 NaN → 整行跳过：剩 (1,2) 与 (3,6)
+    const std::vector<double> withnan = {1.0, 2.0, std::nan(""), 9.0, 3.0, 6.0};
+    REQUIRE(covariance_matrix(withnan, 3, 2, cov, 0.0));
+    CHECK(cov[0] == doctest::Approx(1.0));  // 方差 x
+    CHECK(cov[3] == doctest::Approx(4.0));  // 方差 y
+    CHECK(cov[1] == doctest::Approx(2.0));  // 协方差
+
+    // 全部行无效 → false
+    const std::vector<double> allbad = {std::nan(""), 1.0, 2.0, std::nan("")};
+    CHECK_FALSE(covariance_matrix(allbad, 2, 2, cov, 0.0));
+
+    // 有效行数 ≤ ddof → false
+    const std::vector<double> one = {1.0, 2.0};
+    CHECK_FALSE(covariance_matrix(one, 1, 2, cov, 1.0));
+}
+
+// ── interpolate: 贝塞尔（batch 3） ───────────────────────────────────────────
+
+TEST_CASE("math::interpolate::quadratic_bezier 端点 + 中点 + 2D") {
+    CHECK(quadratic_bezier(0.0, 1.0, 2.0, 0.0) == doctest::Approx(0.0));
+    CHECK(quadratic_bezier(0.0, 1.0, 2.0, 1.0) == doctest::Approx(2.0));
+    // t=0.5：0.25·0 + 0.5·1 + 0.25·2 = 1
+    CHECK(quadratic_bezier(0.0, 1.0, 2.0, 0.5) == doctest::Approx(1.0));
+    // 控制点在中点时退化为直线
+    CHECK(quadratic_bezier(0.0, 0.5, 1.0, 0.25) == doctest::Approx(0.25));
+
+    const Point m = quadratic_bezier(Point{0, 0}, Point{1, 2}, Point{2, 0}, 0.5);
+    CHECK(m.x == doctest::Approx(1.0));
+    CHECK(m.y == doctest::Approx(1.0));
+}
+
+TEST_CASE("math::interpolate::cubic_bezier 端点 + 中点 + 2D") {
+    CHECK(cubic_bezier(0.0, 1.0, 2.0, 3.0, 0.0) == doctest::Approx(0.0));
+    CHECK(cubic_bezier(0.0, 1.0, 2.0, 3.0, 1.0) == doctest::Approx(3.0));
+    // 控制点取三等分点 → 直线，B(0.5) = 1.5
+    CHECK(cubic_bezier(0.0, 1.0, 2.0, 3.0, 0.5) == doctest::Approx(1.5));
+
+    const Point m = cubic_bezier(Point{0, 0}, Point{1, 1}, Point{2, 1}, Point{3, 0}, 0.5);
+    CHECK(m.x == doctest::Approx(1.5));
+    CHECK(m.y == doctest::Approx(0.75));
+}
+
 }  // TEST_SUITE

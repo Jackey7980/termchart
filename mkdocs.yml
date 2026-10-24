@@ -29,6 +29,7 @@ nav:
       - 图像: guide/images.md
       - 背景数据: guide/background_data.md
       - 数据管线: guide/data_pipeline.md
+      - 数学与几何工具集: guide/math_toolkit.md
       - 3D 与 4D: guide/three_d.md
       - 网络: guide/network.md
       - 扩展点:
