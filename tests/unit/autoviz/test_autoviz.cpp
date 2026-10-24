@@ -12,6 +12,8 @@
 
 #include <doctest.h>
 
+#include "termchart/autoviz/domain.hpp"
+#include "termchart/canvas/canvas.hpp"
 #include "termchart/chart/cartesian/boxplot.hpp"
 #include "termchart/chart/cartesian/hist.hpp"
 #include "termchart/chart/cartesian/line_chart.hpp"
@@ -600,6 +602,94 @@ TEST_CASE("autoviz/time_parse: 轴标签粒度与人类可读跨度") {
     CHECK(format_span_human(7 * 86400.0) == "7 天");
     CHECK(format_span_human(90.0) == "1.5 分钟");
     CHECK(format_span_human(0.0) == "0 秒");
+}
+
+// ── 稳健 Y 域（离群裁剪）────────────────────────────────────────────────────
+
+TEST_CASE("autoviz/domain: Tukey 篱裁掉极端值、保留主体域") {
+    const std::vector<double> clean{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const RobustDomain quiet = robust_y_domain(clean);
+    CHECK_FALSE(quiet.active());
+    CHECK(quiet.clipped == 0);
+    CHECK(quiet.lo == doctest::Approx(1.0));
+    CHECK(quiet.hi == doctest::Approx(10.0));
+
+    const std::vector<double> dirty{1, 2, 3, 4, 5, 6, 7, 8, 9, 1e21};
+    const RobustDomain dom = robust_y_domain(dirty);
+    CHECK(dom.active());
+    CHECK(dom.clipped == 1);
+    CHECK(dom.high);
+    CHECK(dom.extreme() == doctest::Approx(1e21));
+    CHECK(dom.hi < 100.0);  // 1e21 绝不进轴域
+    CHECK(dom.hi >= 9.0);   // 但不许把主体一起裁掉
+    CHECK(dom.lo == doctest::Approx(1.0));
+}
+
+TEST_CASE("autoviz/domain: 小样本/常数列/全空都不硬裁") {
+    // 少于 kOutlierMinSamples 个值：分位数没有统计意义，宁可画平线也不猜。
+    const RobustDomain tiny = robust_y_domain(std::vector<double>{1.0, 1e21});
+    CHECK_FALSE(tiny.active());
+    CHECK(tiny.hi == doctest::Approx(1e21));
+
+    // 常数列 + 一个脏值：IQR 退化为 0，改用相对中位数的篱；裁完域退化时要撑开，
+    // 否则比例尺 span=0（除零），图直接烂掉。
+    const RobustDomain same = robust_y_domain(std::vector<double>{1, 1, 1, 1, 1, 1e21});
+    CHECK(same.active());
+    CHECK(same.clipped == 1);
+    CHECK(same.hi < 10.0);
+    CHECK(same.hi > same.lo);
+
+    // 全 NaN/Inf：usable() 为 false，调用方必须退回数据自身域。
+    const RobustDomain bad = robust_y_domain(std::vector<double>{std::nan(""), HUGE_VAL});
+    CHECK_FALSE(bad.usable());
+
+    // fence <= 0 = 关闭裁剪（用户显式要"轴域就是 [min,max]"）。
+    CHECK_FALSE(robust_y_domain(std::vector<double>{1, 2, 3, 4, 5, 1e21}, 0.0).active());
+}
+
+TEST_CASE("autoviz/domain: 多系列域取并集、裁剪点数相加") {
+    const RobustDomain a = robust_y_domain(std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8, 9, 1e21});
+    const RobustDomain b =
+        robust_y_domain(std::vector<double>{10, 20, 30, 40, 50, 60, 70, 80, 90, -1e21});
+    const RobustDomain m = merge_domains(a, b);
+    CHECK(m.lo == doctest::Approx(-45.0));  // b 的篱内下界（Q1=22.5, IQR=45）
+    CHECK(m.hi == doctest::Approx(90.0));
+    CHECK(m.clipped == 2);  // 上下各裁一个
+}
+
+TEST_CASE("autoviz: 极端离群值 → 轴域裁剪 + 标题留痕 + 体检点名") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2024-01-01 08:00:00,1000\n"
+        "2024-01-01 09:00:00,1200\n"
+        "2024-01-01 10:00:00,900\n"
+        "2024-01-02 08:00:00,1100\n"
+        "2024-01-02 09:00:00,1e21\n"
+        "2024-01-02 10:00:00,800\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+
+    // 体检：离群列被点名（维度是"值域"，与 suspects 的"列名口径"是两回事）。
+    REQUIRE(result->features.outliers.size() == 1);
+    CHECK(result->features.outliers[0].name == "v");
+    CHECK(result->features.outliers[0].high);
+    CHECK(result->features.outliers[0].extreme == doctest::Approx(1e21));
+
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+    CHECK(line->clipped_points > 0);
+    CHECK(line->title.find("裁去") != std::string::npos);  // 标题必须留痕
+
+    // 真建出来的图：Y 轴域里绝不许出现 1e21（否则主体又被压成平线）。
+    std::unique_ptr<termchart::chart::Chart> chart = line->build();
+    REQUIRE(chart != nullptr);
+    auto* line_chart = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(line_chart != nullptr);
+    termchart::canvas::Canvas canvas(80, 24);
+    line_chart->draw(termchart::chart::DrawContext{canvas});
+    const termchart::layout::PlotArea& area = line_chart->last_area();
+    CHECK(area.y_scale().domain_max() < 1e6);
+    CHECK(area.y_scale().domain_min() <= 800.0);
 }
 
 // ── 端到端 ──────────────────────────────────────────────────────────────────

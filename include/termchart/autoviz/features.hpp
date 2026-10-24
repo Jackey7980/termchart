@@ -34,6 +34,19 @@ struct ColumnSuspect {
     std::string actual;    // 推断口径（column_kind_name）
 };
 
+// 量级离群（**仅诊断，绝不改路由**）。与 ColumnSuspect 分开：那个管"列名与
+// 类型矛盾"，这个管"值域里混进哨兵/单位错/手滑多打了 0"。典型后果不是选错图，
+// 而是轴域被单个值撑爆、其余数据压成平线——所以既要告警，又要裁轴（见
+// autoviz/domain.hpp）。抽样口径：按行等距抽样（不是前 N 行——离群值常在尾部）。
+struct ValueOutlier {
+    std::string name;
+    std::size_t sampled = 0;  // 参与判断的有效值数（抽样的非空非 NaN 值）
+    std::size_t count = 0;    // 越界值个数（抽样口径）
+    double median = 0.0;      // 主体所在
+    double extreme = 0.0;     // 越界最远的实际值
+    bool high = true;         // 上溢（脏大数）还是下溢（脏负数）
+};
+
 // 数据集特征：列画像 + 角色分组 + 剔除名单。
 struct DatasetFeatures {
     std::vector<data::ColumnProfile> profiles;  // 与 DataFrame.columns 同序对齐
@@ -44,6 +57,7 @@ struct DatasetFeatures {
     std::vector<std::size_t> text_columns;      // High 档自由文本（词云用）
     std::vector<std::size_t> dropped;           // 常量/全空/高空值率被剔除
     std::vector<ColumnSuspect> suspects;        // 表头口径存疑列（诊断用）
+    std::vector<ValueOutlier> outliers;         // 量级离群列（诊断用）
     std::size_t rows = 0;
 
     // 便捷视图
@@ -70,6 +84,8 @@ struct DatasetFeatures {
 //     全局空值率剔除（drop_high_null / max_null_rate）；
 //   * 列名口径体检：度量词却是 Text / 分类词却是 Numeric（且非 0/1 flag）
 //     → suspects（**只诊断，绝不改路由**）。
+//   * 量级离群体检：数值列等距抽样后按 IQR 篱判越界 → outliers（同样只诊断；
+//     真正的轴域裁剪在路由阶段用全量值重算，见 autoviz/domain.hpp）。
 [[nodiscard]] TERMCHART_API DatasetFeatures detect_features(const data::DataFrame& frame,
                                                              const AutoVizOptions& options = {});
 

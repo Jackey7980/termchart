@@ -2,6 +2,7 @@
 #include "termchart/chart/chart.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "termchart/layout/legend.hpp"
@@ -27,17 +28,25 @@ void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax,
 
 layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin,
                            double xmin, double xmax, double ymin, double ymax,
-                           bool auto_domain, bool include_zero) {
-    if (auto_domain) {
-        const scale::Domain yd = scale::nice_domain(ymin, ymax, include_zero);
-        const scale::Domain xd = scale::nice_domain(xmin, xmax, false);
-        return layout::PlotArea(static_cast<double>(canvas.width()),
-                                static_cast<double>(canvas.height()), margin, xd.min,
-                                xd.max, yd.min, yd.max);
+                           bool auto_domain, bool include_zero,
+                           std::optional<scale::Domain> y_override) {
+    const double w = static_cast<double>(canvas.width());
+    const double h = static_cast<double>(canvas.height());
+    if (!auto_domain) {
+        return layout::PlotArea(w, h, margin, xmin, xmax, ymin, ymax);
     }
-    return layout::PlotArea(static_cast<double>(canvas.width()),
-                            static_cast<double>(canvas.height()), margin, xmin, xmax,
-                            ymin, ymax);
+    const scale::Domain xd = scale::nice_domain(xmin, xmax, false);
+    if (y_override.has_value()) {
+        // Y 用权威域、X 保持原有 nice 规整——调用方只买"轴域不许取极值"这一项，
+        // 不该顺带改掉 X 的外观。退化/非有限域当没给（否则比例尺 span=0 → 除零）。
+        const double lo = y_override->min;
+        const double hi = y_override->max;
+        if (std::isfinite(lo) && std::isfinite(hi) && hi > lo) {
+            return layout::PlotArea(w, h, margin, xd.min, xd.max, lo, hi);
+        }
+    }
+    const scale::Domain yd = scale::nice_domain(ymin, ymax, include_zero);
+    return layout::PlotArea(w, h, margin, xd.min, xd.max, yd.min, yd.max);
 }
 
 void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series,

@@ -60,6 +60,7 @@ struct ChartCandidate {
     bool temporal_sorted = true;       // 时间轴是否已保证有序（管道内聚合规）
     bool geo_deduped = true;           // 地理管道强制去重；false 触发否决
     std::size_t axis_count = 0;        // 平行坐标轴数
+    std::size_t clipped_points = 0;    // Y 域裁掉的极值点数（0 = 轴域未动，见 domain.hpp）
 
     // ── 打分结果 ──────────────────────────────────────────────────────────
     double analytic_score = 0.0;

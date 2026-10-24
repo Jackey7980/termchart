@@ -39,6 +39,12 @@ struct AutoVizOptions {
     double max_null_rate = 0.6;
     std::size_t min_rows = 2;  // 少于此行数不出数值图（Preview 兜底）
 
+    // 极端离群值（脏大数/哨兵值）处理：轴域取 Tukey 篱内的稳健范围，篱外的点
+    // 由比例尺钳到轴边缘，并在标题里留下"裁去 N 个极值"的痕迹（见 domain.hpp）。
+    // 关掉 = 轴域仍取 [min, max]——一个 1e21 就能把其余数据压成一条平线。
+    bool clip_outliers = true;
+    double outlier_fence = 1.5;  // Tukey 系数：Q3 + k·IQR 之外算极端值
+
     // 强制指定列（空 = 自动探测）
     std::string_view event_column;
     std::string_view time_column;

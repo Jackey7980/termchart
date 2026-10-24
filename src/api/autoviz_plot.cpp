@@ -2,6 +2,7 @@
 #include "termchart/api/autoviz_plot.hpp"
 
 #include <cstddef>
+#include <cstdio>
 #include <fstream>
 #include <ios>
 #include <iterator>
@@ -33,6 +34,14 @@ Result<std::string> read_file(std::string_view path) {
 
 bool is_blank(char ch) noexcept {
     return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+// 日志里的数值：1e21 用 std::to_string 会打成 21 位数字（读不出来也占满行），
+// 3 位有效数字够定位"哪个值离谱"。
+std::string fmt_value(double v) {
+    char buf[32] = {};
+    std::snprintf(buf, sizeof(buf), "%.3g", v);
+    return std::string(buf);
 }
 
 }  // namespace
@@ -67,6 +76,15 @@ Status auto_plot(std::string_view filepath, const autoviz::AutoVizOptions& opts)
     for (const autoviz::ColumnSuspect& s : picked->features.suspects) {
         TERMCHART_LOG_WARN("autoviz: 列名口径存疑 " + s.name + "（名字像 " + s.expected +
                            "，实际 " + s.actual + "）——表头与数据列序可能错位");
+    }
+    // 量级离群：轴的形状已被稳健域救回来，但**数据本身还是脏的**，这行提示
+    // 的作用是让人回去改数据（哨兵值 999999/1e21、单位混用、手滑多打 0）。
+    for (const autoviz::ValueOutlier& o : picked->features.outliers) {
+        TERMCHART_LOG_WARN("autoviz: 列 '" + o.name + "' 存在极端离群值（" +
+                           fmt_value(o.extreme) + (o.high ? " 远大于中位数 " : " 远小于中位数 ") +
+                           fmt_value(o.median) + "，抽样 " + std::to_string(o.count) + "/" +
+                           std::to_string(o.sampled) +
+                           " 个值越界）；Y 轴已按 IQR 篱裁剪，请确认这不是脏数据");
     }
 
     const std::unique_ptr<chart::Chart> chart = picked->build_chosen();

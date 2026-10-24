@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **386 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **387 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -42,7 +42,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 5 |
-| autoviz | L21 | 9 |
+| autoviz | L21 | 10 |
 | gui | L22 | 3 |
 
 ## （顶层头）
@@ -2436,7 +2436,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 通道独立存在。绘制上下文见 context.hpp。
 
 - `void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax, double& ymin, double& ymax)`
-- `layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin, double xmin, double xmax, double ymin, double ymax, bool auto_domain, bool include_zero)`
+- `layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin, double xmin, double xmax, double ymin, double ymax, bool auto_domain, bool include_zero, std::optional<scale::Domain> y_override = std::nullopt)`
 - `void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series, const layout::PlotArea& area, bool show)`
 - `class Chart`
 
@@ -5205,6 +5205,24 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct ChartCandidate`
 
+### `autoviz/domain.hpp`
+
+> autoviz/domain.hpp —— 稳健 Y 轴域：分位数裁剪（L21）
+>
+> 问题：一列里混进一个 1e21（脏数据/单位错/哨兵值），[min, max] 域会把其余
+> 全部数据压成贴地的一条平线——图还在画，信息量归零。商业 BI 的标准做法是
+> **分位数裁剪**：轴域不取极值，取"篱"内的范围，篱外的点钳到边缘并明确标注。
+>
+> 为什么不用 P1/P99：这两个分位数对**小样本**毫无意义（11 个值时 P99 就是
+> max，裁不掉任何东西；本仓库真实脏订单 CSV 只有 6 个有效值）。改用 Tukey
+> 篱 Q1/Q3 ± k·IQR（箱线图的须），5 个点就能判、对单个极端值稳健。
+>
+> 为什么不在 data::profile_columns 里算：那里是"整表单遍画像"的公共底座，
+> 目标是判定"这列像什么"，替所有调用方（含根本不画图的）付排序开销不合适。
+> 分位数只在**真要定轴**的地方算一次，且只对已聚合的少量值算。
+
+- `struct RobustDomain`
+
 ### `autoviz/engine.hpp`
 
 > autoviz/engine.hpp —— AutoViz 入口（规格书四阶段编排，L21）
@@ -5225,6 +5243,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct GeoPair`
 - `struct ColumnSuspect`
+- `struct ValueOutlier`
 - `struct DatasetFeatures`
 
 ### `autoviz/options.hpp`

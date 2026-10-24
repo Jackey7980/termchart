@@ -2,9 +2,12 @@
 #include "termchart/autoviz/features.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
 #include <string>
 #include <string_view>
+
+#include "termchart/autoviz/domain.hpp"
 
 namespace termchart::autoviz {
 namespace {
@@ -259,6 +262,36 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
                                   "discount"})) {
             f.suspects.push_back(ColumnSuspect{p.name, "numeric",
                                                data::column_kind_name(p.kind)});
+        }
+    }
+
+    // 7) 量级离群体检（同样**只诊断**）：按行**等距抽样**扫数值列，用 IQR 篱
+    //    判"有没有被个别脏值撑爆"。刻意不取前 N 行——脏行常在尾部（手滑追加、
+    //    汇总行混入），只看开头必然漏。抽样上限 1024 个值，够撑起分位数且对
+    //    百万行表也是 O(1e3)。
+    //    这里的 count 是**抽样口径**，路由阶段会在真正建图时用全量值重算一次
+    //    精确的裁剪数（填 ChartCandidate::clipped_points）。
+    if (options.clip_outliers) {
+        constexpr std::size_t kSampleCap = 1024;
+        for (const std::size_t idx : f.numeric_columns) {
+            const std::vector<data::Cell>& column = frame.columns[idx];
+            if (column.empty()) {
+                continue;
+            }
+            const std::size_t stride = std::max<std::size_t>(1, column.size() / kSampleCap);
+            std::vector<double> sample;
+            sample.reserve(std::min(column.size(), kSampleCap) + 1);
+            for (std::size_t r = 0; r < column.size(); r += stride) {
+                if (column[r].is_numeric() && std::isfinite(column[r].num)) {
+                    sample.push_back(column[r].num);
+                }
+            }
+            const RobustDomain dom = robust_y_domain(sample, options.outlier_fence);
+            if (!dom.active()) {
+                continue;
+            }
+            f.outliers.push_back(ValueOutlier{f.profiles[idx].name, sample.size(), dom.clipped,
+                                              dom.median, dom.extreme(), dom.high});
         }
     }
     return f;

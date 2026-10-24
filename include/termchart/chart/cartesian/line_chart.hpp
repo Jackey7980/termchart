@@ -31,6 +31,12 @@ public:
         auto_domain_ = on;
         include_zero_ = include_zero;
     }
+
+    // 显式 Y 域（权威值，优先于数据域）：给"轴域不该取极值"的场景用，如
+    // autoviz 的离群裁剪（域外的点由比例尺钳到轴边缘，不丢系列连续性）。
+    // 退化域（hi <= lo / 非有限）会被忽略——宁可退回自动域，也不画除零的轴。
+    void set_y_domain(double lo, double hi) { y_domain_ = scale::Domain{lo, hi}; }
+    [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
     void set_show_legend(bool on) { show_legend_ = on; }
 
     // x 轴刻度标签格式化钩子：**只影响标签文本，不影响刻度位置**（位置仍由
@@ -52,6 +58,7 @@ private:
     bool auto_domain_ = true;
     bool include_zero_ = false;
     bool show_legend_ = true;
+    std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };

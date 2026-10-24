@@ -21,7 +21,7 @@ void LineChart::draw(DrawContext ctx) {
     }
     const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
     area_ = make_area(ctx.canvas, m, xmin, xmax, ymin, ymax, auto_domain_,
-                      include_zero_);
+                      include_zero_, y_domain_);
 
     const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());

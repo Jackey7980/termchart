@@ -13,12 +13,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "termchart/autoviz/domain.hpp"
 #include "termchart/autoviz/time_parse.hpp"
 #include "termchart/chart/cartesian/bar_chart.hpp"
 #include "termchart/chart/cartesian/boxplot.hpp"
@@ -252,12 +254,30 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
     const std::string line_title =
         value_label + " 随时间（按 " + format_span_human(width) + "均值）";
 
+    // 稳健 Y 域：一列里混进 1e21 这种脏值时，[min, max] 会把其余数据全压成
+    // 贴地的一条平线——图还在画、信息量归零。用 Tukey 篱裁出"主体范围"，
+    // 篱外的点交给比例尺钳到轴边缘（保持时间序列连续，不用断线骗人）。
+    // 多系列取域并集：共享一根 Y 轴就不能各裁一套，否则读者会以为它们同量级。
+    RobustDomain line_domain;
+    if (options.clip_outliers) {
+        for (std::size_t s = 0; s < series_cap; ++s) {
+            line_domain = merge_domains(line_domain,
+                                        robust_y_domain(values[s], options.outlier_fence));
+        }
+    }
+    // 标题留痕：轴被裁过就必须说，否则读者会把"顶端那个平台"当成真值。
+    std::string line_title_note = line_title;
+    if (line_domain.active()) {
+        line_title_note += " · 裁去 " + std::to_string(line_domain.clipped) + " 个极值";
+    }
+
     // 候选 1：折线（每数值列一条系列，桶内取均值）。
     {
         ChartCandidate c;
         c.name = chart_name::kLine;
         c.pipeline = PipelineKind::Time;
-        c.title = line_title;
+        c.title = line_title_note;
+        c.clipped_points = line_domain.clipped;
         c.x_is_temporal = true;
         c.temporal_sorted = true;  // 桶序即时间序，聚合后天然有序
         c.point_count = buckets;
@@ -299,7 +319,11 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         auto span = *tmax - *tmin;
         // 相邻刻度的间距（scale::ticks_for 默认目标 4-5 个）——决定标签粒度。
         auto resolution = span / 4.0;
-        c.build = [ss, labels, t0, w, span, resolution, line_title]() {
+        const std::optional<scale::Domain> ydom =
+            line_domain.active()
+                ? std::optional<scale::Domain>{scale::Domain{line_domain.lo, line_domain.hi}}
+                : std::nullopt;
+        c.build = [ss, labels, t0, w, span, resolution, line_title_note, ydom]() {
             auto chart = std::make_unique<LineChart>();
             for (std::size_t s = 0; s < ss.size(); ++s) {
                 // 桶内聚合均值，输出按桶号升序（x 严格有序）。
@@ -323,7 +347,10 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
                 }
                 chart->add_series(std::move(series));
             }
-            chart->set_title(line_title);
+            chart->set_title(line_title_note);
+            if (ydom.has_value()) {
+                chart->set_y_domain(ydom->min, ydom->max);
+            }
             // x 是 epoch 秒：位置由 nice 刻度决定，文字换成 "03-01"/"12:00"。
             chart->set_x_tick_formatter([span, resolution](double v) {
                 return format_timestamp_short(v, span, resolution);
@@ -607,10 +634,25 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
         // 候选 1：各 event 均值柱状图。
         {
             const std::vector<double> means = reduce_by_category(rows, categories.size(), false);
+            // 稳健 Y 域：某一类的均值是 1e21 这种脏值时，别的类全被压平。
+            // 柱的基线是 0 —— 域必须含 0，否则就是"截断轴"的谎（柱从轴底长）。
+            RobustDomain dom;
+            if (options.clip_outliers) {
+                dom = robust_y_domain(means, options.outlier_fence);
+            }
+            if (dom.active()) {
+                dom.lo = std::min(dom.lo, 0.0);
+                dom.hi = std::max(dom.hi, 0.0);
+            }
+            std::string bar_title = "各 " + event_name + " 的 " + value_name + " 均值";
+            if (dom.active()) {
+                bar_title += " · 裁去 " + std::to_string(dom.clipped) + " 个极值";
+            }
             ChartCandidate c;
             c.name = chart_name::kBar;
             c.pipeline = PipelineKind::Event;
-            c.title = "各 " + event_name + " 的 " + value_name + " 均值";
+            c.title = bar_title;
+            c.clipped_points = dom.clipped;
             c.point_count = categories.size();
             c.category_count = categories.size();
             c.x_is_categorical = true;
@@ -618,11 +660,17 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
             auto cs = categories;
             auto ms = means;
             auto vn = value_name;
-            auto en = event_name;
-            c.build = [cs, ms, vn, en]() {
+            const std::optional<scale::Domain> ydom =
+                dom.active()
+                    ? std::optional<scale::Domain>{scale::Domain{dom.lo, dom.hi}}
+                    : std::nullopt;
+            c.build = [cs, ms, vn, bar_title, ydom]() {
                 auto chart = std::make_unique<BarChart>();
                 chart->set_values(ms, cs, default_color(DefaultColor::Accent), vn);
-                chart->set_title("各 " + en + " 的 " + vn + " 均值");
+                chart->set_title(bar_title);
+                if (ydom.has_value()) {
+                    chart->set_y_domain(ydom->min, ydom->max);
+                }
                 return chart;
             };
             out.push_back(std::move(c));

@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 386 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 387 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -9850,9 +9850,15 @@ inline constexpr char32_t kBarChar = U'\u2588';      // █ 柱
 
 void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax,
                   double& ymin, double& ymax);
+// y_override：显式 Y 域（**仅 Y**，X 仍按 auto_domain 规整）。给"轴域不该取
+// 极值"的场景用——离群裁剪（autoviz 的稳健域）、固定域对比图。
+// 有值时它是权威值：不再 nice_domain、不因 include_zero 扩域，**include_zero
+// 由调用方自己并进域里**（柱状图必须含 0，见 BarChart::set_y_domain）。
+// 钳制由比例尺完成（LinearScale 默认 clamp=true），域外的点自动落在轴边缘。
 layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin,
                            double xmin, double xmax, double ymin, double ymax,
-                           bool auto_domain, bool include_zero);
+                           bool auto_domain, bool include_zero,
+                           std::optional<scale::Domain> y_override = std::nullopt);
 void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series,
                      const layout::PlotArea& area, bool show);
 
@@ -9946,6 +9952,12 @@ public:
                     Color color = default_color(DefaultColor::Accent), std::string name = "series");
     void set_show_legend(bool on) { show_legend_ = on; }
 
+    // 显式 Y 域（权威值，优先于数据域）。**柱的基线是 0**：域里不含 0 时柱会
+    // 从轴底开始长，视觉上把"截断轴"这个谎固化进图里，所以调用方必须自己把 0
+    // 并进域内（autoviz 的稳健域就这么做）。域外的值由比例尺钳到轴边缘。
+    void set_y_domain(double lo, double hi) { y_domain_ = scale::Domain{lo, hi}; }
+    [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
+
     void draw(DrawContext ctx) override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -9956,6 +9968,7 @@ private:
     Color color_ = default_color(DefaultColor::Accent);
     std::string name_ = "series";
     bool show_legend_ = true;
+    std::optional<scale::Domain> y_domain_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
@@ -10405,6 +10418,12 @@ public:
         auto_domain_ = on;
         include_zero_ = include_zero;
     }
+
+    // 显式 Y 域（权威值，优先于数据域）：给"轴域不该取极值"的场景用，如
+    // autoviz 的离群裁剪（域外的点由比例尺钳到轴边缘，不丢系列连续性）。
+    // 退化域（hi <= lo / 非有限）会被忽略——宁可退回自动域，也不画除零的轴。
+    void set_y_domain(double lo, double hi) { y_domain_ = scale::Domain{lo, hi}; }
+    [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
     void set_show_legend(bool on) { show_legend_ = on; }
 
     // x 轴刻度标签格式化钩子：**只影响标签文本，不影响刻度位置**（位置仍由
@@ -10426,6 +10445,7 @@ private:
     bool auto_domain_ = true;
     bool include_zero_ = false;
     bool show_legend_ = true;
+    std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
@@ -19296,6 +19316,68 @@ namespace termchart {
 const char* version_string() noexcept;
 }
 
+// ===== include/termchart/autoviz/domain.hpp =====
+// autoviz/domain.hpp —— 稳健 Y 轴域：分位数裁剪（L21）
+//
+// 问题：一列里混进一个 1e21（脏数据/单位错/哨兵值），[min, max] 域会把其余
+// 全部数据压成贴地的一条平线——图还在画，信息量归零。商业 BI 的标准做法是
+// **分位数裁剪**：轴域不取极值，取"篱"内的范围，篱外的点钳到边缘并明确标注。
+//
+// 为什么不用 P1/P99：这两个分位数对**小样本**毫无意义（11 个值时 P99 就是
+// max，裁不掉任何东西；本仓库真实脏订单 CSV 只有 6 个有效值）。改用 Tukey
+// 篱 Q1/Q3 ± k·IQR（箱线图的须），5 个点就能判、对单个极端值稳健。
+//
+// 为什么不在 data::profile_columns 里算：那里是"整表单遍画像"的公共底座，
+// 目标是判定"这列像什么"，替所有调用方（含根本不画图的）付排序开销不合适。
+// 分位数只在**真要定轴**的地方算一次，且只对已聚合的少量值算。
+
+
+
+namespace termchart::autoviz {
+
+// Tukey 篱系数：Q3 + k·IQR 之外算极端值。1.5 = 箱线图默认须长，业界标准；
+// 调小会更激进地裁（1.0 已接近"正常波动也裁"），调大会漏掉中等离群。
+inline constexpr double kOutlierFence = 1.5;
+
+// 有效样本下限：少于这么多点时分位数没有统计意义，一律不裁（宁可画平线，
+// 也不要在 3 个点的样本上"猜"哪个是离群）。反例：12 行 CSV 里 6 个有效值
+// 够判（≥5），3 行的表不判。
+inline constexpr std::size_t kOutlierMinSamples = 5;
+
+// 一列的稳健域扫描结果（纯值语义，无所有权）。
+struct RobustDomain {
+    double raw_lo = 0.0;  // 实际极值（诊断/告警用）
+    double raw_hi = 0.0;
+    double lo = 0.0;      // 建议轴域（未裁剪时等于 raw）
+    double hi = 0.0;
+    double median = 0.0;   // 中位数（告警里给"主体在哪"的锚）
+    std::size_t clipped = 0;  // 落在 [lo, hi] 之外的点数（会被比例尺钳到边缘）
+    bool high = true;         // 越界主要发生在高端（true）还是低端
+
+    // 域可用：两界有限且非退化。退化域会让比例尺 span=0（除零/全 NaN），
+    // 所以三处调用点都必须先问这一句。
+    [[nodiscard]] bool usable() const noexcept {
+        return std::isfinite(lo) && std::isfinite(hi) && hi > lo;
+    }
+    // 真的裁过：有越界点且域仍可用。false 表示轴域就是原始 min/max。
+    [[nodiscard]] bool active() const noexcept { return clipped > 0 && usable(); }
+    // 告警/标题里要展示的那个值。
+    [[nodiscard]] double extreme() const noexcept { return high ? raw_hi : raw_lo; }
+};
+
+// 扫描一组值，给出稳健轴域。非有限值（NaN/Inf）直接跳过（空值不是离群）。
+// fence <= 0 视为关闭裁剪（返回原始 [min, max]）。
+[[nodiscard]] TERMCHART_API RobustDomain robust_y_domain(std::span<const double> values,
+                                                         double fence = kOutlierFence) noexcept;
+
+// 多系列并集：同一根 Y 轴上的系列必须共享一个域（域取并、裁剪点数相加）。
+// 系列间量级差异极大时这是**有意**的保守选择——那种情形该换对数/对称对数
+// 轴，而不是让每系列各自裁一套、让读者以为它们同量级。
+[[nodiscard]] TERMCHART_API RobustDomain merge_domains(const RobustDomain& a,
+                                                       const RobustDomain& b) noexcept;
+
+}  // namespace termchart::autoviz
+
 // ===== include/termchart/autoviz/options.hpp =====
 // autoviz/options.hpp —— AutoViz 入口选项与管道枚举（L21）
 //
@@ -19330,6 +19412,12 @@ struct AutoVizOptions {
     bool drop_high_null = true;
     double max_null_rate = 0.6;
     std::size_t min_rows = 2;  // 少于此行数不出数值图（Preview 兜底）
+
+    // 极端离群值（脏大数/哨兵值）处理：轴域取 Tukey 篱内的稳健范围，篱外的点
+    // 由比例尺钳到轴边缘，并在标题里留下"裁去 N 个极值"的痕迹（见 domain.hpp）。
+    // 关掉 = 轴域仍取 [min, max]——一个 1e21 就能把其余数据压成一条平线。
+    bool clip_outliers = true;
+    double outlier_fence = 1.5;  // Tukey 系数：Q3 + k·IQR 之外算极端值
 
     // 强制指定列（空 = 自动探测）
     std::string_view event_column;
@@ -19426,6 +19514,7 @@ struct ChartCandidate {
     bool temporal_sorted = true;       // 时间轴是否已保证有序（管道内聚合规）
     bool geo_deduped = true;           // 地理管道强制去重；false 触发否决
     std::size_t axis_count = 0;        // 平行坐标轴数
+    std::size_t clipped_points = 0;    // Y 域裁掉的极值点数（0 = 轴域未动，见 domain.hpp）
 
     // ── 打分结果 ──────────────────────────────────────────────────────────
     double analytic_score = 0.0;
@@ -19488,6 +19577,19 @@ struct ColumnSuspect {
     std::string actual;    // 推断口径（column_kind_name）
 };
 
+// 量级离群（**仅诊断，绝不改路由**）。与 ColumnSuspect 分开：那个管"列名与
+// 类型矛盾"，这个管"值域里混进哨兵/单位错/手滑多打了 0"。典型后果不是选错图，
+// 而是轴域被单个值撑爆、其余数据压成平线——所以既要告警，又要裁轴（见
+// autoviz/domain.hpp）。抽样口径：按行等距抽样（不是前 N 行——离群值常在尾部）。
+struct ValueOutlier {
+    std::string name;
+    std::size_t sampled = 0;  // 参与判断的有效值数（抽样的非空非 NaN 值）
+    std::size_t count = 0;    // 越界值个数（抽样口径）
+    double median = 0.0;      // 主体所在
+    double extreme = 0.0;     // 越界最远的实际值
+    bool high = true;         // 上溢（脏大数）还是下溢（脏负数）
+};
+
 // 数据集特征：列画像 + 角色分组 + 剔除名单。
 struct DatasetFeatures {
     std::vector<data::ColumnProfile> profiles;  // 与 DataFrame.columns 同序对齐
@@ -19498,6 +19600,7 @@ struct DatasetFeatures {
     std::vector<std::size_t> text_columns;      // High 档自由文本（词云用）
     std::vector<std::size_t> dropped;           // 常量/全空/高空值率被剔除
     std::vector<ColumnSuspect> suspects;        // 表头口径存疑列（诊断用）
+    std::vector<ValueOutlier> outliers;         // 量级离群列（诊断用）
     std::size_t rows = 0;
 
     // 便捷视图
@@ -19524,6 +19627,8 @@ struct DatasetFeatures {
 //     全局空值率剔除（drop_high_null / max_null_rate）；
 //   * 列名口径体检：度量词却是 Text / 分类词却是 Numeric（且非 0/1 flag）
 //     → suspects（**只诊断，绝不改路由**）。
+//   * 量级离群体检：数值列等距抽样后按 IQR 篱判越界 → outliers（同样只诊断；
+//     真正的轴域裁剪在路由阶段用全量值重算，见 autoviz/domain.hpp）。
 [[nodiscard]] TERMCHART_API DatasetFeatures detect_features(const data::DataFrame& frame,
                                                              const AutoVizOptions& options = {});
 

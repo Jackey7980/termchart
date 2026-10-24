@@ -33,7 +33,7 @@ void BarChart::draw(DrawContext ctx) {
     const double xmin = 0.0;
     const double xmax = static_cast<double>(values_.size());
     const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
-    area_ = make_area(ctx.canvas, m, xmin, xmax, ymin, ymax, true, false);
+    area_ = make_area(ctx.canvas, m, xmin, xmax, ymin, ymax, true, false, y_domain_);
 
     const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());

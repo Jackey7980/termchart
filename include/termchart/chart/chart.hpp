@@ -6,6 +6,7 @@
 #ifndef TERMCHART_CHART_CHART_HPP
 #define TERMCHART_CHART_CHART_HPP
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "termchart/chart/series.hpp"
 #include "termchart/export.hpp"
 #include "termchart/layout/box.hpp"
+#include "termchart/scale/auto_domain.hpp"
 
 namespace termchart::chart {
 
@@ -27,9 +29,15 @@ inline constexpr char32_t kBarChar = U'\u2588';      // █ 柱
 
 void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax,
                   double& ymin, double& ymax);
+// y_override：显式 Y 域（**仅 Y**，X 仍按 auto_domain 规整）。给"轴域不该取
+// 极值"的场景用——离群裁剪（autoviz 的稳健域）、固定域对比图。
+// 有值时它是权威值：不再 nice_domain、不因 include_zero 扩域，**include_zero
+// 由调用方自己并进域里**（柱状图必须含 0，见 BarChart::set_y_domain）。
+// 钳制由比例尺完成（LinearScale 默认 clamp=true），域外的点自动落在轴边缘。
 layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin,
                            double xmin, double xmax, double ymin, double ymax,
-                           bool auto_domain, bool include_zero);
+                           bool auto_domain, bool include_zero,
+                           std::optional<scale::Domain> y_override = std::nullopt);
 void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series,
                      const layout::PlotArea& area, bool show);
 
