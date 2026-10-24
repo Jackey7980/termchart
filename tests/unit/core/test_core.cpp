@@ -1,6 +1,8 @@
 // test_core.cpp —— core 层基础类型
 #include <doctest.h>
 
+#include <type_traits>
+
 #include "termchart/core/arena.hpp"
 #include "termchart/core/attr.hpp"
 #include "termchart/core/buffer.hpp"
@@ -30,6 +32,34 @@ TEST_CASE("core: Rgb 与十六进制互转") {
     SUBCASE("亮度排序符合直觉") {
         CHECK(kBlack.luma() < kWhite.luma());
     }
+}
+
+TEST_CASE("core: Rgb 编译期字面量") {
+    // 整数形式与 "#RRGGBB" 必须等价（两条路径都过 from_hex / 手写解析）。
+    constexpr Rgb red = 0xFF0000_rgb;
+    constexpr Rgb red_str = "#FF0000"_hex;
+    static_assert(red == red_str);
+    static_assert(red.r == 0xFF && red.g == 0x00 && red.b == 0x00);
+    CHECK(red.to_hex() == 0xFF0000u);
+
+    // '#' 可省；大小写不敏感。
+    constexpr Rgb teal = "00ff88"_hex;
+    static_assert(teal == Rgb{0x00, 0xFF, 0x88});
+    CHECK(teal == Rgb{0x00, 0xFF, 0x88});
+
+    // 3 位缩写按 nibble 展开：#F80 → #FF8800（若忘了 ×17 会退化成 #0F8000）。
+    constexpr Rgb orange = "#F80"_hex;
+    static_assert(orange == Rgb{0xFF, 0x88, 0x00});
+    CHECK(orange.to_hex() == 0xFF8800u);
+
+    // 全零 / 全白边界。
+    static_assert("#000"_hex == kBlack);
+    static_assert(0xFFFFFF_rgb == kWhite);
+
+    // 类型契约：字面量再怎么加，Rgb 仍是 3 字节、可平凡复制、标准布局。
+    static_assert(sizeof(Rgb) == 3);
+    static_assert(std::is_trivially_copyable_v<Rgb>);
+    static_assert(std::is_standard_layout_v<Rgb>);
 }
 
 TEST_CASE("core: ColorDepth 可比较且计数正确") {
