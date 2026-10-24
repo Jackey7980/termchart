@@ -40,4 +40,5 @@ nav:
       - 模块矩阵: reference/module_matrix.md
       - API 参考: reference/api.md
       - 质量待办: reference/quality_todo.md
+      - 边界与限制: limits.md
   - 示例画廊: gallery.md
