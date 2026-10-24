@@ -254,6 +254,45 @@ TEST_CASE("autoviz/router: 分类+数值组合管道（着色散点）") {
     CHECK(scatter->vetoes.empty());
 }
 
+TEST_CASE("autoviz/router: 类数超色板容量（6）降级为单系列，不强行轮换同色") {
+    // 7 类：强行 6 色轮换会让第 7 类与第 1 类同色（比分不出颜色更误导），
+    // 正确行为是放弃颜色通道、出单系列散点。
+    std::string csv = "group,x,y\n";
+    for (int i = 0; i < 7; ++i) {
+        csv += "g" + std::to_string(i) + "," + std::to_string(i) + "," +
+               std::to_string(i * 2) + "\n";
+    }
+    const Result<AutoVizResult> result = auto_visualize(termchart::data::parse_dataframe(csv));
+    REQUIRE(result.has_value());
+    const ChartCandidate* scatter = find_candidate(result, chart_name::kScatter);
+    REQUIRE(scatter != nullptr);
+    CHECK(scatter->series_count == 1);           // 单系列
+    CHECK_FALSE(scatter->color_is_categorical);  // 颜色通道已让位
+    CHECK(scatter->vetoes.empty());
+    auto chart = scatter->build();
+    REQUIRE(chart != nullptr);
+    const auto* built = dynamic_cast<termchart::chart::ScatterChart*>(chart.get());
+    REQUIRE(built != nullptr);
+    CHECK(built->series().size() == 1);  // 真建出来也只有一个系列
+}
+
+TEST_CASE("autoviz/router: 地理去重按实体+坐标，同楼不同机柜不误杀") {
+    // 两个机柜同一坐标（同大楼）→ 键含实体 id，两个点都保留；
+    // 同一机柜重复上报 → 后写覆盖，只留一个点。
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "lat,lon,cabinet,temp\n"
+        "39.900,116.400,c1,41\n"
+        "39.900,116.400,c2,42\n"
+        "39.900,116.400,c1,43\n"
+        "31.200,121.500,c2,38\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* scatter = find_candidate(result, chart_name::kScatter);
+    REQUIRE(scatter != nullptr);
+    CHECK(scatter->point_count == 3);  // (c1,大楼)×1 + (c2,大楼)×1 + (c2,上海)×1
+    CHECK(scatter->geo_deduped);
+}
+
 TEST_CASE("autoviz/router: 纯数值管道（1列直方图/2列散点/多列平行+相关）") {
     const Result<AutoVizResult> one = auto_visualize(termchart::data::parse_dataframe(
         "v\n1\n2\n2\n3\n3\n3\n4\n"));
@@ -303,6 +342,44 @@ TEST_CASE("autoviz/router: 兜底管道（预览表格永远可用）") {
     CHECK(table->pipeline == PipelineKind::Preview);
     CHECK(table->vetoes.empty());
     CHECK(result->chosen() != nullptr);  // 任何输入都有答案
+}
+
+TEST_CASE("autoviz/router: 兜底预览表对全 null / 单行都绝对不空") {
+    // 全 null：行列齐整（列数跟数据行走，header 长于数据行的输入由
+    // DataFrame 的 Ragged 语义决定列数，不在此测）；单元格 raw 为空串，
+    // 表头照印。
+    {
+        const Result<AutoVizResult> result = auto_visualize(termchart::data::parse_dataframe(
+            "a,b\nNA,\n,NA\n"));
+        REQUIRE(result.has_value());
+        const ChartCandidate* table = find_candidate(result, chart_name::kTable);
+        REQUIRE(table != nullptr);
+        CHECK(table->vetoes.empty());
+        auto chart = table->build();
+        REQUIRE(chart != nullptr);
+        const auto* built = dynamic_cast<termchart::chart::Table*>(chart.get());
+        REQUIRE(built != nullptr);
+        CHECK(built->column_count() == 2);  // 表头在（Table::draw 无条件先画表头）
+        CHECK(result->chosen() != nullptr);
+    }
+    // 单行：预览 1 行数据。
+    {
+        const Result<AutoVizResult> result = auto_visualize(termchart::data::parse_dataframe(
+            "a,b\n1,2\n"));
+        REQUIRE(result.has_value());
+        const ChartCandidate* table = find_candidate(result, chart_name::kTable);
+        REQUIRE(table != nullptr);
+        CHECK(table->point_count == 1);
+        CHECK(result->chosen() != nullptr);
+    }
+    // 仅表头（0 数据行）：parse_dataframe 返回 0 列 → auto_visualize 显式
+    // InvalidArgument（fail-loud：没有数据不是可视化问题，不编造空图）。
+    {
+        const Result<AutoVizResult> result = auto_visualize(termchart::data::parse_dataframe(
+            "a,b\n"));
+        CHECK_FALSE(result.has_value());
+        CHECK(result.error() == termchart::ErrorCode::InvalidArgument);
+    }
 }
 
 // ── 一票否决 ────────────────────────────────────────────────────────────────

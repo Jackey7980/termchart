@@ -185,12 +185,18 @@ std::vector<std::string> sorted_category_names(const DataFrame& frame, std::size
 }
 
 // 系列配色轮换（chart/series.hpp 的唯一真源默认色，按排名取档）。
+// 色板容量 = 6：超过它的分类**不强行轮换**——第 7/8 类与第 1/2 类同色
+// 比不分色更误导（用户会以为同色即同类）。管道侧据此把颜色通道降级为
+// 单系列（见 route_geo / route_category_numeric 的 color_split）。
+constexpr std::size_t kColorCycleSize = 6;
+
 Color series_color(std::size_t rank) {
     static constexpr DefaultColor kCycle[] = {DefaultColor::Accent, DefaultColor::Neutral,
                                               DefaultColor::Cyan,   DefaultColor::Amber,
                                               DefaultColor::Warn,   DefaultColor::Muted};
-    return default_color(kCycle[rank % 6]);
+    return default_color(kCycle[rank % kColorCycleSize]);
 }
+static_assert(kColorCycleSize == 6, "kCycle 与 kColorCycleSize 必须同步");
 
 // ── 管道一：时间 ────────────────────────────────────────────────────────────
 
@@ -443,9 +449,11 @@ void route_geo(const DataFrame& frame, const DatasetFeatures& f, const AutoVizOp
     std::vector<std::string> entity_names = entity_encoder.order();
     std::sort(entity_names.begin(), entity_names.end());
 
-    // 候选 1：地理散点（按实体分系列，超过 8 个实体合并为单系列）。
+    // 候选 1：地理散点（按实体分系列；实体数超过色板容量降级为单系列——
+    // 同色不同类比分不出颜色更糟）。
     {
-        const bool split_series = with_entity && max_entities >= 2 && max_entities <= 8;
+        const bool split_series =
+            with_entity && max_entities >= 2 && max_entities <= kColorCycleSize;
         ChartCandidate c;
         c.name = chart_name::kScatter;
         c.pipeline = PipelineKind::Geo;
@@ -684,9 +692,12 @@ void route_category_numeric(const DataFrame& frame, const DatasetFeatures& f,
     const std::size_t category_column = f.category_columns.front();
     const std::string category_name = f.profiles[category_column].name;
     const std::vector<std::string> categories = sorted_category_names(frame, category_column);
-    if (categories.size() < 2 || categories.size() > 8) {
-        return;  // 颜色通道只接受 2..8 类（更多则无可读性，交给 Event 管道）
+    if (categories.size() < 2) {
+        return;  // 单类没有"按类别着色"可言
     }
+    // 颜色通道容量 = 色板 6 色。7..8 类仍出图，但降级为**单系列**（不带颜色
+    // 通道）——强行轮换会让第 7/8 类与第 1/2 类同色，比分不出颜色更误导。
+    const bool color_split = categories.size() <= kColorCycleSize;
     const std::size_t x_column = f.numeric_columns[0];
     const std::size_t y_column = f.numeric_columns[1];
     const std::string x_name = f.profiles[x_column].name;
@@ -726,22 +737,34 @@ void route_category_numeric(const DataFrame& frame, const DatasetFeatures& f,
     const std::string size_name =
         has_size ? f.profiles[f.numeric_columns[2]].name : std::string();
 
-    // 候选 1：按分类着色的散点。
+    // 候选 1：按分类着色的散点（类数超色板容量时降级为单系列）。
     {
         ChartCandidate c;
         c.name = chart_name::kScatter;
         c.pipeline = PipelineKind::CategoryNumeric;
-        c.title = x_name + " × " + y_name + "（按 " + category_name + " 着色）";
+        c.title = color_split ? x_name + " × " + y_name + "（按 " + category_name + " 着色）"
+                              : x_name + " × " + y_name;
         c.point_count = rows.size();
-        c.series_count = categories.size();
+        c.series_count = color_split ? categories.size() : 1;
         c.category_count = categories.size();
-        c.color_is_categorical = true;
+        c.color_is_categorical = color_split;
         c.color_tier = f.profiles[category_column].tier;
         c.value_null_rate = f.profiles[y_column].null_rate;
         auto rs = rows;
         auto cs = categories;
-        c.build = [rs, cs]() {
+        auto split = color_split;
+        c.build = [rs, cs, split]() {
             auto chart = std::make_unique<ScatterChart>();
+            if (!split) {
+                Series series;
+                series.name = "points";
+                series.color = series_color(0);
+                for (const Row& row : rs) {
+                    series.points.push_back(Point{row.x, row.y});
+                }
+                chart->add_series(std::move(series));
+                return chart;
+            }
             for (std::size_t i = 0; i < cs.size(); ++i) {
                 Series series;
                 series.name = cs[i];
