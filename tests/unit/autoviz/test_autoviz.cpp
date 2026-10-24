@@ -762,6 +762,192 @@ TEST_CASE("autoviz: 小样本离群值 → 不裁轴，但标题/体检都要说
     CHECK(line_chart->last_area().y_scale().domain_max() > 1e18);
 }
 
+// ── 裁剪结论的唯一真源（图题 / 告警不许各写各的）────────────────────────────
+//
+// 旧病：api 层按 features.outliers[].decision（**抽样**口径）打印"不裁轴"，
+// 而 router 用**全量**值重算后裁了 2 个点、图题写"裁去 2 个极值"。同一张图，
+// 图题与告警互相打脸。现在结论只有一个出口：ChartCandidate::final_clip_desc，
+// 图题 = 基础标题 + " · " + 它，api 也只播报它。
+
+TEST_CASE("autoviz: final_clip_desc 与图题逐字同源（裁了）") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2024-01-01 08:00:00,1000\n"
+        "2024-01-01 09:00:00,1200\n"
+        "2024-01-01 10:00:00,900\n"
+        "2024-01-01 11:00:00,950\n"
+        "2024-01-01 12:00:00,1050\n"
+        "2024-01-01 13:00:00,1150\n"
+        "2024-01-02 08:00:00,1100\n"
+        "2024-01-02 09:00:00,1e21\n"
+        "2024-01-02 10:00:00,800\n"
+        "2024-01-02 11:00:00,850\n"
+        "2024-01-02 12:00:00,1250\n"
+        "2024-01-02 13:00:00,700\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+
+    CHECK(line->final_clip_desc == "裁去 1 个极值");
+    const std::string suffix = " · " + line->final_clip_desc;
+    REQUIRE(line->title.size() > suffix.size());
+    CHECK(line->title.substr(line->title.size() - suffix.size()) == suffix);
+    CHECK(line->final_clip_count() == line->clipped_points);
+    CHECK(line->final_clip_count() == 1);
+}
+
+TEST_CASE("autoviz: final_clip_desc 说清为何未裁（小样本保护闸）") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2024-01-01 08:00:00,1000\n"
+        "2024-01-01 09:00:00,1200\n"
+        "2024-01-01 10:00:00,900\n"
+        "2024-01-02 08:00:00,1100\n"
+        "2024-01-02 09:00:00,1e21\n"
+        "2024-01-02 10:00:00,800\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+
+    CHECK(line->final_clip_desc.find("未裁") != std::string::npos);
+    CHECK(line->final_clip_desc.find("有效值太少") != std::string::npos);
+    const std::string suffix = " · " + line->final_clip_desc;
+    CHECK(line->title.substr(line->title.size() - suffix.size()) == suffix);
+    // 没裁就是 0：数字与文案不许打架（文案里的 "1 个极值未裁" 说的是检测数）。
+    CHECK(line->final_clip_count() == 0);
+}
+
+TEST_CASE("autoviz: 干净数据 final_clip_desc 为空，图题不加后缀") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2024-01-01 08:00:00,1000\n"
+        "2024-01-01 09:00:00,1200\n"
+        "2024-01-02 08:00:00,1100\n"
+        "2024-01-02 09:00:00,900\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+    CHECK(line->final_clip_desc.empty());
+    CHECK(line->final_clip_count() == 0);
+    CHECK(line->title.find("裁") == std::string::npos);
+}
+
+// ── 时间轴：日历对齐刻度 + 不被 epoch 数字串带偏年份 ────────────────────────
+
+TEST_CASE("autoviz/router: 时间轴刻度按日历对齐（不是 epoch 上的 10 的幂）") {
+    // 数据只覆盖 2026-03-01T03:00 ~ 03-02T20:00（41 小时）。旧实现把刻度交给
+    // scale::ticks_for：它在 epoch 秒上按 10 的幂取整，得到 50000 秒（13h53m20s）
+    // 的间隔，轴被撑到 02-28 17:33:20 ~ 03-03 01:06:40——两端都是假精度时刻，
+    // 且实际画到了数据没有的日子。
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2026-03-01T03:00:00Z,10\n"
+        "2026-03-01T12:00:00Z,20\n"
+        "2026-03-01T20:00:00Z,30\n"
+        "2026-03-02T04:00:00Z,25\n"
+        "2026-03-02T12:00:00Z,15\n"
+        "2026-03-02T20:00:00Z,5\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+
+    const std::unique_ptr<termchart::chart::Chart> chart = line->build();
+    REQUIRE(chart != nullptr);
+    const auto* line_chart = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(line_chart != nullptr);
+    REQUIRE(line_chart->has_x_ticks());
+    const std::vector<double>& ticks = line_chart->x_ticks();
+    REQUIRE(ticks.size() >= 2);
+
+    REQUIRE(parse_timestamp("2026-03-01T03:00:00Z").has_value());
+    REQUIRE(parse_timestamp("2026-03-02T20:00:00Z").has_value());
+    const double tmin = *parse_timestamp("2026-03-01T03:00:00Z");
+    const double tmax = *parse_timestamp("2026-03-02T20:00:00Z");
+
+    for (const double t : ticks) {
+        CHECK(t >= tmin);   // 不许往数据之前扩（那正是 02-28 那段的来源）
+        CHECK(t <= tmax);   // 也不许往数据之后扩
+        // 日历对齐的刻度必是整小时（1h/6h/12h/1d 档位），不会出现 50000s/3333s
+        // 这种 epoch 上取整的产物。
+        CHECK(t == std::floor(t / 3600.0) * 3600.0);
+    }
+    CHECK(ticks.size() <= 8);  // 41 小时配 ~4 个刻度，别把轴压满
+}
+
+TEST_CASE("autoviz/router: 时间列里的 epoch 数字串不会制造错年 X 轴") {
+    // 脏数据实测：时间列混进 "1740787200"（= 2025-03-01）。parse_timestamp
+    // 刻意不认纯数字串（与普通大整数不可区分），该行**跳过**而不是解释成
+    // 1970 起算的某个时刻——否则 2026 年的轴上会凭空多出一段 2025。
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,v\n"
+        "2026-03-01T03:00:00Z,10\n"
+        "2026-03-01T12:00:00Z,20\n"
+        "1740787200,30\n"
+        "2026-03-02T12:00:00Z,25\n"
+        "2026-03-02T20:00:00Z,5\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+
+    const double tmin = *parse_timestamp("2026-03-01T03:00:00Z");
+    const std::unique_ptr<termchart::chart::Chart> chart = line->build();
+    REQUIRE(chart != nullptr);
+    const auto* line_chart = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(line_chart != nullptr);
+    REQUIRE(line_chart->has_x_ticks());
+    for (const double t : line_chart->x_ticks()) {
+        CHECK(t >= tmin);
+    }
+    // 点也不会跑到 2025 去。
+    for (const auto& s : line_chart->series()) {
+        for (const termchart::Point& p : s.points) {
+            CHECK(p.x >= tmin);
+        }
+    }
+}
+
+// ── 百分比混列：按缺失处理，绝不乘 100 伪造成金额 ───────────────────────────
+
+TEST_CASE("autoviz/router: 百分比与金额混列 → 按缺失处理并留痕，不扮成一元") {
+    const termchart::data::DataFrame frame = termchart::data::parse_dataframe(
+        "ts,amount\n"
+        "2026-03-01T03:00:00Z,1000\n"
+        "2026-03-01T04:00:00Z,1200\n"
+        "2026-03-01T05:00:00Z,15%\n"
+        "2026-03-01T06:00:00Z,900\n"
+        "2026-03-01T07:00:00Z,1100\n"
+        "2026-03-01T08:00:00Z,1300\n");
+    const Result<AutoVizResult> result = auto_visualize(frame);
+    REQUIRE(result.has_value());
+    const ChartCandidate* line = find_candidate(result, chart_name::kLine);
+    REQUIRE(line != nullptr);
+
+    // 留痕：路由必须说明"有 1 个百分比格被按缺失处理，未做换算"。
+    REQUIRE(line->notes.size() == 1);
+    CHECK(line->notes[0].find("百分比") != std::string::npos);
+    CHECK(line->notes[0].find("1 个") != std::string::npos);
+
+    const std::unique_ptr<termchart::chart::Chart> chart = line->build();
+    REQUIRE(chart != nullptr);
+    const auto* line_chart = dynamic_cast<termchart::chart::LineChart*>(chart.get());
+    REQUIRE(line_chart != nullptr);
+    REQUIRE(line_chart->series().size() == 1);
+    const std::vector<termchart::Point>& points = line_chart->series()[0].points;
+    CHECK(points.size() == 5);  // 6 行里 1 行被剔除（不是 6 个点）
+
+    // 灾难复现点：0.15 若混进均值，某段会被拽到百位数以下。这里断言每个点
+    // 都在正常金额量级（>= 800），即百分比既没参与均值也没被乘 100。
+    for (const termchart::Point& p : points) {
+        CHECK(p.y >= 800.0);
+        CHECK(p.y <= 1400.0);
+    }
+}
+
 // ── 端到端 ──────────────────────────────────────────────────────────────────
 
 // 真实脏订单数据（用户提供，2026-10-24）：斜杠/点/中文日期、Unix epoch、

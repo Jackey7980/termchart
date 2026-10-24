@@ -35,11 +35,18 @@ struct JsonFrameResult {
     std::size_t lines_total = 0;    // 非空行总数（空白行不计）
     std::size_t lines_used = 0;     // 产出行的行数
     std::size_t lines_skipped = 0;  // 跳过的行数（skip_invalid_lines=true 时才有意义）
+    // 其中有多少行是**位置式数组**按列序 zip 进来的（见 add_positional）。
+    // 单列出来是因为这类行的语义最弱：它靠"宽度恰好相同"才成立，值本身没有键。
+    std::size_t lines_zipped = 0;
 };
 
 // JSONL（newline-delimited JSON，每行一个对象）→ DataFrame。
 // 顶层是对象的行按记录处理；顶层是**元素全为对象的数组**的行，其元素按多条
-// 记录处理；其余（标量、标量数组、混合数组）算非记录行，跳过并计数。
+// 记录处理；
+// 顶层是**标量数组**的行，若其长度恰好等于当前列数，按列序 zip 成一行
+// （lines_zipped 计数）——救回"有值没键"的位置式记录；长度不同则一样跳过：
+// 宽度对不上的数组强行对齐会把 "X004" 塞进 ts 列，那是编数据，比丢弃更坏。
+// 其余（标量、空数组、其余混合数组）算非记录行，跳过并计数。
 [[nodiscard]] Result<JsonFrameResult> dataframe_from_jsonl(
     std::string_view source, const JsonFrameOptions& options = {});
 

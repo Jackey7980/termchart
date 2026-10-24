@@ -77,38 +77,36 @@ Status auto_plot(std::string_view filepath, const autoviz::AutoVizOptions& opts)
         TERMCHART_LOG_WARN("autoviz: 列名口径存疑 " + s.name + "（名字像 " + s.expected +
                            "，实际 " + s.actual + "）——表头与数据列序可能错位");
     }
-    // 量级离群：轴域是否被裁剪要看 decision（检测到离群 ≠ 真裁了轴），
-    // 否则小样本保护闸降级时这行会撒谎。**数据本身始终是脏的**，提示的作用
-    // 是让人回去改源数据（哨兵值 999999/1e21、单位混用、手滑多打 0）。
+    // 量级离群：这里只播报**检测到的事实**（哪列、极端值、主体在哪、抽样越界数），
+    // 一个字都不说"裁了/没裁"——那是路由阶段用**全量值**定的结论，与图题同源，
+    // 由下面那一行统一播报。旧实现在这里按 features 的**抽样** decision 断言
+    // "不裁轴"，而 router 随后裁了 2 个点，图题写"裁去 2 个极值"、告警写"不裁轴"，
+    // 同一张图两句话互相打脸——根因就是结论有两个出口。
     for (const autoviz::ValueOutlier& o : picked->features.outliers) {
-        std::string advice;
-        switch (o.decision) {
-            case autoviz::ClipDecision::kApplied:
-                advice = "Y 轴已按 IQR 篱裁剪，请确认这不是脏数据";
-                break;
-            case autoviz::ClipDecision::kSmallSample:
-                // 3~9 个点时裁掉 1 个就占 11%~33%，剩下的点被拉满整根轴——
-                // 读者会以为波动剧烈。宁可略微压平，也不制造这种错觉。
-                advice = "有效值仅 " + std::to_string(o.sampled) + " 个（少于 " +
-                         std::to_string(autoviz::kOutlierMinSamples) +
-                         " 个），样本太小不裁轴，Y 轴保持原始范围，请改数据";
-                break;
-            case autoviz::ClipDecision::kTooMany:
-                // 越界占比过高说明"整列本来就离散"，不是"少数脏值"；裁掉两成
-                // 以上等于人为制造趋势。
-                advice = "越界占 " +
-                         fmt_value(100.0 * static_cast<double>(o.count) /
-                                   static_cast<double>(o.sampled)) +
-                         "%（超过 " + fmt_value(autoviz::kOutlierMaxClipRatio * 100.0) +
-                         "%），是整列离散而非少数脏值，不裁轴，Y 轴保持原始范围，请核对口径";
-                break;
-            case autoviz::ClipDecision::kNone:
-                continue;  // 没有越界值：不该出现在这条列表里
+        if (o.decision == autoviz::ClipDecision::kNone) {
+            continue;  // 没有越界值：不该出现在这条列表里
         }
         TERMCHART_LOG_WARN("autoviz: 列 '" + o.name + "' 存在极端离群值（" +
                            fmt_value(o.extreme) + (o.high ? " 远大于中位数 " : " 远小于中位数 ") +
                            fmt_value(o.median) + "，抽样 " + std::to_string(o.count) + "/" +
-                           std::to_string(o.sampled) + " 个值越界）；" + advice);
+                           std::to_string(o.sampled) +
+                           " 个值越界）——数据本身是脏的，建议回源修数据");
+    }
+
+    // 轴域结论：**唯一出口**，与图题逐字同源（ChartCandidate::final_clip_desc），
+    // 数字也只取 final_clip_count()（= 全量重算的裁剪点数）。features 的抽样比例
+    // 只用来决定"要不要提醒数据脏"，不再决定"裁没裁轴"。
+    const autoviz::ChartCandidate* const chosen = picked->chosen();
+    if (chosen != nullptr && !chosen->final_clip_desc.empty()) {
+        TERMCHART_LOG_WARN("autoviz: Y 轴最终结论 —— " + chosen->final_clip_desc +
+                           "（与图题同一口径；域外点钳到轴边缘，不删点）");
+    }
+    // 数据加工说明（量纲闸拦下几个百分比格、丢了几行等）：由路由随图带出，
+    // 这里原样播报。**沉默的加工就是撒谎**，所以宁可吵一点。
+    if (chosen != nullptr) {
+        for (const std::string& note : chosen->notes) {
+            TERMCHART_LOG_WARN("autoviz: " + note);
+        }
     }
 
     const std::unique_ptr<chart::Chart> chart = picked->build_chosen();

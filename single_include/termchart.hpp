@@ -6904,6 +6904,13 @@ struct ColumnProfile {
     double min = 0.0;                   // Numeric 列有效域；其余为 NaN
     double max = 0.0;
     bool monotonic_nondecreasing = false;  // Numeric 列非空值是否非降序（时序轴校验用）
+    // 量纲一致性：带 Percent 标记的**数值**单元格数。15% 被清洗成 0.15，与 1234.5
+    // 摆在同一列时相差 4 个数量级——但值本身没错（0.15 就是 15%），错的是"把这
+    // 两个数当成同一种东西求均值"。下游据此判断要不要把百分比格按缺失处理。
+    std::size_t percent_cells = 0;
+    // true = 数值列里百分比与非百分比混排（0 < percent_cells < 有效数值数）。
+    // 只有"混排"才是问题：整列都是百分比时量纲是自洽的。
+    bool mixed_units = false;
     CardinalityTier tier = CardinalityTier::Constant;
 
     [[nodiscard]] bool is_plottable_value() const noexcept {  // 可当 Y 轴/数值用
@@ -7003,11 +7010,18 @@ struct JsonFrameResult {
     std::size_t lines_total = 0;    // 非空行总数（空白行不计）
     std::size_t lines_used = 0;     // 产出行的行数
     std::size_t lines_skipped = 0;  // 跳过的行数（skip_invalid_lines=true 时才有意义）
+    // 其中有多少行是**位置式数组**按列序 zip 进来的（见 add_positional）。
+    // 单列出来是因为这类行的语义最弱：它靠"宽度恰好相同"才成立，值本身没有键。
+    std::size_t lines_zipped = 0;
 };
 
 // JSONL（newline-delimited JSON，每行一个对象）→ DataFrame。
 // 顶层是对象的行按记录处理；顶层是**元素全为对象的数组**的行，其元素按多条
-// 记录处理；其余（标量、标量数组、混合数组）算非记录行，跳过并计数。
+// 记录处理；
+// 顶层是**标量数组**的行，若其长度恰好等于当前列数，按列序 zip 成一行
+// （lines_zipped 计数）——救回"有值没键"的位置式记录；长度不同则一样跳过：
+// 宽度对不上的数组强行对齐会把 "X004" 塞进 ts 列，那是编数据，比丢弃更坏。
+// 其余（标量、空数组、其余混合数组）算非记录行，跳过并计数。
 [[nodiscard]] Result<JsonFrameResult> dataframe_from_jsonl(
     std::string_view source, const JsonFrameOptions& options = {});
 
@@ -10821,6 +10835,17 @@ public:
         x_tick_formatter_ = std::move(formatter);
     }
 
+    // 显式 x 刻度位置（替换 ticks_for 的自动 nice 值）。时间轴**必须**用它：
+    // 在 epoch 秒上做 10 的幂取整会得到 50000 秒这种非人类间隔（= 13 小时 53 分），
+    // 端点还会落到 02-28 17:33:20 这种假精度时刻上。chart 层仍不认识时间语义，
+    // 由调用方（autoviz）按日历对齐算好刻度喂进来，与 set_x_tick_formatter 成对使用。
+    // 传空 vector 恢复自动刻度。
+    void set_x_ticks(std::vector<double> ticks) { x_ticks_ = std::move(ticks); }
+    [[nodiscard]] bool has_x_ticks() const noexcept { return !x_ticks_.empty(); }
+    // 只读访问（与 series() 同风格）：调用方/测试要核对"喂进来的刻度是什么"，
+    // 不必渲染后从画布上反推文本。
+    [[nodiscard]] const std::vector<double>& x_ticks() const noexcept { return x_ticks_; }
+
     void draw(DrawContext ctx) override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
@@ -10833,6 +10858,7 @@ private:
     bool show_legend_ = true;
     std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
+    std::vector<double> x_ticks_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
@@ -19931,6 +19957,19 @@ struct ChartCandidate {
     bool geo_deduped = true;           // 地理管道强制去重；false 触发否决
     std::size_t axis_count = 0;        // 平行坐标轴数
     std::size_t clipped_points = 0;    // Y 域裁掉的极值点数（0 = 轴域未动，见 domain.hpp）
+    // 最终裁剪结论的**唯一真源**：由路由在用全量值定轴时填，文案与图题逐字同源
+    // （图题 = 标题 + " · " + 本字段）。空串表示轴域没动过。
+    // 为什么不是第二个 count 字段：features 的越界数是**抽样**口径、本字段是**全量**
+    // 口径，两者天然不等；再留一个 final_clip_count 必然出现"两个数各写各的"。
+    // 调用方要数字就取 final_clip_count()，它读的就是 clipped_points。
+    std::string final_clip_desc;
+
+    // 这张图的数据说明（量纲/丢行/降级等），由路由填、api 原样播报。
+    // 与 vetoes 的分工：vetoes 是"为什么没选它"，notes 是"选了它但你必须知道这些"。
+    std::vector<std::string> notes;
+
+    // 最终裁剪点数（等价于 clipped_points，只是给"最终结论"一个语义明确的入口）。
+    [[nodiscard]] std::size_t final_clip_count() const noexcept { return clipped_points; }
 
     // ── 打分结果 ──────────────────────────────────────────────────────────
     double analytic_score = 0.0;

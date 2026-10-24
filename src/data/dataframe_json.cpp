@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/data/cell_flags_internal.hpp"
 #include "termchart/data/scalar_parse.hpp"
 #include "termchart/io/json.hpp"
 
@@ -47,6 +48,10 @@ Cell cell_from_scalar(const io::JsonValue& value) {
         const std::string_view text = value.as_string();
         const ParsedScalar parsed = parse_scalar(text);
         cell.raw = std::string(text);
+        // 与 CSV 轨共用同一份 ScalarFlag → CellFlag 映射。这一步曾经漏掉，导致
+        // JSON 里的 "15%" 只剩 0.15 而丢掉 Percent 标记，下游列剖析看不出量纲差异
+        // （CSV 轨有标记、JSON 轨没有，同一份脏数据两条入口两种结论）。
+        cell.flags = detail::map_scalar_flags(parsed.flags);
         switch (parsed.status) {
         case ScalarStatus::Numeric:
             cell.num = parsed.value;
@@ -122,7 +127,28 @@ public:
         result.frame.row_count = rows_;
         result.lines_used = rows_;
         result.lines_skipped = lines_skipped_;
+        result.lines_zipped = lines_zipped_;
         return result;
+    }
+
+    // 位置式数组（["X004", 1740787200, "(123.45)", ...]）按列序 zip 成一行。
+    // 仅仅"宽度恰好等于当前列数"才成立——列序是首现序，宽度相同说明这条数组与
+    // 已建立的 schema 同宽；宽度不同一律放弃：把 5 个元素强行摊到 14 列上，
+    // "X004" 会落进 ts 列，得到一行看着合法、实际全错位的假记录。
+    // 容器元素（对象/数组）塞不进标量格，按缺失处理——不替调用方序列化成字符串。
+    bool add_positional(const io::JsonValue& array) {
+        if (order_.empty() || array.size() != order_.size()) {
+            return false;
+        }
+        for (auto& column : columns_) {
+            column.emplace_back();
+        }
+        for (std::size_t c = 0; c < columns_.size(); ++c) {
+            columns_[c].back() = cell_from_scalar(array[c]);
+        }
+        ++rows_;
+        ++lines_zipped_;
+        return true;
     }
 
     void count_line(bool used) {
@@ -154,6 +180,7 @@ private:
     std::size_t rows_ = 0;
     std::size_t lines_total_ = 0;
     std::size_t lines_skipped_ = 0;
+    std::size_t lines_zipped_ = 0;
 };
 
 // 单行 JSON 值 → 0..N 条记录。返回记录数；非记录形态返回 0。
@@ -176,8 +203,13 @@ std::size_t add_line(FrameBuilder& builder, const io::JsonValue& value) {
                 builder.add_record(value[i]);
                 ++added;
             }
+            return added;
         }
-        return added;
+        // 标量数组：宽度对上就按列序救回来（见 add_positional 的取舍）。
+        if (builder.add_positional(value)) {
+            return 1;
+        }
+        return 0;
     }
     return 0;
 }

@@ -160,6 +160,132 @@ TEST_CASE("autoviz::stage1 jsonl dirty string values cleaned via scalar_parse") 
     CHECK(result->frame.columns[1][0].is_missing());  // NA 族 → 缺失记号
 }
 
+// ── 位置式数组行（JSONL 里"只有值、没有键"的导出形态）───────────────────────
+//
+// 真实脏数据里出现过：首行是带键对象建立 schema，之后的行却是裸数组
+// (["X004", 1740787200, "(123.45)", ...])。旧实现把整个数组当"非记录行"丢掉，
+// 于是那些行静默消失（图上少点、均值变样，还没人告诉用户）。
+// 救回来的前提是**宽度严格相等**：列序 = 首现序，宽度相同才说明这条数组与既有
+// schema 同宽；宽度不符一律放弃——把 5 个元素摊到 14 列上，"X004" 会落进 ts 列，
+// 得到一行看着合法、实际全错位的假记录（比丢行更糟：它会污染时间轴与量程）。
+
+TEST_CASE("autoviz::stage1 jsonl positional array zipped onto existing schema") {
+    const char* jsonl =
+        "{\"id\":\"X001\",\"ts\":\"2026-03-01 08:00\",\"amount\":\"1,234.50\"}\n"
+        "[\"X004\",\"2026-03-01 09:00\",\"(123.45)\"]\n"
+        "{\"id\":\"X005\",\"ts\":\"2026-03-01 10:00\",\"amount\":900}\n";
+    const Result<JsonFrameResult> result = dataframe_from_jsonl(jsonl);
+    REQUIRE(result.has_value());
+    const DataFrame& frame = result->frame;
+
+    CHECK(frame.headers == std::vector<std::string>{"id", "ts", "amount"});
+    CHECK(frame.row_count == 3);   // 数组行不再消失
+    CHECK(result->lines_used == 3);
+    CHECK(result->lines_skipped == 0);
+    CHECK(result->lines_zipped == 1);
+
+    // 按位置落到对应列（而不是整体塞进某一列）。
+    CHECK(frame.columns[0][1].raw == "X004");
+    CHECK(frame.columns[1][1].raw == "2026-03-01 09:00");
+    CHECK(frame.columns[2][1].is_numeric());
+    CHECK(frame.columns[2][1].num == -123.45);  // 会计负号照样清洗，与对象行同口径
+    CHECK(frame.columns[2][2].num == 900.0);
+}
+
+TEST_CASE("autoviz::stage1 jsonl positional array with wrong width is dropped, never guessed") {
+    const char* jsonl =
+        "{\"id\":\"X001\",\"ts\":\"2026-03-01 08:00\",\"amount\":1234}\n"
+        "[\"X004\",1740787200]\n"  // 2 个元素 vs 3 列：不猜是哪两列
+        "{\"id\":\"X005\",\"ts\":\"2026-03-01 10:00\",\"amount\":900}\n";
+    const Result<JsonFrameResult> result = dataframe_from_jsonl(jsonl);
+    REQUIRE(result.has_value());
+    const DataFrame& frame = result->frame;
+
+    CHECK(frame.row_count == 2);
+    CHECK(result->lines_zipped == 0);
+    CHECK(result->lines_skipped == 1);  // 丢弃要计数（可观测），不能静默
+    // 关键：错位数据绝不许进表——否则 1740787200 会被当成 ts，
+    // 把 2025-03-01 的假年份带进 2026 年的时间轴。
+    for (const Cell& cell : frame.columns[1]) {
+        CHECK(cell.raw != "1740787200");
+    }
+}
+
+TEST_CASE("autoviz::stage1 jsonl positional array with no schema yet is dropped") {
+    // 首行就是数组：没有列序可对齐，只能丢（不替它编列名 col0/col1）。
+    const char* jsonl =
+        "[\"X001\", 100]\n"
+        "{\"id\":\"X002\",\"amount\":200}\n";
+    const Result<JsonFrameResult> result = dataframe_from_jsonl(jsonl);
+    REQUIRE(result.has_value());
+    CHECK(result->frame.row_count == 1);
+    CHECK(result->lines_zipped == 0);
+    CHECK(result->lines_skipped == 1);
+    CHECK(result->frame.headers == std::vector<std::string>{"id", "amount"});
+}
+
+TEST_CASE("autoviz::stage1 jsonl object array still unfolds to rows (not zipped)") {
+    // 位置式 zip 只作用于**标量数组**；对象数组仍是"一行多记录"的批量形态，
+    // 即使当前 schema 宽度恰好等于数组长度也不能被当成一条记录。
+    const char* jsonl =
+        "{\"a\":1,\"b\":2}\n"
+        "[{\"a\":3,\"b\":4},{\"a\":5,\"b\":6}]\n";
+    const Result<JsonFrameResult> result = dataframe_from_jsonl(jsonl);
+    REQUIRE(result.has_value());
+    CHECK(result->frame.row_count == 3);
+    CHECK(result->lines_zipped == 0);
+    CHECK(result->frame.columns[0][2].num == 5.0);
+    CHECK(result->frame.columns[1][2].num == 6.0);
+}
+
+// ── 量纲标记（JSON 轨必须与 CSV 轨同口径）──────────────────────────────────
+
+TEST_CASE("autoviz::stage2 json percent cells still carry Percent flag") {
+    // 这条曾是真实 bug：JSON 轨解析字符串后忘了映射 ScalarFlag → CellFlag，
+    // 于是 "15%" 只剩 0.15、标记全丢；同一份数据从 CSV 进来有标记、从 JSONL
+    // 进来没有，列剖析给出两种结论。
+    const char* jsonl =
+        "{\"amount\":\"15%\",\"raw\":1234.5}\n"
+        "{\"amount\":\"20%\",\"raw\":999}\n";
+    const Result<JsonFrameResult> result = dataframe_from_jsonl(jsonl);
+    REQUIRE(result.has_value());
+    const Cell& first = result->frame.columns[0][0];
+    CHECK(first.is_numeric());
+    CHECK(first.num == 0.15);
+    CHECK(has_cell_flag(first.flags, CellFlag::Percent));
+
+    const std::vector<ColumnProfile> profiles = profile_columns(result->frame);
+    REQUIRE(profiles.size() == 2);
+    CHECK(profiles[0].percent_cells == 2);
+    CHECK_FALSE(profiles[0].mixed_units);  // 整列都是百分比：量纲一致，不算冲突
+    CHECK(profiles[1].percent_cells == 0);
+    CHECK_FALSE(profiles[1].mixed_units);
+}
+
+TEST_CASE("autoviz::stage2 percent mixed with plain numbers flags mixed_units (both tracks)") {
+    // 同一份数据走 CSV 与 JSONL 两条入口，结论必须一致。
+    const char* csv =
+        "amount\n"
+        "1234.5\n"
+        "15%\n"
+        "999\n";
+    const std::vector<ColumnProfile> from_csv = profile_columns(parse_dataframe(csv));
+    REQUIRE(from_csv.size() == 1);
+    CHECK(from_csv[0].percent_cells == 1);
+    CHECK(from_csv[0].mixed_units);
+
+    const char* jsonl =
+        "{\"amount\":1234.5}\n"
+        "{\"amount\":\"15%\"}\n"
+        "{\"amount\":999}\n";
+    const Result<JsonFrameResult> parsed = dataframe_from_jsonl(jsonl);
+    REQUIRE(parsed.has_value());
+    const std::vector<ColumnProfile> from_json = profile_columns(parsed->frame);
+    REQUIRE(from_json.size() == 1);
+    CHECK(from_json[0].percent_cells == 1);
+    CHECK(from_json[0].mixed_units);
+}
+
 // ── 阶段二：特征探测 ────────────────────────────────────────────────────────
 
 TEST_CASE("autoviz::stage2 column kind inference") {

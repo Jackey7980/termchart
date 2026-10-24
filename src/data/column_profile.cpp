@@ -304,6 +304,11 @@ std::vector<ColumnProfile> profile_columns(const DataFrame& frame, const Profile
                 prev = cell.num;
                 have_prev = true;
                 ++numeric_count;
+                // 量纲标记：15% 已清洗成 0.15（值没错），这里只记账，
+                // 由 mixed_units 判断"它是不是和纯金额混在同一列"。
+                if (has_cell_flag(cell.flags, CellFlag::Percent)) {
+                    ++profile.percent_cells;
+                }
             }
 
             if (!profile.distinct_capped) {  // 熔断：超 cap 立即停，不再喂集合
@@ -319,6 +324,9 @@ std::vector<ColumnProfile> profile_columns(const DataFrame& frame, const Profile
             profile.max = std::numeric_limits<double>::quiet_NaN();
         } else {
             profile.monotonic_nondecreasing = monotonic && have_prev;
+            // 只有"部分格是百分比"才是量纲冲突；整列都是百分比时口径自洽。
+            profile.mixed_units =
+                profile.percent_cells > 0 && profile.percent_cells < numeric_count;
         }
         if (profile.rows > 0) {
             profile.null_rate = 1.0 - static_cast<double>(profile.non_null) /

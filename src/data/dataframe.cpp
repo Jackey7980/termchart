@@ -11,6 +11,8 @@
 #include <string_view>
 #include <vector>
 
+#include "src/data/cell_flags_internal.hpp"
+
 namespace termchart::data {
 namespace {
 
@@ -120,15 +122,7 @@ bool parse_row(std::string_view source, std::size_t& pos, char delim,
     return true;
 }
 
-CellFlag map_scalar_flags(ScalarFlag f) noexcept {
-    CellFlag out = CellFlag::None;
-    if (has_flag(f, ScalarFlag::HasComma)) out = out | CellFlag::HasComma;
-    if (has_flag(f, ScalarFlag::AccountingNegative)) out = out | CellFlag::AccountingNegative;
-    if (has_flag(f, ScalarFlag::Percent)) out = out | CellFlag::Percent;
-    if (has_flag(f, ScalarFlag::FullWidth)) out = out | CellFlag::FullWidth;
-    if (has_flag(f, ScalarFlag::Currency)) out = out | CellFlag::Currency;
-    return out;
-}
+// 映射函数已移到 cell_flags_internal.hpp：JSON 轨必须用同一份，否则两边口径漂移。
 
 // 字段 → Cell：清洗成数值并记 flag；文本/缺失保留原文/标记，绝不报错。
 Cell make_cell(std::string_view field) {
@@ -138,7 +132,7 @@ Cell make_cell(std::string_view field) {
     cell.raw.assign(trimmed);
     const ParsedScalar p = parse_scalar(trimmed);
     cell.unit = p.unit;
-    const CellFlag mapped = map_scalar_flags(p.flags);
+    const CellFlag mapped = detail::map_scalar_flags(p.flags);
     switch (p.status) {
         case ScalarStatus::Numeric:
             cell.type = CellType::Numeric;

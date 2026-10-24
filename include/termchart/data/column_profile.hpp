@@ -87,6 +87,13 @@ struct ColumnProfile {
     double min = 0.0;                   // Numeric 列有效域；其余为 NaN
     double max = 0.0;
     bool monotonic_nondecreasing = false;  // Numeric 列非空值是否非降序（时序轴校验用）
+    // 量纲一致性：带 Percent 标记的**数值**单元格数。15% 被清洗成 0.15，与 1234.5
+    // 摆在同一列时相差 4 个数量级——但值本身没错（0.15 就是 15%），错的是"把这
+    // 两个数当成同一种东西求均值"。下游据此判断要不要把百分比格按缺失处理。
+    std::size_t percent_cells = 0;
+    // true = 数值列里百分比与非百分比混排（0 < percent_cells < 有效数值数）。
+    // 只有"混排"才是问题：整列都是百分比时量纲是自洽的。
+    bool mixed_units = false;
     CardinalityTier tier = CardinalityTier::Constant;
 
     [[nodiscard]] bool is_plottable_value() const noexcept {  // 可当 Y 轴/数值用

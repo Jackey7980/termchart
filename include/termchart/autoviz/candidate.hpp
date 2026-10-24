@@ -61,6 +61,19 @@ struct ChartCandidate {
     bool geo_deduped = true;           // 地理管道强制去重；false 触发否决
     std::size_t axis_count = 0;        // 平行坐标轴数
     std::size_t clipped_points = 0;    // Y 域裁掉的极值点数（0 = 轴域未动，见 domain.hpp）
+    // 最终裁剪结论的**唯一真源**：由路由在用全量值定轴时填，文案与图题逐字同源
+    // （图题 = 标题 + " · " + 本字段）。空串表示轴域没动过。
+    // 为什么不是第二个 count 字段：features 的越界数是**抽样**口径、本字段是**全量**
+    // 口径，两者天然不等；再留一个 final_clip_count 必然出现"两个数各写各的"。
+    // 调用方要数字就取 final_clip_count()，它读的就是 clipped_points。
+    std::string final_clip_desc;
+
+    // 这张图的数据说明（量纲/丢行/降级等），由路由填、api 原样播报。
+    // 与 vetoes 的分工：vetoes 是"为什么没选它"，notes 是"选了它但你必须知道这些"。
+    std::vector<std::string> notes;
+
+    // 最终裁剪点数（等价于 clipped_points，只是给"最终结论"一个语义明确的入口）。
+    [[nodiscard]] std::size_t final_clip_count() const noexcept { return clipped_points; }
 
     // ── 打分结果 ──────────────────────────────────────────────────────────
     double analytic_score = 0.0;

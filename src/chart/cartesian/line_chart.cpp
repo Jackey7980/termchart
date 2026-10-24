@@ -23,7 +23,10 @@ void LineChart::draw(DrawContext ctx) {
     area_ = make_area(ctx.canvas, m, xmin, xmax, ymin, ymax, auto_domain_,
                       include_zero_, y_domain_);
 
-    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    // 显式刻度优先：调用方知道 x 的语义（例如时间），能给出日历对齐的位置；
+    // 否则退回 nice 值。这里只做"用哪一份"的选择，不掺任何语义判断。
+    const std::vector<double> xticks =
+        x_ticks_.empty() ? scale::ticks_for(area_.x_scale()) : x_ticks_;
     const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
 
     // 上下文开关在这里落地：默认全开，导出/GUI 侧可以只要数据不要轴。

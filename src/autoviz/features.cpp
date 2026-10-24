@@ -282,15 +282,22 @@ DatasetFeatures detect_features(const data::DataFrame& frame, const AutoVizOptio
             std::vector<double> sample;
             sample.reserve(std::min(column.size(), kSampleCap) + 1);
             for (std::size_t r = 0; r < column.size(); r += stride) {
-                if (column[r].is_numeric() && std::isfinite(column[r].num)) {
+                // 与路由的量纲闸同一判据：百分比混进金额列时，那个 0.15 不是"极小值"，
+                // 是**另一个量纲**。把它算进样本会既污染分位数、又在告警里把它说成
+                // "极端离群值（0.15 远小于中位数 1100）"——而图上早就不画它了。
+                const bool other_unit =
+                    f.profiles[idx].mixed_units &&
+                    data::has_cell_flag(column[r].flags, data::CellFlag::Percent);
+                if (column[r].is_numeric() && std::isfinite(column[r].num) && !other_unit) {
                     sample.push_back(column[r].num);
                 }
             }
             const RobustDomain dom = robust_y_domain(sample, options.outlier_fence);
             // 判据是"检测到越界"（clipped>0），不是"真裁了轴"（active()）：
             // 小样本保护闸放弃裁剪时更该告警——此时图上是原始域，顶端那片
-            // 贴边平台是真值还是脏值，只有告警能说清。decision 一并带出去，
-            // 由 api 层决定文案说"已裁剪"还是"保持原始范围"。
+            // 贴边平台是真值还是脏值，只有告警能说清。这里只负责**报告检测事实**；
+            // "最终到底裁没裁"的唯一口径在 ChartCandidate::final_clip_desc（由路由
+            // 用全量值重算），api 层只播报那一份，不许再按 decision 另起一套说法。
             if (dom.clipped == 0) {
                 continue;
             }

@@ -48,6 +48,17 @@ public:
         x_tick_formatter_ = std::move(formatter);
     }
 
+    // 显式 x 刻度位置（替换 ticks_for 的自动 nice 值）。时间轴**必须**用它：
+    // 在 epoch 秒上做 10 的幂取整会得到 50000 秒这种非人类间隔（= 13 小时 53 分），
+    // 端点还会落到 02-28 17:33:20 这种假精度时刻上。chart 层仍不认识时间语义，
+    // 由调用方（autoviz）按日历对齐算好刻度喂进来，与 set_x_tick_formatter 成对使用。
+    // 传空 vector 恢复自动刻度。
+    void set_x_ticks(std::vector<double> ticks) { x_ticks_ = std::move(ticks); }
+    [[nodiscard]] bool has_x_ticks() const noexcept { return !x_ticks_.empty(); }
+    // 只读访问（与 series() 同风格）：调用方/测试要核对"喂进来的刻度是什么"，
+    // 不必渲染后从画布上反推文本。
+    [[nodiscard]] const std::vector<double>& x_ticks() const noexcept { return x_ticks_; }
+
     void draw(DrawContext ctx) override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
@@ -60,6 +71,7 @@ private:
     bool show_legend_ = true;
     std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
+    std::vector<double> x_ticks_;
     mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 

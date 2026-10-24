@@ -65,16 +65,24 @@ using termchart::data::DataFrame;
 // 轴域留痕（标题后缀）：裁了要说"裁去 N 个"，检测到离群却放弃裁剪更要说——
 // 小样本保护闸退回原始域后，图顶端那片贴边平台会重新出现，读者若不知道
 // 那是个 1e21，就会把它当成真实的业务高峰。两种情形都不许静默。
-std::string domain_note(const RobustDomain& d) {
+// 返回**不带前导分隔符**的正文（例如 "裁去 2 个极值"）：图题拼 " · " + 它，
+// ChartCandidate::final_clip_desc 直接存它。两者必须同源——各写各的必然打架，
+// 这正是"图题说裁了 2 个、告警说不裁轴"的旧病根。
+std::string clip_desc(const RobustDomain& d) {
     if (d.active()) {
-        return " · 裁去 " + std::to_string(d.clipped) + " 个极值";
+        return "裁去 " + std::to_string(d.clipped) + " 个极值";
     }
     if (d.abandoned()) {
         const char* why = d.decision == ClipDecision::kSmallSample ? "有效值太少"
                                                                   : "越界占比过高";
-        return " · " + std::to_string(d.clipped) + " 个极值未裁（" + why + "）";
+        return std::to_string(d.clipped) + " 个极值未裁（" + why + "）";
     }
     return {};
+}
+
+// 图题后缀：有结论才加分隔符。
+std::string with_clip_note(std::string_view title, std::string_view desc) {
+    return desc.empty() ? std::string(title) : std::string(title) + " · " + std::string(desc);
 }
 
 // 取一列的数值样本（非缺失且有限；NaN 单元格跳过）。
@@ -232,18 +240,48 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
     std::vector<std::size_t> category_ids;
     const bool with_category = f.has_category();
     const std::size_t category_column = with_category ? f.category_columns.front() : 0;
+    std::size_t dropped_percent = 0;  // 被量纲闸拦下的百分比格数（只用于说明）
+    // 源数据本身的缺失计数（与量纲闸分开：闸门拦下的格**存在**，只是量纲不同）。
+    std::vector<std::size_t> source_missing(f.numeric_columns.size(), 0);
+
+    // 时间列解析失败的行会被跳过——必须留痕，否则读者看到的是"凭空少的点"，
+    // 而不知道是 2026/13/40 这种非法日期、还是 1740787260 这种 epoch 数字串
+    // （后者刻意不认：与普通大整数不可区分，硬解释会把 1970/2025 塞进 2026 的轴）。
+    std::size_t dropped_time = 0;
+    std::vector<std::string> dropped_time_samples;
 
     for (std::size_t r = 0; r < frame.row_count && r < times.size(); ++r) {
         const std::optional<double> t = parse_timestamp(times[r].raw);
         if (!t.has_value()) {
+            if (!times[r].raw.empty()) {
+                ++dropped_time;
+                if (dropped_time_samples.size() < 2) {
+                    dropped_time_samples.push_back(times[r].raw);
+                }
+            }
             continue;
         }
         epochs.push_back(*t);
         for (std::size_t c = 0; c < f.numeric_columns.size(); ++c) {
-            const std::vector<data::Cell>& column = frame.columns[f.numeric_columns[c]];
-            const bool ok = r < column.size() && column[r].is_numeric() &&
-                            std::isfinite(column[r].num);
-            values[c].push_back(ok ? column[r].num : std::nan(""));
+            const std::size_t col = f.numeric_columns[c];
+            const std::vector<data::Cell>& column = frame.columns[col];
+            const bool in_range = r < column.size();
+            const bool source_ok =
+                in_range && column[r].is_numeric() && std::isfinite(column[r].num);
+            // 量纲闸：百分比与纯金额混排时，百分点（0.15）不能和金额（1234.5）一起
+            // 求均值——两者差 4 个数量级，几个百分点就能把整段均值拽成 0，读者会
+            // 以为"这段时间没交易"。百分比格按缺失处理（点断掉），并记下次数，
+            // **绝不乘 100 去凑**：那是把 15% 伪造成 15 元，属于编数据。
+            const bool gated =
+                source_ok && f.profiles[col].mixed_units &&
+                data::has_cell_flag(column[r].flags, data::CellFlag::Percent);
+            if (gated) {
+                ++dropped_percent;
+            }
+            if (!source_ok) {
+                ++source_missing[c];
+            }
+            values[c].push_back(gated || !source_ok ? std::nan("") : column[r].num);
         }
         if (with_category) {
             const std::vector<data::Cell>& keys = frame.columns[category_column];
@@ -282,7 +320,8 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
     }
     // 标题留痕：轴被裁过就必须说，否则读者会把"顶端那个平台"当成真值；
     // 检测到离群但小样本保护闸放弃裁剪时同样要说（"未裁"）。
-    std::string line_title_note = line_title + domain_note(line_domain);
+    const std::string line_clip_desc = clip_desc(line_domain);
+    std::string line_title_note = with_clip_note(line_title, line_clip_desc);
 
     // 候选 1：折线（每数值列一条系列，桶内取均值）。
     {
@@ -291,6 +330,27 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         c.pipeline = PipelineKind::Time;
         c.title = line_title_note;
         c.clipped_points = line_domain.active() ? line_domain.clipped : 0;
+        c.final_clip_desc = line_clip_desc;
+        if (dropped_percent > 0) {
+            c.notes.push_back("有 " + std::to_string(dropped_percent) +
+                              " 个百分比单元格与纯数值同列（量纲不一致），已按缺失处理，"
+                              "未做任何换算");
+        }
+        if (dropped_time > 0) {
+            std::string note = "有 " + std::to_string(dropped_time) + " 行时间无法解析（";
+            for (std::size_t i = 0; i < dropped_time_samples.size(); ++i) {
+                if (i > 0) {
+                    note += "、";
+                }
+                std::string raw = dropped_time_samples[i];
+                if (raw.size() > 20) {
+                    raw = raw.substr(0, 20) + "…";
+                }
+                note += "\"" + raw + "\"";
+            }
+            note += "），已跳过；X 轴只覆盖可解析的时间段";
+            c.notes.push_back(std::move(note));
+        }
         c.x_is_temporal = true;
         c.temporal_sorted = true;  // 桶序即时间序，聚合后天然有序
         c.point_count = buckets;
@@ -311,17 +371,16 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         for (std::size_t s = 0; s < ncols; ++s) {
             names.push_back(f.profiles[f.numeric_columns[s]].name);
         }
+        // 空值惩罚只按**源数据缺失**算，不把量纲闸的拦截再罚一次：同一个格子
+        // 被"点消失"和"空值扣分"两次记账，曾让一个 15% 把折线解析分从 0.968
+        // 压到 0.918，输给事件柱状的 0.953——图种被一个单元格式改写，而用户
+        // 得到的是一张与时间无关的柱状图。闸门的后果由 notes 如实说明。
         std::vector<double> nulls(ncols, 0.0);
         for (std::size_t s = 0; s < ncols; ++s) {
-            std::size_t finite = 0;
-            for (const double v : values[s]) {
-                if (std::isfinite(v)) {
-                    ++finite;
-                }
-            }
             nulls[s] = values[s].empty()
                            ? 0.0
-                           : 1.0 - static_cast<double>(finite) / static_cast<double>(values[s].size());
+                           : static_cast<double>(source_missing[s]) /
+                                 static_cast<double>(values[s].size());
         }
         const double worst_null = *std::max_element(nulls.begin(), nulls.end());
         c.value_null_rate = worst_null;
@@ -330,13 +389,29 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
         auto t0 = *tmin;
         auto w = width;
         auto span = *tmax - *tmin;
-        // 相邻刻度的间距（scale::ticks_for 默认目标 4-5 个）——决定标签粒度。
-        auto resolution = span / 4.0;
+        // x 轴刻度必须**按日历对齐**，不能交给 scale::ticks_for：后者在 epoch 秒上
+        // 按 10 的幂取整，41 小时的序列会被切成 50000 秒（13 小时 53 分）一格，
+        // 端点还落在 02-28 17:33:20 这种假精度时刻上（真 bug：图上出现过 02-28 17:33
+        // ~ 03-03 01:06 的轴，而数据只覆盖 03-01 03:00 ~ 03-02 20:00）。
+        // 先挑人类可读的跨度（1h/6h/1d…），再让它落在该跨度的整数倍时刻上。
+        const double tick_step = nice_bucket_seconds(*tmin, *tmax, 5);
+        std::vector<double> x_ticks;
+        for (double v = std::floor(*tmin / tick_step) * tick_step; v <= *tmax;
+             v += tick_step) {
+            if (v >= *tmin) {
+                x_ticks.push_back(v);
+            }
+        }
+        if (x_ticks.size() < 2) {
+            x_ticks.clear();  // 跨度过小取不出两个刻度：退回自动刻度，别只标一个点
+        }
+        // 相邻刻度的间距（决定标签粒度）；取不到显式刻度时沿用四分法。
+        auto resolution = x_ticks.size() >= 2 ? x_ticks[1] - x_ticks[0] : span / 4.0;
         const std::optional<scale::Domain> ydom =
             line_domain.active()
                 ? std::optional<scale::Domain>{scale::Domain{line_domain.lo, line_domain.hi}}
                 : std::nullopt;
-        c.build = [ss, labels, t0, w, span, resolution, line_title_note, ydom]() {
+        c.build = [ss, labels, t0, w, span, resolution, line_title_note, ydom, x_ticks]() {
             auto chart = std::make_unique<LineChart>();
             for (std::size_t s = 0; s < ss.size(); ++s) {
                 // 桶内聚合均值，输出按桶号升序（x 严格有序）。
@@ -364,7 +439,8 @@ void route_time(const DataFrame& frame, const DatasetFeatures& f, const AutoVizO
             if (ydom.has_value()) {
                 chart->set_y_domain(ydom->min, ydom->max);
             }
-            // x 是 epoch 秒：位置由 nice 刻度决定，文字换成 "03-01"/"12:00"。
+            // x 是 epoch 秒：位置交给日历对齐的显式刻度，文字换成 "03-01"/"12:00"。
+            chart->set_x_ticks(x_ticks);
             chart->set_x_tick_formatter([span, resolution](double v) {
                 return format_timestamp_short(v, span, resolution);
             });
@@ -656,17 +732,19 @@ void route_event(const DataFrame& frame, const DatasetFeatures& f, const AutoViz
             // 先定"裁不裁"再动域：把 0 并进域里会改变 active() 的判据（并 0 后
             // 域可能不再比原始范围紧），不能一边改域一边问"裁了吗"。
             const bool bar_clipped = dom.active();
-            const std::string bar_note = domain_note(dom);
+            const std::string bar_note = clip_desc(dom);
             if (bar_clipped) {
                 dom.lo = std::min(dom.lo, 0.0);
                 dom.hi = std::max(dom.hi, 0.0);
             }
-            std::string bar_title = "各 " + event_name + " 的 " + value_name + " 均值" + bar_note;
+            std::string bar_title = with_clip_note(
+                "各 " + event_name + " 的 " + value_name + " 均值", bar_note);
             ChartCandidate c;
             c.name = chart_name::kBar;
             c.pipeline = PipelineKind::Event;
             c.title = bar_title;
             c.clipped_points = bar_clipped ? dom.clipped : 0;
+            c.final_clip_desc = bar_note;
             c.point_count = categories.size();
             c.category_count = categories.size();
             c.x_is_categorical = true;
