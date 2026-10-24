@@ -3275,6 +3275,7 @@ namespace termchart::math {
 
 #include <algorithm>
 
+
 namespace termchart::math {
 
 // 分段线性插值：在 xs 中定位 x 所在区间，按比例取 ys。
@@ -3375,6 +3376,43 @@ private:
     std::vector<double> m2_;  // 各点二阶导
     bool valid_ = false;
 };
+
+// ── 平滑曲线（折线渲染 / 动画缓动） ──────────────────────────────────────────
+//
+// 与 CubicSpline（数据域插值、曲线不必过数据点）的定位不同：下面两个是"让已有
+// 折线丝滑"的工具——catmull_rom 保证**经过每个途经点**（折线变曲线但不过冲到数据
+// 之外），smooth_step 是缓动函数。graph/route/spline 里还有一份走连线路由的
+// Catmull-Rom，那是"途径点"语义、互不相关。
+
+// 平滑过渡（GLSL smoothstep 的 3t²-2t³ 缓动）：把 x 从 [edge0, edge1] 归一到 [0,1]
+// 再做三次平滑。edge0==edge1（退化区间）返回 0（避免除零）；x 越界钳位到 [0,1]。
+// 与 util::smoothstep(double t)（t 已归一化）是同一曲线的两种入参形态，互不冲突。
+[[nodiscard]] inline double smooth_step(double edge0, double edge1, double x) noexcept {
+    double t = (edge1 == edge0) ? 0.0 : (x - edge0) / (edge1 - edge0);
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// Catmull-Rom 样条插值（立方，C¹ 连续、过途经点）：给定 4 个控制点 p0..p3，在
+// 区间 [p1, p2] 上按参数 t∈[0,1] 求值。t=0 → p1、t=1 → p2；对线性数据精确还原、
+// 对弯曲数据自然顺滑。把相邻折线段各取 p0=前一点、p3=后一点，再在 [0,1] 上细分
+// 采样，即可得到丝滑曲线。t 越界会外推（可能过冲），调用方自己钳位。
+[[nodiscard]] inline double catmull_rom(double p0, double p1, double p2, double p3,
+                                        double t) noexcept {
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    return 0.5 * ((2.0 * p1) + (-p0 + p2) * t +
+                  (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+                  (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+}
+
+// 2D 点形：对 x、y 各做一次标量 catmull_rom。
+[[nodiscard]] inline Point catmull_rom(const Point& p0, const Point& p1, const Point& p2,
+                                       const Point& p3, double t) noexcept {
+    return Point{catmull_rom(p0.x, p1.x, p2.x, p3.x, t),
+                 catmull_rom(p0.y, p1.y, p2.y, p3.y, t)};
+}
 
 }  // namespace termchart::math
 

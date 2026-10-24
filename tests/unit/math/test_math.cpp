@@ -386,9 +386,10 @@ TEST_CASE("math::stats::quickselect 第 k 小 + 越界不 UB") {
         std::vector<double> copy = v;
         CHECK(quickselect(std::span<double>(copy), k) == doctest::Approx(sorted[k]));
     }
-    // 只部分排序：multiset 不变（排序后相等）
+    // 只部分排序：multiset 不变（排序后相等），且第 k 小仍正确
     std::vector<double> copy = v;
-    quickselect(std::span<double>(copy), 3);
+    const double kth = quickselect(std::span<double>(copy), 3);
+    CHECK(kth == doctest::Approx(sorted[3]));
     std::sort(copy.begin(), copy.end());
     CHECK(copy == sorted);
 }
@@ -465,6 +466,42 @@ TEST_CASE("math::stats::tukey_fence 与 data::quartiles 口径一致") {
     CHECK(f.q1 == doctest::Approx(q.q1).epsilon(1e-9));
     CHECK(f.median == doctest::Approx(q.median).epsilon(1e-9));
     CHECK(f.q3 == doctest::Approx(q.q3).epsilon(1e-9));
+}
+
+// ── interpolate: 平滑曲线（batch 2） ───────────────────────────────────────────
+
+TEST_CASE("math::interpolate::smooth_step 边界 + 单调") {
+    // GLSL smoothstep：中点恰为 0.5
+    CHECK(smooth_step(0.0, 1.0, 0.5) == doctest::Approx(0.5));
+    CHECK(smooth_step(0.0, 1.0, 0.0) == doctest::Approx(0.0));
+    CHECK(smooth_step(0.0, 1.0, 1.0) == doctest::Approx(1.0));
+    // 越界钳位
+    CHECK(smooth_step(0.0, 1.0, -1.0) == doctest::Approx(0.0));
+    CHECK(smooth_step(0.0, 1.0, 2.0) == doctest::Approx(1.0));
+    // 退化区间（edge0==edge1）→ 0，不除零
+    CHECK(smooth_step(2.0, 2.0, 5.0) == doctest::Approx(0.0));
+    // 单调不减（采样验证）
+    double prev = -1.0;
+    for (int i = 0; i <= 10; ++i) {
+        const double v = smooth_step(0.0, 1.0, static_cast<double>(i) / 10.0);
+        CHECK(v >= prev - 1e-12);
+        prev = v;
+    }
+}
+
+TEST_CASE("math::interpolate::catmull_rom 端点 + 线性精确 + 2D") {
+    // 端点：t=0→p1，t=1→p2
+    CHECK(catmull_rom(0.0, 1.0, 2.0, 3.0, 0.0) == doctest::Approx(1.0));
+    CHECK(catmull_rom(0.0, 1.0, 2.0, 3.0, 1.0) == doctest::Approx(2.0));
+    // 对线性数据精确还原（Catmull-Rom 对立方精确，故对直线也精确）
+    CHECK(catmull_rom(0.0, 1.0, 2.0, 3.0, 0.5) == doctest::Approx(1.5));
+    // 2D 形态：对角线上的点应落在对角线上
+    const Point r = catmull_rom(Point{0, 0}, Point{1, 1}, Point{2, 2}, Point{3, 3}, 0.5);
+    CHECK(r.x == doctest::Approx(1.5));
+    CHECK(r.y == doctest::Approx(1.5));
+    // 2D 端点
+    const Point a = catmull_rom(Point{0, 0}, Point{1, 1}, Point{2, 2}, Point{3, 3}, 0.0);
+    CHECK(a == Point{1, 1});
 }
 
 }  // TEST_SUITE
