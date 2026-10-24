@@ -24,6 +24,8 @@ math/stats
 math/interpolate
 math/fft
 math/special
+math/power
+math/color_space
 io/diagnostic
 dsl/json
 scene/command.hpp

@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **387 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **389 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -13,7 +13,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | （顶层头） | — | 6 |
 | detail | L-1 | 9 |
 | core | L0 | 13 |
-| math | L1 | 5 |
+| math | L1 | 7 |
 | util | L1 | 17 |
 | color | L2 | 6 |
 | io | L2 | 4 |
@@ -382,6 +382,20 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ## math（L1）
 
+### `math/color_space.hpp`
+
+> color_space.hpp —— 色彩空间换算（header-only，属 cmake/header_only.txt）
+>
+> 分层铁律：math 层只进标量与 core::Rgb，绝不 include color 层。所以这里的
+> "中间态"（HSV 的 h/s/v、Lab 的 L/a/b）一律走引用出参，不在本文件定义结构体；
+> 结构体（Rgba / Hsv）属 color 层，那是给用户与渲染管线用的参数包。
+>
+> 关于 constexpr：hsv_to_rgb / rgb_to_hsv 全常量求值；sRGB 与 Lab 那条链要吃
+> std::pow（C++20 非 constexpr），因此只能是普通 inline 函数。别为了"全 constexpr"
+> 把它们硬塞进常量求值——那会重犯"近似代替真值"的错。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
 ### `math/fft.hpp`
 
 > math/fft.hpp —— 快速傅里叶变换（header-only）
@@ -423,6 +437,19 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > span<const double> + 行主序 n×n，零分配、零模板、调用方自管缓冲。
 > * 所有尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
 > * 算法：部分选主元高斯消元（numerical stability 的底线）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `math/power.hpp`
+
+> power.hpp —— 幂与开立方（header-only，属 cmake/header_only.txt）
+>
+> 为什么不直接用 std::pow / std::cbrt：
+> * 两者在 C++20 都不是 constexpr，色相/亮度换算就进不了常量求值；
+> * std::pow(x, 1.0/3.0) 的精度天生不如专门的立方根迭代。
+>
+> 刻意不提供 safe_pow：在色彩里把"定义域外"静默折成 0，等于把错误伪装成纯黑，
+> 比 NaN 更难查。需要兜底的调用点自己写清策略，这里只做数学上正确的那部分。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 

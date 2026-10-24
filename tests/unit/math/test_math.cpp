@@ -1,17 +1,22 @@
 // test_math.cpp —— math 模块单测（stats / interpolate / fft / linalg / special）
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
+#include <limits>
 #include <span>
 #include <vector>
 
 #include <doctest.h>
 
+#include "termchart/math/color_space.hpp"
 #include "termchart/math/fft.hpp"
 #include "termchart/math/interpolate.hpp"
 #include "termchart/math/linalg.hpp"
+#include "termchart/math/power.hpp"
 #include "termchart/math/special.hpp"
 #include "termchart/math/stats.hpp"
 
+using namespace termchart;
 using namespace termchart::math;
 
 // ── stats ──────────────────────────────────────────────────────────────────
@@ -254,6 +259,110 @@ TEST_CASE("math::special::bessel 级数与渐近路径") {
     CHECK(bessel_j(-1, 1.0) == doctest::Approx(-bessel_j1(1.0)));
     // NaN 传播
     CHECK(std::isnan(bessel_j0(std::nan(""))));
+}
+
+// ── power / color_space ────────────────────────────────────────────────────
+
+TEST_CASE("math::int_pow 快速幂与 INT_MIN 边界") {
+    // 常量求值是最严的 UB 检查：有符号溢出会直接编译失败。
+    static_assert(int_pow(2.0, 10) == 1024.0);
+    static_assert(int_pow(2.0, 0) == 1.0);
+    static_assert(int_pow(0.0, 0) == 1.0);
+    static_assert(int_pow(2.0, -2) == 0.25);
+    static_assert(int_pow(-2.0, 3) == -8.0);
+    // 若直接对 exp 取反，INT_MIN 会踩有符号溢出 UB。这里只能运行时验：常量求值
+    // 禁止浮点溢出到 inf（2^-2^31 下溢），但运行时必须安静返回 0 而不是崩。
+    CHECK(int_pow(2.0, std::numeric_limits<int>::min()) == 0.0);
+    // 用 std::pow 当参照（自己写常数容易写错位数）。容差 1e-9 而非 1e-15：快速幂
+    // 每平方一次就把底数的表示误差放大 2 倍，log2(1e6)≈20 次后约 1e-11 量级。
+    CHECK(int_pow(1.0000001, 1000000) ==
+          doctest::Approx(std::pow(1.0000001, 1000000)).epsilon(1e-9));
+    CHECK(std::isinf(int_pow(0.0, -1)));  // Approx 比不了 inf（inf/inf = NaN）
+}
+
+TEST_CASE("math::cbrt 与 std::cbrt 一致") {
+    // 必须写全限定：<cmath> 在全局命名空间也提供 ::cbrt，配合 using namespace
+    // 会让非限定调用二义。
+    for (const double x : {1e-300, 1e-9, 0.125, 1.0, 2.0, 27.0, 1e9, 1e300}) {
+        CHECK(termchart::math::cbrt(x) == doctest::Approx(std::cbrt(x)).epsilon(1e-12));
+    }
+    CHECK(termchart::math::cbrt(-8.0) == doctest::Approx(-2.0).epsilon(1e-12));
+    CHECK(termchart::math::cbrt(0.0) == 0.0);
+    CHECK(std::isinf(termchart::math::cbrt(std::numeric_limits<double>::infinity())));
+    CHECK(std::isnan(termchart::math::cbrt(std::nan(""))));
+    // 常量求值路径必须可用（这正是 std::cbrt 给不了的）
+    constexpr double kCube = termchart::math::cbrt(27.0);
+    static_assert(kCube > 2.999999999999 && kCube < 3.000000000001);
+    // 大/小量级下 Newton 不发散（初值按指数域缩放的意义）
+    CHECK(termchart::math::cbrt(1e-300) == doctest::Approx(1e-100).epsilon(1e-12));
+}
+
+TEST_CASE("math::srgb 电光转换端点与往返") {
+    CHECK(srgb_to_linear(0.0) == 0.0);
+    CHECK(srgb_to_linear(1.0) == doctest::Approx(1.0));
+    CHECK(srgb_to_linear(0.5) == doctest::Approx(0.21404114048223255).epsilon(1e-12));
+    // 分段点连续：漏掉 1.055/0.055 缩放会在这里断出 10% 的台阶
+    CHECK(srgb_to_linear(0.04045) == doctest::Approx(0.0031308049535603713).epsilon(1e-9));
+    CHECK(srgb_to_linear(0.040451) - srgb_to_linear(0.040449) < 1e-5);
+    for (const double x : {0.0, 0.02, 0.3, 0.8, 1.0}) {
+        CHECK(linear_to_srgb(srgb_to_linear(x)) == doctest::Approx(x).epsilon(1e-12));
+    }
+    // 8bit 表必须等于同一函数的 float 版——不是纯 x^2.4
+    CHECK(srgb8_to_linear(128) ==
+          doctest::Approx(static_cast<float>(srgb_to_linear(128.0 / 255.0))));
+    CHECK(srgb8_to_linear(0) == 0.0f);
+    CHECK(srgb8_to_linear(255) == doctest::Approx(1.0f));
+    CHECK(linear_to_srgb8(0.0) == 0);
+    CHECK(linear_to_srgb8(1.0) == 255);
+    CHECK(linear_to_srgb8(srgb_to_linear(128.0 / 255.0)) == 128);
+}
+
+TEST_CASE("math::hsv 与 rgb 互转") {
+    CHECK(hsv_to_rgb(0.0, 1.0, 1.0) == Rgb{255, 0, 0});
+    CHECK(hsv_to_rgb(60.0, 1.0, 1.0) == Rgb{255, 255, 0});
+    CHECK(hsv_to_rgb(120.0, 1.0, 1.0) == Rgb{0, 255, 0});
+    CHECK(hsv_to_rgb(240.0, 1.0, 1.0) == Rgb{0, 0, 255});
+    CHECK(hsv_to_rgb(300.0, 1.0, 1.0) == Rgb{255, 0, 255});
+    CHECK(hsv_to_rgb(360.0, 1.0, 1.0) == Rgb{255, 0, 0});   // 循环回到 0
+    CHECK(hsv_to_rgb(-120.0, 1.0, 1.0) == Rgb{0, 0, 255});  // 负角取模
+    CHECK(hsv_to_rgb(200.0, 0.0, 0.5) == Rgb{128, 128, 128});  // 纯灰无色相
+    CHECK(hsv_to_rgb(std::nan(""), 1.0, 1.0) == Rgb{255, 0, 0});  // 不可解释 → 红端
+    // 往返：整数色必须原样回来（量化误差不得累积）
+    for (const Rgb c : {Rgb{255, 0, 0}, Rgb{0, 255, 0}, Rgb{0, 0, 255}, Rgb{128, 128, 128},
+                        Rgb{30, 144, 255}, Rgb{17, 34, 51}}) {
+        double h = 0.0;
+        double s = 0.0;
+        double v = 0.0;
+        rgb_to_hsv(c, h, s, v);
+        CHECK(hsv_to_rgb(h, s, v) == c);
+    }
+}
+
+TEST_CASE("math::lab 白点与往返") {
+    double l = 0.0;
+    double a = 0.0;
+    double b = 0.0;
+    rgb_to_lab(Rgb{0, 0, 0}, l, a, b);
+    CHECK(std::fabs(l) < 1e-9);
+    rgb_to_lab(Rgb{255, 255, 255}, l, a, b);
+    CHECK(l == doctest::Approx(100.0).epsilon(1e-6));
+    // 白点 (0.95047, 1, 1.08883) 与正反矩阵系数各自只有 7 位有效数字，
+    // 残差落在 1e-5 量级是舍入噪声，不是换算出错（数量级差 4 位才是 bug）。
+    CHECK(std::fabs(a) < 1e-4);
+    CHECK(std::fabs(b) < 1e-4);
+    // sRGB 红 (255,0,0) 在 D65 下的公开参考值
+    rgb_to_lab(Rgb{255, 0, 0}, l, a, b);
+    CHECK(l == doctest::Approx(53.2408).epsilon(1e-3));
+    CHECK(a == doctest::Approx(80.0925).epsilon(1e-3));
+    CHECK(b == doctest::Approx(67.2032).epsilon(1e-3));
+    // 往返：8bit 量化允许 ±1
+    for (const Rgb c : {Rgb{255, 0, 0}, Rgb{30, 144, 255}, Rgb{17, 34, 51}}) {
+        rgb_to_lab(c, l, a, b);
+        const Rgb back = lab_to_rgb(l, a, b);
+        CHECK(std::abs(static_cast<int>(back.r) - static_cast<int>(c.r)) <= 1);
+        CHECK(std::abs(static_cast<int>(back.g) - static_cast<int>(c.g)) <= 1);
+        CHECK(std::abs(static_cast<int>(back.b) - static_cast<int>(c.b)) <= 1);
+    }
 }
 
 }  // TEST_SUITE
