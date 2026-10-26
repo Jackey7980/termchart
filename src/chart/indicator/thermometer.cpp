@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "termchart/core/rect.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 
 namespace termchart::chart {
@@ -24,6 +25,21 @@ Rect content_area(const DrawContext& ctx, const Chart& chart) {
               std::max(0.0, h - chart.margin_top() - chart.margin_bottom())};
     if (ctx.draw_title && !chart.title().empty() && area.h >= 2.0) {
         layout::draw_title(ctx.canvas, chart.title(), area);
+        area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
+    }
+    return area;
+}
+
+// Sink 版：标题走 layout::draw_title，内容区据此缩进一行（与 DrawContext 版同源）。
+Rect content_area(SceneSink& sink, std::uint32_t canvas_w,
+                  std::uint32_t canvas_h, const Chart& chart) {
+    const double w = static_cast<double>(canvas_w);
+    const double h = static_cast<double>(canvas_h);
+    Rect area{chart.margin_left(), chart.margin_top(),
+              std::max(0.0, w - chart.margin_left() - chart.margin_right()),
+              std::max(0.0, h - chart.margin_top() - chart.margin_bottom())};
+    if (!chart.title().empty() && area.h >= 2.0) {
+        layout::draw_title(sink, chart.title(), area);
         area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
     }
     return area;
@@ -125,6 +141,95 @@ void Thermometer::draw(DrawContext ctx) {
                                  buf, tick_st);
         }
     }
+}
+
+bool Thermometer::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    SceneSink sink(out);
+    const Rect area = content_area(sink, width, height, *this);
+    // 最小可用：1 格管 + 2 格球泡。
+    if (area.w < 3.0 || area.h < 3.0) {
+        return true;
+    }
+
+    double lo = std::isfinite(options_.vmin) ? options_.vmin : 0.0;
+    double hi = std::isfinite(options_.vmax) ? options_.vmax : 0.0;
+    if (hi < lo) {
+        std::swap(lo, hi);  // 域颠倒按交换处理，不炸
+    }
+
+    const long long tube_h = std::max(1LL, std::llround(area.h) - 2);  // 底行留给球泡
+    const long long tx = std::llround(area.x + (area.w - 1.0) / 2.0);
+    const long long top = std::llround(area.y);
+    const long long bulb_row = top + tube_h + 1;
+    const long long bottom = top + tube_h;  // 管内最下一行
+    const long long canvas_w = static_cast<long long>(width);
+    const long long canvas_h = static_cast<long long>(height);
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 管壁（左右各 1 格）+ 球泡（底行 3 格宽 █）。
+    const Style wall_st{};
+    for (long long x = tx - 1; x <= tx + 1; x += 2) {
+        if (x >= 0 && x < canvas_w) {
+            for (long long y = top; y <= bottom && y < canvas_h; ++y) {
+                sink.put(Point{static_cast<double>(x), static_cast<double>(y)},
+                         kWall, wall_st);
+            }
+        }
+    }
+    const Style bulb_st = Style{}.set_fg(level_color(1.0));
+    for (long long x = tx - 1; x <= tx + 1; ++x) {
+        if (x >= 0 && x < canvas_w && bulb_row >= 0 && bulb_row < canvas_h) {
+            sink.put(Point{static_cast<double>(x), static_cast<double>(bulb_row)},
+                     kFill, bulb_st);
+        }
+    }
+
+    // 液柱：底部向上填 fill_rows 格。
+    double fraction = hi > lo ? (value_ - lo) / (hi - lo) : 0.0;
+    if (!std::isfinite(fraction) || value_ < lo) {
+        fraction = 0.0;
+    }
+    fraction = std::min(1.0, std::max(0.0, fraction));
+    if (fraction > 0.0) {
+        const auto fill_rows =
+            std::max(1LL, std::llround(fraction * static_cast<double>(tube_h)));
+        const Style liquid = Style{}.set_fg(level_color(fraction));
+        for (long long y = bottom; y > bottom - fill_rows && y < canvas_h; --y) {
+            if (y >= 0 && tx >= 0 && tx < canvas_w) {
+                sink.put(Point{static_cast<double>(tx), static_cast<double>(y)},
+                         kFill, liquid);
+            }
+        }
+    }
+
+    // 右侧刻度：─ + 数值（空间够才画标签）。
+    const int n = std::min(10, std::max(0, options_.ticks));
+    const Style tick_st{};
+    for (int k = 1; k <= n; ++k) {
+        const double frac = static_cast<double>(k) / static_cast<double>(n + 1);
+        const long long y = bottom - std::llround(frac * static_cast<double>(tube_h));
+        if (y < top || y > bottom || y < 0 || y >= canvas_h) {
+            continue;
+        }
+        const long long tick_x = tx + 1;
+        if (tick_x < 0 || tick_x >= canvas_w) {
+            continue;
+        }
+        sink.put(Point{static_cast<double>(tick_x), static_cast<double>(y)},
+                 kTick, tick_st);
+        if (tick_x + 2 < static_cast<long long>(area.right())) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.0f", lo + frac * (hi - lo));
+            sink.text(Point{static_cast<double>(tick_x + 1), static_cast<double>(y)},
+                      buf, tick_st);
+        }
+    }
+
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

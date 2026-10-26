@@ -33,6 +33,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：标签 + 液条（█/░）+ 百分比，全部走 TextOp 字符落笔
+    // （本图不用 Area2D，按单元格坐标复刻 draw()，几何整体归入 group 0）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     struct Bar {
         std::string label;

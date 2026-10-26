@@ -29,6 +29,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：边框 + 标签/主值/变化量均以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::string label_;
     std::string value_;

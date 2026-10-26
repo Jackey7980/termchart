@@ -27,6 +27,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：状态 ● 与可选标签以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     LightState state_ = LightState::Unknown;
     std::string label_;

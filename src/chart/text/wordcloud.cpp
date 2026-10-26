@@ -1,6 +1,8 @@
 // wordcloud.cpp —— 词云实现：阿基米德螺线 + 逐格占用碰撞检测
 #include "termchart/chart/text/wordcloud.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -137,6 +139,107 @@ void Wordcloud::draw(DrawContext ctx) {
             break;
         }
     }
+}
+
+bool Wordcloud::to_scene(scene::Scene& out, std::uint32_t width,
+                         std::uint32_t height) const {
+    std::vector<Word> words;
+    words.reserve(words_.size());
+    for (const Word& w : words_) {
+        if (!w.text.empty() && w.weight > 0.0 && std::isfinite(w.weight)) {
+            words.push_back(w);
+        }
+    }
+    std::sort(words.begin(), words.end(),
+              [](const Word& a, const Word& b) { return a.weight > b.weight; });
+    if (words.size() > options_.max_words) {
+        words.resize(options_.max_words);
+    }
+    if (words.empty()) {
+        return true;
+    }
+
+    SceneSink sink(out);
+    const double W = static_cast<double>(width);
+    const double H = static_cast<double>(height);
+    Rect area{margin_left(), margin_top(),
+              std::max(0.0, W - margin_left() - margin_right()),
+              std::max(0.0, H - margin_top() - margin_bottom())};
+    if (!title_.empty() && area.h >= 2.0) {
+        layout::draw_title(sink, title_, area);
+        area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
+    }
+
+    const auto grid_w = static_cast<std::size_t>(area.right());
+    const auto grid_h = static_cast<std::size_t>(area.bottom());
+    if (grid_w == 0 || grid_h == 0) {
+        return true;
+    }
+    std::vector<char> occupied(grid_w * grid_h, 0);
+
+    const double cx = area.x + area.w / 2.0;
+    const double cy = area.y + area.h / 2.0;
+    const double max_r = std::max(area.w, area.h) * 2.0;  // 螺线半径预算（视觉单位）
+
+    scene::SceneBuilder& sb = sink.builder();
+    sb.begin_group(0);
+
+    for (std::size_t rank = 0; rank < words.size(); ++rank) {
+        const Word& w = words[rank];
+        const int word_w = util::display_width(w.text);
+        if (word_w <= 0) {
+            continue;
+        }
+        const auto cw = static_cast<std::size_t>(word_w);
+        if (cw > grid_w) {
+            continue;  // 单词独占不了画布：整词放弃，不折行
+        }
+
+        Style style = Style{}.set_fg(color_for_rank(rank));
+        if (rank < options_.bold_top) {
+            style.set_attr(Attr::Bold);
+        }
+
+        // 阿基米德螺线：r = spiral_scale * t；y 除以 2 补偿字符格 1:2 宽高比，
+        // 落点左移半词宽使词以中心对称放置；逐格查占用，命中即写并登记。
+        bool placed = false;
+        for (double t = 0.0; options_.spiral_scale * t <= max_r; t += kSpiralStep) {
+            const double r = options_.spiral_scale * t;
+            const double px = cx + r * std::cos(t) - static_cast<double>(cw) / 2.0;
+            const double py = cy + r * std::sin(t) / 2.0;
+
+            const long long row = std::llround(py);
+            const long long col = std::llround(px);
+            if (row < 0 || row >= static_cast<long long>(grid_h)) {
+                continue;
+            }
+            if (col < 0 ||
+                col + static_cast<long long>(cw) > static_cast<long long>(grid_w)) {
+                continue;
+            }
+            const auto urow = static_cast<std::size_t>(row);
+            const auto ucol = static_cast<std::size_t>(col);
+            if (!free_at(occupied, grid_w, urow, ucol, cw)) {
+                continue;
+            }
+
+            sink.text(Point{static_cast<double>(ucol),
+                            static_cast<double>(urow)},
+                      w.text, style);
+            for (std::size_t dx = 0; dx < cw; ++dx) {
+                occupied[urow * grid_w + ucol + dx] = 1;
+            }
+            placed = true;
+            break;
+        }
+        if (!placed && rank == 0) {
+            // 画布小到中心都放不下最高权重词：直接放弃整图，避免空转。
+            break;
+        }
+    }
+
+    sb.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

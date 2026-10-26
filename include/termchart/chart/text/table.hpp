@@ -27,6 +27,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：表头 + 分隔线 + 单元格，全部走 TextOp 字符落笔
+    // （本图不用 Area2D，按单元格坐标复刻 draw()，几何整体归入 group 0）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<std::string> columns_;
     std::vector<std::vector<std::string>> rows_;

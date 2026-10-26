@@ -1,6 +1,8 @@
 // tag_cloud.cpp —— 标签云实现：降序 + 流式换行排版
 #include "termchart/chart/text/tag_cloud.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -86,6 +88,70 @@ void TagCloud::draw(DrawContext ctx) {
         ++placed_;
         col += static_cast<double>(tag_w) + static_cast<double>(options_.gap);
     }
+}
+
+bool TagCloud::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    std::vector<Tag> tags;
+    tags.reserve(tags_.size());
+    for (const Tag& t : tags_) {
+        if (!t.text.empty() && t.weight > 0.0 && std::isfinite(t.weight)) {
+            tags.push_back(t);
+        }
+    }
+    std::sort(tags.begin(), tags.end(),
+              [](const Tag& a, const Tag& b) { return a.weight > b.weight; });
+    if (tags.empty()) {
+        return true;
+    }
+
+    SceneSink sink(out);
+    const double W = static_cast<double>(width);
+    const double H = static_cast<double>(height);
+    Rect area{margin_left(), margin_top(),
+              std::max(0.0, W - margin_left() - margin_right()),
+              std::max(0.0, H - margin_top() - margin_bottom())};
+    if (!title_.empty() && area.h >= 2.0) {
+        layout::draw_title(sink, title_, area);
+        area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
+    }
+    if (area.w < 1.0 || area.h < 1.0) {
+        return true;
+    }
+
+    scene::SceneBuilder& sb = sink.builder();
+    sb.begin_group(0);
+
+    double row = area.y;
+    double col = area.x;
+    for (std::size_t rank = 0; rank < tags.size(); ++rank) {
+        const Tag& t = tags[rank];
+        const int tag_w = util::display_width(t.text);
+        if (tag_w <= 0) {
+            continue;
+        }
+        if (static_cast<double>(tag_w) > area.w) {
+            continue;  // 单标签独占不了整行：放弃，不截断
+        }
+        // 放不下 → 换行；行数用尽 → 收工。
+        if (col + static_cast<double>(tag_w) - 1.0 > area.right()) {
+            col = area.x;
+            row += 1.0;
+            if (row >= area.bottom()) {
+                break;
+            }
+        }
+
+        Style style = Style{}.set_fg(color_for_rank(rank));
+        if (rank < options_.bold_top) {
+            style.set_attr(Attr::Bold);
+        }
+        sink.text(Point{col, row}, t.text, style);
+        col += static_cast<double>(tag_w) + static_cast<double>(options_.gap);
+    }
+
+    sb.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

@@ -24,6 +24,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：管/球泡/液柱/刻度均以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     double value_ = 0.0;
     ThermometerOptions options_;

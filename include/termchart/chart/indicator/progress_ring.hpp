@@ -26,6 +26,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：椭圆采样的环点（●/·）与中心百分比均以 TextOp 落笔。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     double fraction_ = 0.0;
     Color color_ = default_color(DefaultColor::Cyan);

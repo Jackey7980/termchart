@@ -36,6 +36,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：螺线布局的标签，按 (col,row)+字符+颜色复刻 draw()
+    // （字号在矢量 Scene 里以加粗+配色表达，碰撞网格与 draw() 同口径）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     struct Word {
         std::string text;

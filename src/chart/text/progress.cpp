@@ -1,6 +1,8 @@
 // progress.cpp —— 进度条组实现：标签 + █/░ 液条 + 百分比
 #include "termchart/chart/text/progress.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -100,6 +102,80 @@ void Progress::draw(DrawContext ctx) {
         }
         row += 1.0;
     }
+}
+
+bool Progress::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    if (bars_.empty()) {
+        return true;
+    }
+
+    SceneSink sink(out);
+    const double w = static_cast<double>(width);
+    const double h = static_cast<double>(height);
+    Rect area{margin_left(), margin_top(),
+              std::max(0.0, w - margin_left() - margin_right()),
+              std::max(0.0, h - margin_top() - margin_bottom())};
+    if (!title_.empty() && area.h >= 2.0) {
+        layout::draw_title(sink, title_, area);
+        area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
+    }
+    if (area.w < 1.0 || area.h < 1.0) {
+        return true;
+    }
+
+    // 标签列宽 = 最大显示宽度，封顶内容区一半。
+    std::size_t label_w = 0;
+    for (const Bar& b : bars_) {
+        label_w = std::max(label_w, static_cast<std::size_t>(
+                                        std::max(0, util::display_width(b.label))));
+    }
+    double label_d = static_cast<double>(label_w);
+    label_d = std::min(label_d, area.w / 2.0);
+
+    const double percent_d = options_.show_percent ? 5.0 : 0.0;  // "100% "
+    double bar_d = options_.bar_width != 0
+                       ? static_cast<double>(options_.bar_width)
+                       : area.w - label_d - 1.0 - percent_d;
+    if (bar_d < 1.0) {
+        bar_d = 1.0;  // 画布再小也至少画一格液条
+    }
+    const auto bar_w = static_cast<std::size_t>(bar_d);
+
+    scene::SceneBuilder& sb = sink.builder();
+    sb.begin_group(0);
+
+    double row = area.y;
+    for (const Bar& b : bars_) {
+        if (row >= area.bottom()) {
+            break;
+        }
+        if (label_d >= 1.0) {
+            const auto keep =
+                util::prefix_by_width(b.label, static_cast<int>(label_d));
+            sink.text(Point{area.x, row}, std::string_view{b.label}.substr(0, keep),
+                      Style{});
+        }
+
+        double x = area.x + label_d + (label_d > 0.0 ? 1.0 : 0.0);
+        const auto filled = static_cast<std::size_t>(
+            std::llround(b.fraction * static_cast<double>(bar_w)));
+        const Style st = Style{}.set_fg(b.color);
+        for (std::size_t k = 0; k < bar_w && x < area.right(); ++k, x += 1.0) {
+            sink.put(Point{x, row}, k < filled ? kFill : kEmpty, st);
+        }
+
+        if (options_.show_percent && x + 3.0 <= area.right()) {
+            char buf[16];
+            const int pct = static_cast<int>(b.fraction * 100.0 + 0.5);
+            std::snprintf(buf, sizeof(buf), "%d%%", pct);
+            sink.text(Point{x + 1.0, row}, buf, Style{});
+        }
+        row += 1.0;
+    }
+
+    sb.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart
