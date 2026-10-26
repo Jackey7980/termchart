@@ -9,6 +9,7 @@
 #include "termchart/canvas/canvas.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -124,6 +125,69 @@ void QQChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool QQChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    std::vector<double> s;
+    for (double v : sample_) {
+        if (std::isfinite(v)) s.push_back(v);
+    }
+    if (s.empty()) {
+        return true;
+    }
+    std::sort(s.begin(), s.end());
+    const std::size_t n = s.size();
+    // 与 draw() 同源：理论分位数用 (i+0.5)/n 分位（normal_inv）。
+    std::vector<double> theo(n);
+    double mean = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        theo[i] = normal_inv((static_cast<double>(i) + 0.5) / static_cast<double>(n));
+        mean += s[i];
+    }
+    mean /= static_cast<double>(n);
+    double var = 0.0;
+    for (double v : s) {
+        const double d = v - mean;
+        var += d * d;
+    }
+    const double sd = std::sqrt(var / static_cast<double>(n));
+    const double x0 = theo.front();
+    const double x1 = theo.back();
+    double ymin = x0, ymax = x1;
+    for (std::size_t i = 0; i < n; ++i) {
+        ymin = std::min(ymin, s[i]);
+        ymax = std::max(ymax, s[i]);
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, x0, x1, ymin, ymax, false, false);
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "theoretical", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "sample", Style{});
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    if (options_.show_line) {
+        const Style st = Style{}.set_fg(default_color(DefaultColor::Muted));
+        b.stroke(st.fg());
+        b.move_to(area_.cell_of(x0, mean + sd * x0));
+        b.line_to(area_.cell_of(x1, mean + sd * x1));
+    }
+    const Style pt = Style{}.set_fg(options_.point_color);
+    for (std::size_t i = 0; i < n; ++i) {
+        sink.put(area_.cell_of(theo[i], s[i]), kMarkerChar, pt);
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

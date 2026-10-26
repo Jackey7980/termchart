@@ -9,6 +9,7 @@
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -136,6 +137,52 @@ void HistChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool HistChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    if (counts_.empty()) {
+        return true;
+    }
+    std::size_t max_count = 0;
+    for (std::size_t c : counts_) {
+        max_count = std::max(max_count, c);
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, edges_.front(), edges_.back(), 0.0,
+                     static_cast<double>(max_count), false, false);
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "value", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "count", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    const Rect inner = area_.inner_rect();
+    const double y0 = area_.y_scale().forward(0.0);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = 0; i + 1 < edges_.size(); ++i) {
+        const double x0 = area_.x_scale().forward(edges_[i]);
+        const double x1 = area_.x_scale().forward(edges_[i + 1]);
+        const double y1 = area_.y_scale().forward(static_cast<double>(counts_[i]));
+        b.fill(st.fg());
+        b.rect(Rect{x0, std::min(y0, y1), x1 - x0, std::fabs(y1 - y0)});
+    }
+
+    if (show_legend_) {
+        const std::vector<layout::LegendEntry> entries{layout::LegendEntry{name_, color_}};
+        layout::draw_legend(sink, entries, Rect{inner.x, 0.0, inner.w, 1.0},
+                            layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

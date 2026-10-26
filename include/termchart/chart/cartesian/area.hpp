@@ -35,6 +35,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出（参考 LineChart/BarChart）：轴/网格/图例/标题走 TextOp，
+    // 折线走 MoveTo/LineTo + StrokeOp（矢量），逐列填充走 RectOp + FillOp。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 

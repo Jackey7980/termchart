@@ -10,6 +10,7 @@
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -143,6 +144,97 @@ void AreaChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool AreaChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    // 与 draw() 同源：剔除非有限点 → 按 x 升序。
+    std::vector<Point> pts;
+    pts.reserve(points_.size());
+    for (const Point& p : points_) {
+        if (std::isfinite(p.x) && std::isfinite(p.y)) {
+            pts.push_back(p);
+        }
+    }
+    std::sort(pts.begin(), pts.end(),
+              [](const Point& a, const Point& b) noexcept { return a.x < b.x; });
+
+    double xmin = 0.0;
+    double xmax = 1.0;
+    double ymin = std::min(0.0, baseline_);
+    double ymax = std::max(0.0, baseline_);
+    if (!pts.empty()) {
+        xmin = xmax = pts.front().x;
+        ymin = ymax = pts.front().y;
+        for (const Point& p : pts) {
+            xmin = std::min(xmin, p.x);
+            xmax = std::max(xmax, p.x);
+            ymin = std::min(ymin, p.y);
+            ymax = std::max(ymax, p.y);
+        }
+        ymin = std::min(ymin, baseline_);
+        ymax = std::max(ymax, baseline_);
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, true, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "x", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "y", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 逐列填充：每列 [曲线高度, 基线) 的竖条（矢量 RectOp + FillOp）。
+    if (pts.size() >= 2) {
+        const double ybase = area_.y_scale().forward(baseline_);
+        const auto col_begin = static_cast<std::int64_t>(std::floor(inner.x));
+        const auto col_end = static_cast<std::int64_t>(std::floor(inner.right()));
+        for (std::int64_t col = col_begin; col < col_end; ++col) {
+            const double data_x = area_.x_scale().inverse(static_cast<double>(col) + 0.5);
+            if (data_x < pts.front().x || data_x > pts.back().x) {
+                continue;
+            }
+            const double ycurve = area_.y_scale().forward(curve_at(pts, data_x));
+            const double top = std::min(ycurve, ybase);
+            const double bottom = std::max(ycurve, ybase);
+            if (!(bottom > top)) {
+                continue;
+            }
+            b.fill(st.fg());
+            b.rect(Rect{static_cast<double>(col), top, 1.0, bottom - top});
+        }
+    }
+
+    // 后描线（矢量折线）+ 点标记（字形）。
+    if (pts.size() >= 2) {
+        b.stroke(st.fg());
+        b.move_to(area_.cell_of(pts[0].x, pts[0].y));
+        for (std::size_t i = 1; i < pts.size(); ++i) {
+            b.line_to(area_.cell_of(pts[i].x, pts[i].y));
+        }
+    }
+    for (const Point& p : pts) {
+        sink.put(area_.cell_of(p.x, p.y), kMarkerChar, st);
+    }
+
+    if (!pts.empty() && show_legend_) {
+        const std::vector<layout::LegendEntry> entries{layout::LegendEntry{name_, color_}};
+        layout::draw_legend(sink, entries, Rect{inner.x, 0.0, inner.w, 1.0},
+                            layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

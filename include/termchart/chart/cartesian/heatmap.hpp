@@ -34,6 +34,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：色块走 RectOp + FillOp（矢量，按色表取色），网格/轴/标题/色标
+    // 走 TextOp（它们本来就是字符艺术）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // 暴露最后使用的绘图区，供测试断言几何（含定义域端点有限性）。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 

@@ -8,6 +8,7 @@
 
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -107,6 +108,71 @@ void ScatterChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool ScatterChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    double xmin = std::numeric_limits<double>::quiet_NaN();
+    double xmax = std::numeric_limits<double>::quiet_NaN();
+    double ymin = std::numeric_limits<double>::quiet_NaN();
+    double ymax = std::numeric_limits<double>::quiet_NaN();
+    data_bounds(series_, xmin, xmax, ymin, ymax);
+    if (!std::isfinite(xmin) || !std::isfinite(xmax)) {
+        xmin = -1.0;
+        xmax = 1.0;
+    }
+    if (!std::isfinite(ymin) || !std::isfinite(ymax)) {
+        ymin = -1.0;
+        ymax = 1.0;
+    }
+    if (xmin == xmax) xmax = xmin + 1.0;
+    if (ymin == ymax) ymax = ymin + 1.0;
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, auto_domain_, include_zero_);
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "x", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "y", Style{});
+
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t s = 0; s < series_.size(); ++s) {
+        const Series& series = series_[s];
+        const Style style = Style{}.set_fg(series.color);
+        const std::vector<double>* weights =
+            (s < weights_.size() && !weights_[s].empty()) ? &weights_[s] : nullptr;
+        double max_weight = 0.0;
+        if (weights) {
+            for (double w : *weights) max_weight = std::max(max_weight, w);
+        }
+        for (std::size_t i = 0; i < series.points.size(); ++i) {
+            const Point& pt = series.points[i];
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.y)) continue;
+            const Point cell = area_.cell_of(pt.x, pt.y);
+            if (cell.x < inner.x || cell.x >= inner.right() || cell.y < inner.y ||
+                cell.y >= inner.y + inner.h) {
+                continue;
+            }
+            if (!weights) {
+                sink.put(cell, kMarkerChar, style);
+            } else {
+                const double weight = i < weights->size() ? (*weights)[i] : 0.0;
+                sink.put(cell, bubble_marker(weight, max_weight), style);
+            }
+        }
+    }
+
+    b.end_group(0);
+    draw_legend_for(sink, series_, area_, show_legend_);
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

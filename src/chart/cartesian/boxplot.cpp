@@ -8,6 +8,7 @@
 
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 #include "termchart/util/wcwidth.hpp"
@@ -125,6 +126,103 @@ void BoxPlotChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool BoxPlotChart::to_scene(scene::Scene& out, std::uint32_t width,
+                             std::uint32_t height) const {
+    // 与 draw() 同源：无效组整体剔除，但保留原始下标用于标签对齐。
+    std::vector<std::pair<std::size_t, BoxStats>> groups;
+    groups.reserve(groups_.size());
+    for (std::size_t i = 0; i < groups_.size(); ++i) {
+        if (valid_group(groups_[i])) {
+            groups.emplace_back(i, groups_[i]);
+        }
+    }
+    if (groups.empty()) {
+        return true;
+    }
+
+    double ymin = groups.front().second.lo;
+    double ymax = groups.front().second.hi;
+    for (const auto& [index, g] : groups) {
+        ymin = std::min(ymin, g.lo);
+        ymax = std::max(ymax, g.hi);
+        for (double o : g.outliers) {
+            if (std::isfinite(o)) {
+                ymin = std::min(ymin, o);
+                ymax = std::max(ymax, o);
+            }
+        }
+    }
+
+    const auto n = static_cast<double>(groups.size());
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5, n - 0.5, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    const char* x_title = labels_.empty() ? "group" : "";
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, x_title, Style{});
+    layout::draw_axis_y(sink, area_, yticks, "value", Style{});
+
+    const Style st = Style{}.set_fg(opts_.color);
+    const Rect inner = area_.inner_rect();
+    const double bw = std::max(1.0, inner.w / n * 0.6);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (std::size_t i = 0; i < groups.size(); ++i) {
+        const auto& [original, g] = groups[i];
+        const double xc = area_.x_scale().forward(static_cast<double>(i));
+        const double y_lo = area_.y_scale().forward(g.lo);
+        const double y_q1 = area_.y_scale().forward(g.q1);
+        const double y_med = area_.y_scale().forward(g.med);
+        const double y_q3 = area_.y_scale().forward(g.q3);
+        const double y_hi = area_.y_scale().forward(g.hi);
+        const double left = xc - bw / 2.0;
+
+        if (g.hi > g.q3) {
+            b.stroke(st.fg());
+            b.move_to(Point{xc, y_hi});
+            b.line_to(Point{xc, y_q3});
+        }
+        if (g.lo < g.q1) {
+            b.stroke(st.fg());
+            b.move_to(Point{xc, y_q1});
+            b.line_to(Point{xc, y_lo});
+        }
+        b.fill(st.fg());
+        b.rect(Rect{left, y_hi, bw, 1.0});
+        b.fill(st.fg());
+        b.rect(Rect{left, y_lo, bw, 1.0});
+        b.fill(st.fg());
+        b.rect(Rect{left, y_q3, bw, std::max(1.0, y_q1 - y_q3)});
+        b.fill(st.fg());
+        b.rect(Rect{left, y_med, bw, 1.0});
+
+        if (opts_.show_outliers) {
+            for (double o : g.outliers) {
+                if (std::isfinite(o)) {
+                    sink.put(area_.cell_of(static_cast<double>(i), o), kOutlierChar, st);
+                }
+            }
+        }
+
+        if (original < labels_.size() && !labels_[original].empty()) {
+            const std::string& label = labels_[original];
+            const double label_w = static_cast<double>(util::display_width(label));
+            sink.text(Point{xc - label_w / 2.0, inner.y + inner.h + 1.0}, label, Style{});
+        }
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

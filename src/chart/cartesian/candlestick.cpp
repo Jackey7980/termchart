@@ -6,6 +6,7 @@
 
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -90,6 +91,77 @@ void CandlestickChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool CandlestickChart::to_scene(scene::Scene& out, std::uint32_t width,
+                                 std::uint32_t height) const {
+    // 与 draw() 同源：只保留 OHLC 全有限且 low<=high 的 K 线。
+    std::vector<Ohlc> candles;
+    candles.reserve(candles_.size());
+    for (const Ohlc& c : candles_) {
+        if (std::isfinite(c.open) && std::isfinite(c.high) && std::isfinite(c.low) &&
+            std::isfinite(c.close) && c.low <= c.high) {
+            candles.push_back(c);
+        }
+    }
+    if (candles.empty()) {
+        return true;
+    }
+
+    double ymin = candles.front().low;
+    double ymax = candles.front().high;
+    for (const Ohlc& c : candles) {
+        ymin = std::min(ymin, c.low);
+        ymax = std::max(ymax, c.high);
+    }
+
+    const auto n = static_cast<double>(candles.size());
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5, n - 0.5, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "index", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "price", Style{});
+
+    const Rect inner = area_.inner_rect();
+    const double bw = std::max(1.0, inner.w / n * 0.6);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (std::size_t i = 0; i < candles.size(); ++i) {
+        const Ohlc& c = candles[i];
+        const double xc = area_.x_scale().forward(static_cast<double>(i));
+        const bool rising = c.close >= c.open;
+        const Style st = Style{}.set_fg(rising ? opts_.up : opts_.down);
+
+        if (opts_.show_wicks && c.high > c.low) {
+            b.stroke(st.fg());
+            b.move_to(Point{xc, area_.y_scale().forward(c.high)});
+            b.line_to(Point{xc, area_.y_scale().forward(c.low)});
+        }
+
+        const double y_open = area_.y_scale().forward(c.open);
+        const double y_close = area_.y_scale().forward(c.close);
+        if (c.open == c.close) {
+            b.fill(st.fg());
+            b.rect(Rect{xc - bw / 2.0, y_open, bw, 1.0});
+        } else {
+            const double top = std::min(y_open, y_close);
+            const double h = std::max(1.0, std::fabs(y_close - y_open));
+            b.fill(st.fg());
+            b.rect(Rect{xc - bw / 2.0, top, bw, h});
+        }
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

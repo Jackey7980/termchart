@@ -11,6 +11,7 @@
 #include "termchart/detail/block_chars.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
@@ -46,6 +47,26 @@ void draw_colorbar(canvas::Canvas& canvas, const Rect& inner, color::ColormapKin
     }
     if (!name.empty()) {
         canvas.draw_text(Point{x0 + static_cast<double>(len) + 1.0, 0.0}, name, Style{});
+    }
+}
+
+// Sink 版色标：与 Canvas 版同布局，字形/文本走 Sink 抽象（Scene 侧为 TextOp）。
+void draw_colorbar(layout::Sink& sink, const Rect& inner, color::ColormapKind kind,
+                   const std::string& name) {
+    const int len = static_cast<int>(std::min(24.0, inner.w));
+    if (len < 1) {
+        return;
+    }
+    const double x0 = std::floor(inner.x);
+    for (int i = 0; i < len; ++i) {
+        const double t = len <= 1 ? 0.0
+                                  : static_cast<double>(i) / static_cast<double>(len - 1);
+        const Rgb rgb = color::sample(kind, t);
+        sink.put(Point{x0 + static_cast<double>(i), 0.0}, detail::kFullBlock,
+                 Style{}.set_fg(Color::rgb(rgb.r, rgb.g, rgb.b)));
+    }
+    if (!name.empty()) {
+        sink.text(Point{x0 + static_cast<double>(len) + 1.0, 0.0}, name, Style{});
     }
 }
 
@@ -189,6 +210,110 @@ void HeatmapChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool HeatmapChart::to_scene(scene::Scene& out, std::uint32_t width,
+                             std::uint32_t height) const {
+    std::vector<Point> pts;
+    pts.reserve(points_.size());
+    for (const Point& p : points_) {
+        if (std::isfinite(p.x) && std::isfinite(p.y)) {
+            pts.push_back(p);
+        }
+    }
+    if (pts.empty()) {
+        return true;
+    }
+
+    double xmin = pts.front().x, xmax = pts.front().x, ymin = pts.front().y, ymax = pts.front().y;
+    for (const Point& p : pts) {
+        xmin = std::min(xmin, p.x);
+        xmax = std::max(xmax, p.x);
+        ymin = std::min(ymin, p.y);
+        ymax = std::max(ymax, p.y);
+    }
+    if (!(xmax > xmin)) xmax = xmin + 1.0;
+    if (!(ymax > ymin)) ymax = ymin + 1.0;
+    const double span_x = xmax - xmin;
+    const double span_y = ymax - ymin;
+
+    double step_x = cell_size_;
+    double step_y = cell_size_;
+    if (!(step_x > 0.0) || !(step_y > 0.0)) {
+        const double k = std::ceil(std::sqrt(static_cast<double>(pts.size())));
+        const double steps = std::clamp(k, 1.0, static_cast<double>(kMaxGridDim));
+        step_x = span_x / steps;
+        step_y = span_y / steps;
+    }
+    const int cols = std::clamp(static_cast<int>(std::ceil(span_x / step_x)), 1, kMaxGridDim);
+    const int rows = std::clamp(static_cast<int>(std::ceil(span_y / step_y)), 1, kMaxGridDim);
+    const double cell_w = span_x / static_cast<double>(cols);
+    const double cell_h = span_y / static_cast<double>(rows);
+
+    const auto dim_cols = static_cast<std::size_t>(cols);
+    const auto dim_rows = static_cast<std::size_t>(rows);
+    std::vector<std::size_t> count(dim_cols * dim_rows, 0);
+    for (const Point& p : pts) {
+        const int col = std::clamp(static_cast<int>(std::floor((p.x - xmin) / cell_w)), 0, cols - 1);
+        const int row = std::clamp(static_cast<int>(std::floor((p.y - ymin) / cell_h)), 0, rows - 1);
+        ++count[static_cast<std::size_t>(row) * dim_cols + static_cast<std::size_t>(col)];
+    }
+    std::size_t max_count = 0;
+    for (std::size_t c : count) {
+        max_count = std::max(max_count, c);
+    }
+    if (max_count == 0) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, false, false);
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (int row = 0; row < rows; ++row) {
+        for (int col = 0; col < cols; ++col) {
+            const std::size_t idx =
+                static_cast<std::size_t>(row) * dim_cols + static_cast<std::size_t>(col);
+            const std::size_t c = count[idx];
+            if (c == 0) {
+                continue;
+            }
+            const double dx0 = xmin + cell_w * static_cast<double>(col);
+            const double dy0 = ymin + cell_h * static_cast<double>(row);
+            const double px0 = area_.x_scale().forward(dx0);
+            const double px1 = area_.x_scale().forward(dx0 + cell_w);
+            const double py0 = area_.y_scale().forward(dy0 + cell_h);
+            const double py1 = area_.y_scale().forward(dy0);
+            const Rect cell_rect = Rect{px0, py0, px1 - px0, py1 - py0}.intersection(inner);
+            if (cell_rect.empty()) {
+                continue;
+            }
+            const double t = static_cast<double>(c) / static_cast<double>(max_count);
+            const Rgb rgb = color::sample(kind_, t);
+            b.fill(Color::rgb(rgb.r, rgb.g, rgb.b));
+            b.rect(cell_rect);
+        }
+    }
+
+    layout::draw_axis_x(sink, area_, xticks, "x", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "y", Style{});
+
+    if (show_legend_) {
+        draw_colorbar(sink, inner, kind_, name_);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart
