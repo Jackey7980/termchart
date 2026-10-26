@@ -50,6 +50,48 @@ bool to_sub(double value, std::uint32_t& out) noexcept {
     return true;
 }
 
+// 沿渐变轴采样颜色：linear 按投影比例 t、radial 按到圆心距离/半径。
+Rgb sample_gradient(bool radial, const Point& g0, const Point& g1, double radius,
+                    const std::vector<scene::GradientStop>& stops, double x, double y) {
+    double t = 0.0;
+    if (radial) {
+        const double d = std::hypot(x - g0.x, y - g0.y);
+        const double r = radius > 1e-9 ? radius : 1.0;
+        t = std::clamp(d / r, 0.0, 1.0);
+    } else {
+        const double dx = g1.x - g0.x;
+        const double dy = g1.y - g0.y;
+        const double len2 = dx * dx + dy * dy;
+        if (len2 < 1e-12) {
+            t = 0.0;
+        } else {
+            t = std::clamp(((x - g0.x) * dx + (y - g0.y) * dy) / len2, 0.0, 1.0);
+        }
+    }
+    if (stops.empty()) {
+        return Rgb{0, 0, 0};
+    }
+    if (t <= stops.front().offset) {
+        return stops.front().color;
+    }
+    if (t >= stops.back().offset) {
+        return stops.back().color;
+    }
+    for (std::size_t i = 1; i < stops.size(); ++i) {
+        if (t <= stops[i].offset) {
+            const double span = stops[i].offset - stops[i - 1].offset;
+            const double f = span < 1e-12 ? 0.0 : (t - stops[i - 1].offset) / span;
+            const Rgb a = stops[i - 1].color;
+            const Rgb b = stops[i].color;
+            return Rgb{
+                static_cast<std::uint8_t>(std::lround(a.r + (b.r - a.r) * f)),
+                static_cast<std::uint8_t>(std::lround(a.g + (b.g - a.g) * f)),
+                static_cast<std::uint8_t>(std::lround(a.b + (b.b - a.b) * f))};
+        }
+    }
+    return stops.back().color;
+}
+
 class ScenePainter final : public scene::StatefulVisitor {
 public:
     explicit ScenePainter(Canvas& canvas) noexcept
@@ -75,6 +117,36 @@ protected:
         // 合并的必要；且颜色已由参数给定，不必等到 end_path 再取状态。
         plot_filled_rect(rect);
         flush_fill(fill);
+    }
+
+    // 扩编指令（2026-10-26）：曲线折线化 + 渐变填充
+    void extend_path_curve(const Point& from, const Point& c1, const Point& c2,
+                          const Point& to) override {
+        constexpr int kSteps = 24;
+        Point prev = from;
+        for (int i = 1; i <= kSteps; ++i) {
+            const double t = static_cast<double>(i) / kSteps;
+            const double u = 1.0 - t;
+            const double x = u*u*u*from.x + 3.0*u*u*t*c1.x + 3.0*u*t*t*c2.x + t*t*t*to.x;
+            const double y = u*u*u*from.y + 3.0*u*u*t*c1.y + 3.0*u*t*t*c2.y + t*t*t*to.y;
+            plot_segment(prev, Point{x, y});
+            prev = Point{x, y};
+        }
+    }
+
+    void emit_filled_rect_gradient(const Rect& rect, bool radial, const Point& g0,
+                                  const Point& g1, double radius,
+                                  const std::vector<scene::GradientStop>& stops) override {
+        const double x1 = rect.right();
+        const double y1 = rect.bottom();
+        for (double y = std::max(0.0, rect.y); y < y1; ++y) {
+            for (double x = std::max(0.0, rect.x); x < x1; ++x) {
+                if (!in_clip(x, y)) continue;
+                const Rgb col = apply_alpha(sample_gradient(radial, g0, g1, radius, stops, x, y));
+                canvas_->put(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)),
+                             detail::kFullBlock, Style{}.set_fg(Color::rgb(col)));
+            }
+        }
     }
 
     void emit_stroked_rect(const Rect& rect, const Color& /*stroke*/, double /*width*/) override {
@@ -111,6 +183,11 @@ private:
         if (!to_sub(sx, x) || !to_sub(sy, y)) {
             return;
         }
+        // 裁剪：子像素坐标换算回用户坐标，跳过裁剪区外。
+        if (!in_clip(sx / static_cast<double>(kStrokeSubX),
+                     sy / static_cast<double>(kStrokeSubY))) {
+            return;
+        }
         stroke_field_.set(x, y, 1.0f);
         // 加粗一格子像素：横线加高、竖线加宽。单点宽的线在盲文密度下会断成散点。
         if (thicken_vertically) {
@@ -128,13 +205,47 @@ private:
         const double dy = (b.y - a.y) * static_cast<double>(kStrokeSubY);
         const int steps = static_cast<int>(std::ceil(std::max(std::fabs(dx), std::fabs(dy))));
         const bool thicken_vertically = std::fabs(dx) >= std::fabs(dy);  // 偏横 → 加高
+        const auto emit = [this, thicken_vertically](double px, double py) {
+            plot_dot(px, py, thicken_vertically);
+        };
         if (steps <= 0) {
-            plot_dot(x0, y0, thicken_vertically);
+            emit(x0, y0);
             return;
         }
+        const scene::DashOp* dash = current_dash();
+        if (!dash) {
+            for (int i = 0; i <= steps; ++i) {
+                const double t = static_cast<double>(i) / static_cast<double>(steps);
+                emit(x0 + dx * t, y0 + dy * t);
+            }
+            return;
+        }
+        // 虚线：逐采样点判定落在实段还是空段（dashes 偶索引=实、奇=空）。
+        double pattern = 0.0;
+        for (double d : dash->dashes) {
+            pattern += d;
+        }
+        if (pattern <= 0.0) {
+            return;
+        }
+        const double len = std::hypot(dx, dy);
+        const double off = std::fmod(dash->offset, pattern) + (dash->offset < 0 ? pattern : 0.0);
         for (int i = 0; i <= steps; ++i) {
             const double t = static_cast<double>(i) / static_cast<double>(steps);
-            plot_dot(x0 + dx * t, y0 + dy * t, thicken_vertically);
+            const double along = t * len + off;
+            const double m = std::fmod(along, pattern) + (along < 0 ? pattern : 0.0);
+            double acc = 0.0;
+            bool solid = true;
+            for (std::size_t k = 0; k < dash->dashes.size(); ++k) {
+                if (m < acc + dash->dashes[k]) {
+                    solid = (k % 2 == 0);
+                    break;
+                }
+                acc += dash->dashes[k];
+            }
+            if (solid) {
+                emit(x0 + dx * t, y0 + dy * t);
+            }
         }
     }
 
@@ -182,6 +293,9 @@ private:
         const double y1 = rect.bottom() * static_cast<double>(kFillSubY);
         for (double sy = y0; sy < y1; sy += 1.0) {
             for (double sx = x0; sx < x1; sx += 1.0) {
+                if (!in_clip(sx, sy / static_cast<double>(kFillSubY))) {
+                    continue;
+                }
                 std::uint32_t ux = 0;
                 std::uint32_t uy = 0;
                 if (!to_sub(sx, ux) || !to_sub(sy, uy)) {
@@ -213,7 +327,7 @@ private:
             return;
         }
         raster::RasterOptions opts;
-        opts.fg = current_stroke();  // 旧值：状态指令是"先收口、后赋值"
+        opts.fg = apply_alpha_color(current_stroke());  // 旧值：状态指令是"先收口、后赋值"
         opts.bg = Color::none();     // 只画点，不动背景
         blit(raster::rasterize(stroke_field_, raster::RasterKind::Braille, opts));
         stroke_field_.fill(0.0f);
@@ -225,7 +339,7 @@ private:
             return;
         }
         raster::RasterOptions opts;
-        opts.fg = fill;
+        opts.fg = apply_alpha_color(fill);
         opts.bg = Color::none();
         blit(raster::rasterize(fill_field_, raster::RasterKind::HalfBlock, opts));
         fill_field_.fill(0.0f);
@@ -237,6 +351,36 @@ private:
     image::FloatField fill_field_;
     bool stroke_dirty_ = false;
     bool fill_dirty_ = false;
+
+    // ── 扩编辅助 ──
+    Rgb apply_alpha(Rgb c) const {
+        const double a = current_alpha();
+        if (a >= 1.0) {
+            return c;
+        }
+        const auto sc = [a](std::uint8_t v) {
+            return static_cast<std::uint8_t>(std::lround(v * a));
+        };
+        return Rgb{sc(c.r), sc(c.g), sc(c.b)};
+    }
+    Color apply_alpha_color(const Color& c) const {
+        const double a = current_alpha();
+        if (a >= 1.0 || c.kind() != ColorKind::Rgb) {
+            return c;
+        }
+        const Rgb r = c.rgb();
+        const auto sc = [a](std::uint8_t v) {
+            return static_cast<std::uint8_t>(std::lround(v * a));
+        };
+        return Color::rgb(Rgb{sc(r.r), sc(r.g), sc(r.b)});
+    }
+    bool in_clip(double x, double y) const {
+        const Rect* cr = clip_rect();
+        if (!cr) {
+            return true;
+        }
+        return x >= cr->x && y >= cr->y && x <= cr->right() && y <= cr->bottom();
+    }
 };
 
 }  // namespace

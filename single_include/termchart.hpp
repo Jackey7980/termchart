@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 390 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 394 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -4425,6 +4425,40 @@ constexpr std::uint8_t rotl8(std::uint8_t v, int n) noexcept {
 
 }  // namespace termchart::util
 
+// ===== include/termchart/util/easing.hpp =====
+// easing.hpp —— 缓动曲线族（纯数学，无状态）
+//
+// 为什么在 util 而不是 app：缓动只依赖 `util::math`，没有任何时间/IO 语义；
+// 而消费方 `chart`(L12) 在 `app`(L20) 底下，按分层规则不能反向依赖 app。
+// 曲线族的唯一真源放在这里，`app::Easing` / `app::ease` 作为别名转发，
+// 老的调用点（`app/animation.hpp`、`examples/25`）零改动。
+//
+// 口径（与 app::Animation 一致）：
+//   * 输入 t 与输出都在 [0,1]；ease() 先把 t 钳位到 [0,1] 再过曲线；
+//     非有限 t（NaN/Inf）不可比较，一律视为界外 → 0。
+
+
+
+namespace termchart::util {
+
+// 缓动曲线族。选择原则：终端动画大多是 UI 过渡（面板展开、数值滚动），
+// 二次/三次曲线族够用且单调；不带 overshoot 的 Back/Elastic——回弹会让
+// 字符画布上的元素"越过"目标格，与"输出在 [0,1]"的口径冲突。
+enum class Easing : std::uint8_t {
+    Linear,
+    EaseInQuad,
+    EaseOutQuad,
+    EaseInOutQuad,
+    EaseInCubic,
+    EaseOutCubic,
+    EaseInOutCubic,
+};
+
+// 缓动映射：t 会被钳位；输出在 [0,1]。
+[[nodiscard]] TERMCHART_API double ease(Easing easing, double t) noexcept;
+
+}  // namespace termchart::util
+
 // ===== include/termchart/util/format.hpp =====
 // format.hpp —— 轻量整数 / 浮点格式化
 //
@@ -7410,7 +7444,25 @@ struct ImageOp {
     constexpr bool operator==(const ImageOp&) const noexcept = default;
 };
 
-using Command = std::variant<MoveTo, LineTo, RectOp, ArcOp, FillOp, StrokeOp, TextOp, ImageOp>;
+// ── 结构 ────────────────────────────────────────────────────────────────
+// 语义分组：begin=true 开组，false 闭组；可嵌套，必须成对。
+// 它只回答"从这条到那条之间的图元属于哪个组"，**不改变绘制顺序、不改变
+// 任何像素**——这正是它与"给每个图元加 group 字段"的区别：分组是区间，
+// 不是图元的属性，所以增删分组不会碰到任何一个几何指令。
+// 不认识分组的消费者（光栅化、SVG/PDF 静态导出）直接忽略即可，语义与
+// SVG 的 <g> 同构。
+//
+// 位置：**追加在 variant 末尾**。kind_of() 是 index 直映射，插在中间会把
+// 0..7 的数值全部顶翻——而那套数值是要进快照和序列化的。
+struct GroupOp {
+    std::uint32_t id = 0;
+    bool begin = true;
+
+    constexpr bool operator==(const GroupOp&) const noexcept = default;
+};
+
+using Command =
+    std::variant<MoveTo, LineTo, RectOp, ArcOp, FillOp, StrokeOp, TextOp, ImageOp, GroupOp>;
 
 // 顺序与 Command 的候选列表一一对应；值即 variant 的 index()。
 enum class CommandKind : std::uint8_t {
@@ -7422,6 +7474,7 @@ enum class CommandKind : std::uint8_t {
     Stroke,
     Text,
     Image,
+    Group,
 };
 
 constexpr CommandKind kind_of(const Command& command) noexcept {
@@ -7527,6 +7580,11 @@ public:
 
     TERMCHART_API SceneBuilder& image(Rect rect, std::uint32_t image_id);
 
+    // 语义分组：成对使用，可嵌套。组内已有的图元不受影响，靠后的图元才归属
+    // 该组；同一段可以同时属于多个嵌套组（内层与外层都能查到）。
+    TERMCHART_API SceneBuilder& begin_group(std::uint32_t id);
+    TERMCHART_API SceneBuilder& end_group(std::uint32_t id);
+
     // 逃生口：直接压一条已构造好的指令（variant 新候选还没加语法糖时用）。
     TERMCHART_API SceneBuilder& push(Command command);
 
@@ -7563,6 +7621,12 @@ public:
     virtual void visit(const StrokeOp& command) = 0;
     virtual void visit(const TextOp& command) = 0;
     virtual void visit(const ImageOp& command) = 0;
+
+    // 分组是**可选语义**，默认忽略。
+    // 忽略分组本来就是正确的：光栅化结果与静态导出都不该因为分组而改变。
+    // 需要分组语义的消费者（交互层按组收拢 HitRegion、SVG 输出 <g>）自己
+    // override；不 override 的消费者保持原有行为，无需改动。
+    virtual void visit(const GroupOp& command) { (void)command; }
 };
 
 TERMCHART_API void accept(const Command& command, CommandVisitor& visitor);
@@ -7608,6 +7672,10 @@ public:
     void visit(const StrokeOp& command) override;
     void visit(const TextOp& command) override;
     void visit(const ImageOp& command) override;
+    // 分组不参与状态机：不触发收口、不改变当前 fill/stroke、不开也不闭路径。
+    // 显式 override（而非依赖基类默认）一是消掉 -Woverloaded-virtual，二是
+    // 表明"这里是有意忽略"，不是忘了实现。
+    void visit(const GroupOp& command) override;
 
     // 遍历 + 收尾。调用方不应再自己调 end_path。
     void run(const Scene& scene);
@@ -10253,26 +10321,40 @@ class Canvas;
 
 namespace termchart::layout {
 
+class Sink;
+
+// ── 布局主体（落笔交给 sink）─────────────────────────────────────────────
 // 下 x 轴：在 inner 底边画横线，向上长出刻度并标注数值；label 居中置于轴下方。
-TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
-                               const std::vector<double>& ticks,
-                               std::string_view label = {},
+TERMCHART_API void draw_axis_x(Sink& sink, const PlotArea& area,
+                               const std::vector<double>& ticks, std::string_view label = {},
                                const Style& style = Style{});
 
 // 下 x 轴（显式标签版）：ticks 决定**刻度位置**，labels 决定**标签文本**。
 // 标签按 ticks 的下标一一对应；labels 短于 ticks 的位置回退 format_tick。
 // 分工刻意如此：layout 不认识"时间"这类语义，只负责画；"epoch 秒 → 日期字符串"
 // 由调用方（chart 的 formatter / autoviz）格式化后传进来。
+TERMCHART_API void draw_axis_x(Sink& sink, const PlotArea& area,
+                               const std::vector<double>& ticks,
+                               const std::vector<std::string>& labels,
+                               std::string_view label = {}, const Style& style = Style{});
+
+// 左 y 轴：在 inner 左边画竖线，向右长出刻度并标注数值；label 置于轴左侧。
+TERMCHART_API void draw_axis_y(Sink& sink, const PlotArea& area,
+                               const std::vector<double>& ticks, std::string_view label = {},
+                               const Style& style = Style{});
+
+// ── 兼容入口（内部转 CanvasSink，布局逻辑不复制第二份）──────────────────
+TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
+                               const std::vector<double>& ticks, std::string_view label = {},
+                               const Style& style = Style{});
+
 TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
                                const std::vector<double>& ticks,
                                const std::vector<std::string>& labels,
-                               std::string_view label = {},
-                               const Style& style = Style{});
+                               std::string_view label = {}, const Style& style = Style{});
 
-// 左 y 轴：在 inner 左边画竖线，向右长出刻度并标注数值；label 置于轴左侧。
 TERMCHART_API void draw_axis_y(canvas::Canvas& canvas, const PlotArea& area,
-                               const std::vector<double>& ticks,
-                               std::string_view label = {},
+                               const std::vector<double>& ticks, std::string_view label = {},
                                const Style& style = Style{});
 
 }  // namespace termchart::layout
@@ -10288,6 +10370,15 @@ class Canvas;
 
 namespace termchart::layout {
 
+class Sink;
+
+// 布局主体：只决定"哪几行哪几列有线"，落笔交给 sink。
+TERMCHART_API void draw_grid(Sink& sink, const PlotArea& area,
+                             const std::vector<double>& x_ticks,
+                             const std::vector<double>& y_ticks,
+                             const Style& style = Style{});
+
+// 兼容入口：内部转成 CanvasSink，布局逻辑不复制第二份。
 TERMCHART_API void draw_grid(canvas::Canvas& canvas, const PlotArea& area,
                              const std::vector<double>& x_ticks,
                              const std::vector<double>& y_ticks,
@@ -10296,7 +10387,7 @@ TERMCHART_API void draw_grid(canvas::Canvas& canvas, const PlotArea& area,
 }  // namespace termchart::layout
 
 // ===== include/termchart/layout/label.hpp =====
-// label.hpp —— 轴名等文本标签
+// label.hpp —— 轴名标签（轴下方的 x 轴名 / 轴左侧的 y 轴名）
 
 
 
@@ -10306,6 +10397,14 @@ class Canvas;
 
 namespace termchart::layout {
 
+class Sink;
+
+// 布局主体：只算位置，落笔交给 sink。
+TERMCHART_API void draw_axis_label(Sink& sink, std::string_view text, const Rect& rect,
+                                   Side side, HAlign halign = HAlign::Center,
+                                   const Style& style = Style{});
+
+// 兼容入口：内部转成 CanvasSink。
 TERMCHART_API void draw_axis_label(canvas::Canvas& canvas, std::string_view text,
                                    const Rect& rect, Side side,
                                    HAlign halign = HAlign::Center,
@@ -10329,15 +10428,92 @@ struct LegendEntry {
     Color color = Color::ansi16(7);
 };
 
-TERMCHART_API void draw_legend(canvas::Canvas& canvas,
-                               std::span<const LegendEntry> entries, const Rect& rect,
+class Sink;
+
+TERMCHART_API void draw_legend(Sink& sink, std::span<const LegendEntry> entries, const Rect& rect,
                                HAlign halign = HAlign::Left,
+                               const Style& base = Style{});
+
+TERMCHART_API void draw_legend(canvas::Canvas& canvas, std::span<const LegendEntry> entries,
+                               const Rect& rect, HAlign halign = HAlign::Left,
                                const Style& base = Style{});
 
 }  // namespace termchart::layout
 
+// ===== include/termchart/layout/sink.hpp =====
+// sink.hpp —— 布局落笔的抽象出口
+//
+// 为什么需要这层：轴、网格、标题、图例的**布局决策**（刻度落在第几列、
+// 标签怎么对齐、拐角画在哪一格）只应该有一份；但"落笔"的目标有两种：
+//   * canvas::Canvas —— 终端字符格；
+//   * Scene —— 矢量 IR（svg / pdf / 未来的交互层）。
+// 之前每个 draw_xxx 都直接吃 `canvas::Canvas&`，想导 Scene 就只能把布局
+// 逻辑抄一遍，两份实现对同一个刻度迟早会算出不一样的列——这正是
+// `canvas/scene_renderer.hpp` 开头警告的"两份解释会分叉"。
+//
+// 接口刻意按**语义**命名而不是按字符：
+//   * put()  —— 字符艺术（角、刻度钩），只能以字符形式存在；
+//   * text() —— 一段文本，起点是左上格；
+//   * line() —— "这里有一条线"，用实线还是虚线由调用方按语义指定，
+//               至于最终是 ─ 还是盲文点，交给 sink 的实现决定。
+
+
+
+namespace termchart::layout {
+
+// 线的语义类别。Solid 是"数据/边框"这类实线；Dashed 是网格、参考线。
+// 分开的理由：终端侧它们是不同字符（─ vs ┄），Scene 侧实线可以走矢量
+// 描边、虚线必须保留虚线外观（盲文光栅化会把虚线变成实线）。
+enum class LineStyle : std::uint8_t { Solid, Dashed };
+
+// 终端侧的默认线字符。放在公开头里，是因为 CanvasSink 与 SceneSink 都要用
+// 同一套字形；两处各写一份 U+2500 迟早会出现一个 ─、一个 ━。
+inline constexpr char32_t kSolidH = U'\u2500';   // ─
+inline constexpr char32_t kSolidV = U'\u2502';   // │
+inline constexpr char32_t kDashedH = U'\u2504';  // ┄
+inline constexpr char32_t kDashedV = U'\u2506';  // ┆
+
+class Sink {
+public:
+    virtual ~Sink();
+
+    // 在格坐标处写一个字符。
+    virtual void put(Point at, char32_t cp, const Style& style) = 0;
+    // 一段文本，起点是左上格；越界由实现自行裁剪。
+    virtual void text(Point at, std::string_view value, const Style& style) = 0;
+    // 两端都是格坐标，含端点。
+    virtual void line(Point a, Point b, LineStyle kind, const Style& style) = 0;
+};
+
+}  // namespace termchart::layout
+
+// ===== include/termchart/layout/canvas_sink.hpp =====
+// canvas_sink.hpp —— 把布局落笔到字符格
+//
+// 行为与 Sink 化之前**逐字节一致**：同一对端点、同一个字符、同一个样式，
+// 调的都是同一个 Canvas 方法。它存在只是为了把 layout 的布局逻辑从
+// "必须持有 Canvas"里解耦出来，好让 SceneSink 复用同一份布局。
+
+
+
+namespace termchart::layout {
+
+class CanvasSink final : public Sink {
+public:
+    explicit CanvasSink(canvas::Canvas& canvas) noexcept;
+
+    void put(Point at, char32_t cp, const Style& style) override;
+    void text(Point at, std::string_view value, const Style& style) override;
+    void line(Point a, Point b, LineStyle kind, const Style& style) override;
+
+private:
+    canvas::Canvas* canvas_;
+};
+
+}  // namespace termchart::layout
+
 // ===== include/termchart/layout/title.hpp =====
-// title.hpp —— 标题：在矩形顶部居中（或按对齐）绘制
+// title.hpp —— 标题（居中/左/右对齐到给定矩形）
 
 
 
@@ -10347,9 +10523,13 @@ class Canvas;
 
 namespace termchart::layout {
 
-TERMCHART_API void draw_title(canvas::Canvas& canvas, std::string_view title,
-                              const Rect& rect, HAlign align = HAlign::Center,
-                              const Style& style = Style{});
+class Sink;
+
+TERMCHART_API void draw_title(Sink& sink, std::string_view title, const Rect& rect,
+                              HAlign align = HAlign::Center, const Style& style = Style{});
+
+TERMCHART_API void draw_title(canvas::Canvas& canvas, std::string_view title, const Rect& rect,
+                              HAlign align = HAlign::Center, const Style& style = Style{});
 
 }  // namespace termchart::layout
 
@@ -10463,6 +10643,39 @@ private:
 
 }  // namespace termchart::chart
 
+// ===== include/termchart/chart/scene_sink.hpp =====
+// scene_sink.hpp —— 把 layout 的落笔语义翻译成**真实的 Scene 指令**
+//
+// 与"把 Canvas 逐格录成 TextOp"（那种只是把位图换了个容器）的区别：
+//   * Solid 线 → MoveTo/LineTo + StrokeOp，是矢量。终端侧由 render_scene
+//     光栅成盲文/半块，信息量比逐格 • 更高；导出侧就是真正的 <line>。
+//   * Dashed 线 → 逐格 TextOp。原因是盲文光栅器会把虚线画成实线，语义会丢；
+//     虚线本来就是字符艺术，保留字符才是忠实的。
+//   * 文本/角/刻度钩 → TextOp，它们本来就只能是字符。
+//
+// 分组：调用方用 begin_group()/end_group() 把一段指令包起来（见 SceneBuilder）。
+// 分组不改变任何像素，只让交互层能把 HitRegion 成组收拢。
+
+
+
+namespace termchart::chart {
+
+class SceneSink final : public layout::Sink {
+public:
+    explicit SceneSink(scene::Scene& scene) noexcept;
+
+    void put(Point at, char32_t cp, const Style& style) override;
+    void text(Point at, std::string_view value, const Style& style) override;
+    void line(Point a, Point b, layout::LineStyle kind, const Style& style) override;
+
+    [[nodiscard]] scene::SceneBuilder& builder() noexcept { return builder_; }
+
+private:
+    scene::SceneBuilder builder_;
+};
+
+}  // namespace termchart::chart
+
 // ===== include/termchart/chart/series.hpp =====
 // series.hpp —— 数据系列（值类型，header-only）
 //
@@ -10523,7 +10736,20 @@ struct Series {
 
 
 
+namespace termchart::scene {
+class Scene;
+}
+
+namespace termchart::layout {
+class Sink;
+}
+
 namespace termchart::chart {
+
+// 曲线族由 util 提供（见 util/easing.hpp）；这里起别名，让 `chart::Easing`
+// 与 `chart::ease` 对调用方可见，避免每个图种都写 `util::Easing`。
+using util::ease;
+using util::Easing;
 
 // 折线/柱共享的字符与几何辅助（定义见 chart.cpp）。
 inline constexpr char32_t kLineChar = U'\u2022';     // • 连线
@@ -10544,16 +10770,76 @@ layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin,
                            double xmin, double xmax, double ymin, double ymax,
                            bool auto_domain, bool include_zero,
                            std::optional<scale::Domain> y_override = std::nullopt);
+
+// 尺寸版：布局只依赖目标宽高，不依赖那个"画布对象"本身。
+// 存在的理由：to_scene() 没有 Canvas（Scene 是无限画布），但仍要算同一套
+// 网格位置。Canvas 版内部转发到这里，两版不可能算出不同的布局。
+layout::PlotArea make_area(std::uint32_t width, std::uint32_t height,
+                           const layout::Margin& margin, double xmin, double xmax,
+                           double ymin, double ymax, bool auto_domain, bool include_zero,
+                           std::optional<scale::Domain> y_override = std::nullopt);
 void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series,
                      const layout::PlotArea& area, bool show);
+// Sink 版：图例的排布（间距、起始列、色块字形）只有一份，落笔交给 sink。
+void draw_legend_for(layout::Sink& sink, const std::vector<Series>& series,
+                     const layout::PlotArea& area, bool show);
+
+// 一段按名动画：延迟 + 时长 + 缓动曲线。
+// "名字"就是 `Series::name`（也就是图例上那行文本），用户不必知道任何内部 id。
+// 这是刻意的：chart 层没有指令流，几十个系列的字符串哈希完全够用；
+// 真正需要 `uint32_t` 的是未来 Scene 指令流（每帧上千条），那是另一层的事。
+struct AnimationTrack {
+    double duration = 0.5;  // 秒；<= 0 或非有限 → 瞬间完成
+    double delay = 0.0;     // 秒；负数按 0 处理
+    Easing easing = Easing::EaseOutCubic;
+};
 
 class Chart {
 public:
     virtual ~Chart();
     virtual void draw(DrawContext ctx) = 0;
 
+    // ── 真实 Scene 输出 ──────────────────────────────────────────────
+    // 把图表描述成矢量指令（MoveTo/LineTo/StrokeOp/TextOp/GroupOp），而不是
+    // 直接往字符格里落笔。终端的盲文/半块、SVG 的 <path>、PDF 的描边，都是
+    // 对同一份 Scene 的不同解释——不再是"先画完字符再转录"。
+    //
+    // width/height 是**栅格化目标**的尺寸：Scene 本身没有尺寸，但"第几列
+    // 是刻度"这件事依赖目标宽高，所以必须显式给。两处传同一个值即可保证
+    // 与 draw() 的布局完全一致。
+    //
+    // 返回 false = 该图种尚未迁移，调用方应回退到 draw(Canvas)。
+    // 默认实现返回 false，因此老图种零改动、行为不变。
+    [[nodiscard]] virtual bool to_scene(scene::Scene& out, std::uint32_t width,
+                                        std::uint32_t height) const;
+
     void set_title(std::string title) { title_ = std::move(title); }
     [[nodiscard]] const std::string& title() const noexcept { return title_; }
+
+    // ── 按名动画 ────────────────────────────────────────────────────
+    // 只登记"这一段该多久、怎么缓"，不碰 Scene、不碰渲染管线；具体怎么用
+    // 进度（截断折线 / 柱高生长）由各图种的 draw 自己决定。
+    // 同名重复登记 = 覆盖。
+    void add_animation(std::string name, AnimationTrack track);
+    void add_animation(std::string name, double duration_seconds,
+                       Easing easing = Easing::EaseOutCubic, double delay = 0.0);
+    void clear_animations() noexcept;
+    [[nodiscard]] std::size_t animation_count() const noexcept { return tracks_.size(); }
+
+    // 推进时钟。**第一次调用即动画起点**（不需要单独的 start()）：
+    // 之后每次 tick 传入"现在"，进度由 `now - 首帧` 算出。
+    // 非有限值直接忽略，不污染时间轴。
+    void tick(double now_seconds) noexcept;
+    // 把当前时刻当作新的起点重放（交互里"重新播放"按钮用）。
+    void restart_animations(double now_seconds) noexcept;
+
+    // 该组当前进度，[0,1]。
+    // 两种情况返回 1.0（完全显示，等于没有动画）：
+    //   1. 这个名字没登记过；
+    //   2. 登记过但从未 tick（静态渲染路径不该被动画拖成空白）。
+    [[nodiscard]] double progress_of(const std::string& name) const noexcept;
+    // 是否还有未跑完的组（渲染循环据此决定要不要继续出帧）。
+    [[nodiscard]] bool animating() const noexcept;
 
     void set_margins(double top, double right, double bottom, double left) {
         margin_top_ = top;
@@ -10572,6 +10858,12 @@ protected:
     double margin_right_ = 1.0;
     double margin_bottom_ = 3.0;
     double margin_left_ = 8.0;
+
+private:
+    std::unordered_map<std::string, AnimationTrack> tracks_;
+    double clock_origin_ = 0.0;  // 首帧时刻 = 动画起点
+    double clock_now_ = 0.0;
+    bool ticking_ = false;       // 从未 tick → 一律视为"已完成"
 };
 
 }  // namespace termchart::chart
@@ -10644,6 +10936,11 @@ public:
     [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 通路：柱是**实心矩形**（FillOp + RectOp），终端侧由 render_scene
+    // 光栅成半块实心格，导出侧就是 <rect fill>——不是逐格 █ 的转录。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11132,6 +11429,12 @@ public:
     [[nodiscard]] const std::vector<double>& x_ticks() const noexcept { return x_ticks_; }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：轴/刻度/图例/标题走 TextOp（它们本来就是字符艺术），
+    // 折线走 MoveTo/LineTo + StrokeOp（矢量，比逐格 • 更连续），
+    // 每条系列用 GroupOp 包起来供交互层成组命中。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -19395,21 +19698,11 @@ TERMCHART_API std::size_t load_static_plugins() noexcept;
 
 namespace termchart::app {
 
-// 缓动曲线族。选择原则：终端动画大多是 UI 过渡（面板展开、数值滚动），
-// 二次/三次曲线族够用且单调；不带 overshoot 的 Back/elastic——回弹会让
-// 字符画布上的元素"越过"目标格，与"输出在 [0,1]"的口径冲突。
-enum class Easing : std::uint8_t {
-    Linear,
-    EaseInQuad,
-    EaseOutQuad,
-    EaseInOutQuad,
-    EaseInCubic,
-    EaseOutCubic,
-    EaseInOutCubic,
-};
-
-// 缓动映射：t 会被钳位；输出在 [0,1]。
-[[nodiscard]] TERMCHART_API double ease(Easing easing, double t) noexcept;
+// 曲线族与 ease() 的唯一真源在 `util/easing.hpp`（L1）——下沉是因为消费方
+// `chart`(L12) 在本模块(L20)之下，反向依赖会被 check_layers 拦。
+// 这里保留同名别名，`app::Easing::Linear` / `app::ease(...)` 照旧可用。
+using util::Easing;
+using util::ease;
 
 // 时钟：返回"当前时刻"（秒）。缺省实现基于 steady_clock。
 using AnimationClock = std::function<double()>;
@@ -19889,6 +20182,23 @@ namespace termchart::api {
 
 // = render_chart + 写 stdout + flush。返回 stdout 的写入状态（渲染失败时返回该错误）。
 TERMCHART_API Status print_chart(chart::Chart& chart, const Opts& opts = {}) noexcept;
+
+// ── 真实 Scene 通路 ──────────────────────────────────────────────────────
+// 图表 → 矢量指令流（MoveTo/LineTo/StrokeOp/RectOp/TextOp/GroupOp），**不是**
+// 把 Canvas 逐格转录成 TextOp。同一份 Scene 有三种消费者：render_scene 落字符格、
+// SVG/PDF 静态导出、交互层按 GroupOp 成组命中。
+//
+// 未迁移的图种返回 ErrorCode::Unsupported —— 显式要 Scene 就显式报错，不悄悄
+// 返回一份"长得像 Scene 的 Canvas 转录"。
+[[nodiscard]] TERMCHART_API Result<scene::Scene> chart_to_scene(const chart::Chart& chart,
+                                                                std::uint32_t width,
+                                                                std::uint32_t height) noexcept;
+
+// = chart_to_scene + SVG 后端。图表 Scene 的场景单位就是**字符格**，因此字号
+// 默认给 1.0（scene 单位）；调用方仍可覆盖 options 里的 scale/autofit。
+[[nodiscard]] TERMCHART_API Result<std::string> chart_to_svg(
+    const chart::Chart& chart, std::uint32_t width, std::uint32_t height,
+    const backend::vector::VectorOptions& options = {}) noexcept;
 
 }  // namespace termchart::api
 

@@ -33,6 +33,10 @@ SceneBuilder& SceneBuilder::image(Rect rect, std::uint32_t image_id) {
     return push(ImageOp{rect, image_id});
 }
 
+SceneBuilder& SceneBuilder::begin_group(std::uint32_t id) { return push(GroupOp{id, true}); }
+
+SceneBuilder& SceneBuilder::end_group(std::uint32_t id) { return push(GroupOp{id, false}); }
+
 SceneBuilder& SceneBuilder::push(Command command) {
     scene_->push(std::move(command));
     return *this;

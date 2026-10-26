@@ -107,11 +107,22 @@ protected:
         emit_color(*content_, stroke, "S");
     }
     void emit_arc(const scene::ArcOp& arc, const Color& stroke, double width) override {
-        // 简化：矩形框 bbox 路径（PDF 圆弧由 cubic 逼近；这里直接用椭圆近似）
-        *content_ += num(arc.center.x - arc.radius); *content_ += " ";
-        *content_ += num(height_pt_ - arc.center.y - arc.radius); *content_ += " ";
-        *content_ += num(2 * arc.radius); *content_ += " ";
-        *content_ += num(2 * arc.radius); *content_ += " re\n";
+        // ArcOp：弧度、从 start 逆时针到 end（整圆 = {0, 2π}）。
+        // PDF 无原生圆弧算子，用折线逼近；坐标翻转见文件头（y 上 = height_pt_ - y）。
+        static constexpr double kStep = 0.12;  // ≈7°，足够平滑
+        const int segs = std::max(2, static_cast<int>(
+            std::ceil(std::fabs(arc.end - arc.start) / kStep)));
+        std::string path;
+        for (int i = 0; i <= segs; ++i) {
+            const double t = arc.start + (arc.end - arc.start) *
+                                (static_cast<double>(i) / segs);
+            const double x = arc.center.x + arc.radius * std::cos(t);
+            const double y = arc.center.y + arc.radius * std::sin(t);
+            path += (i == 0 ? "M " : "L ");
+            path += num(x); path += " ";
+            path += num(height_pt_ - y); path += "\n";
+        }
+        *content_ += path;
         char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f w\n", width);
         *content_ += buf;
         emit_color(*content_, stroke, "S");
@@ -132,7 +143,7 @@ protected:
         *content_ += ") Tj\nET\n";
     }
     void emit_image(const scene::ImageOp& image) override {
-        // 简化：emit 一个占位矩形（嵌入 PNG 由调用方另行处理）
+        // 占位：emit 1×1 白 XObject（位图嵌入未实现，见 hpp 头注释）
         (void)image;
         *content_ += "0 0 0 rg\n0 0 0 RG\n";
         *content_ += "q\n";

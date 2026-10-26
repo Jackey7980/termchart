@@ -15,12 +15,15 @@
 #ifndef TERMCHART_API_CHART_HPP
 #define TERMCHART_API_CHART_HPP
 
+#include <cstdint>
 #include <string>
 
 #include "termchart/api/opts.hpp"
+#include "termchart/backend/vector/backend.hpp"
 #include "termchart/chart/chart.hpp"
 #include "termchart/core/expected.hpp"
 #include "termchart/export.hpp"
+#include "termchart/scene/scene.hpp"
 
 namespace termchart::api {
 
@@ -31,6 +34,23 @@ namespace termchart::api {
 
 // = render_chart + 写 stdout + flush。返回 stdout 的写入状态（渲染失败时返回该错误）。
 TERMCHART_API Status print_chart(chart::Chart& chart, const Opts& opts = {}) noexcept;
+
+// ── 真实 Scene 通路 ──────────────────────────────────────────────────────
+// 图表 → 矢量指令流（MoveTo/LineTo/StrokeOp/RectOp/TextOp/GroupOp），**不是**
+// 把 Canvas 逐格转录成 TextOp。同一份 Scene 有三种消费者：render_scene 落字符格、
+// SVG/PDF 静态导出、交互层按 GroupOp 成组命中。
+//
+// 未迁移的图种返回 ErrorCode::Unsupported —— 显式要 Scene 就显式报错，不悄悄
+// 返回一份"长得像 Scene 的 Canvas 转录"。
+[[nodiscard]] TERMCHART_API Result<scene::Scene> chart_to_scene(const chart::Chart& chart,
+                                                                std::uint32_t width,
+                                                                std::uint32_t height) noexcept;
+
+// = chart_to_scene + SVG 后端。图表 Scene 的场景单位就是**字符格**，因此字号
+// 默认给 1.0（scene 单位）；调用方仍可覆盖 options 里的 scale/autofit。
+[[nodiscard]] TERMCHART_API Result<std::string> chart_to_svg(
+    const chart::Chart& chart, std::uint32_t width, std::uint32_t height,
+    const backend::vector::VectorOptions& options = {}) noexcept;
 
 }  // namespace termchart::api
 

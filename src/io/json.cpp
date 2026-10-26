@@ -435,8 +435,10 @@ private:
         const std::string_view text = src_.substr(start, pos_ - start);
         // strtod 依赖 locale 的小数点；本库全程不调 setlocale，保持 "C" locale。
         // 扫描已保证格式合法，endptr 必指向末尾。
+        // 直接吃 string_view 缓冲：JSON 数字后必是 ,]} 或空白或串尾 NUL，strtod 遇非数字即停，
+        // 无需额外 NUL 终止，也避免每个数字都堆分配一个 std::string（热路径每元素一次分配）。
         char* end = nullptr;
-        const double value = std::strtod(std::string(text).c_str(), &end);
+        const double value = std::strtod(text.data(), &end);
         out = JsonValue::number(value);
         return true;
     }

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <unordered_set>
 #include <vector>
 
 namespace termchart::canvas {
@@ -32,18 +31,25 @@ uint64_t cell_key(Point p) noexcept {
 
 // 用哈希集做 O(1) 去重，把整条线的复杂度从 O(N^2) 降到 O(N)。
 // 光栅化（Canvas::put）本身幂等、重复相邻点无害；此处去重只为收敛输出规模。
-inline void append_unique(std::unordered_set<uint64_t>& seen, std::vector<Point>& out,
+// 去重键：把下取整后的格坐标压成 64 位整数。x/y 各自取 int64 低 32 位
+// （含负数，保证与原 floor(x)==floor(y) 语义完全一致），不同格绝不碰撞。
+// 单条线段点数极小（通常 1–5），线性扫描优于哈希表的建表/分配开销；
+// 光栅化（Canvas::put）本身幂等、重复相邻点无害，此处去重只为收敛输出规模。
+inline void append_unique(std::vector<uint64_t>& seen, std::vector<Point>& out,
                           Point p) noexcept {
-    if (seen.insert(cell_key(p)).second) {
-        out.push_back(Point{std::floor(p.x), std::floor(p.y)});
+    const uint64_t key = cell_key(p);
+    for (uint64_t k : seen) {
+        if (k == key) return;
     }
+    seen.push_back(key);
+    out.push_back(Point{std::floor(p.x), std::floor(p.y)});
 }
 
 }  // namespace
 
 std::vector<Point> line_points(Point from, Point to) noexcept {
     std::vector<Point> out;
-    std::unordered_set<uint64_t> seen;
+    std::vector<uint64_t> seen;
     const double dx = to.x - from.x;
     const double dy = to.y - from.y;
     const std::size_t steps = steps_for(dx, dy);
@@ -65,7 +71,7 @@ std::vector<Point> rect_outline_points(Rect rect) noexcept {
     if (rect.empty()) {
         return out;
     }
-    std::unordered_set<uint64_t> seen;
+    std::vector<uint64_t> seen;
     const double x0 = rect.x;
     const double y0 = rect.y;
     const double x1 = rect.right();
@@ -99,7 +105,7 @@ std::vector<Point> arc_points(Point center, double radius, double start, double 
     const double span = end - start;
     const std::size_t steps = static_cast<std::size_t>(std::ceil(span * radius)) + 8;
     out.reserve(steps);
-    std::unordered_set<uint64_t> seen;
+    std::vector<uint64_t> seen;
     for (std::size_t i = 0; i < steps; ++i) {
         const double angle = start + span * (static_cast<double>(i) / static_cast<double>(steps));
         append_unique(seen, out, Point{center.x + std::cos(angle) * radius,

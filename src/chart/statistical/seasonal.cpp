@@ -36,14 +36,22 @@ void SeasonalChart::decompose() {
     }
 
     // 居中移动平均：窗口 period，边缘不足半窗为 NaN。
+    // 滑动窗口求和 O(n)（原朴素二重循环为 O(n·period)），数值结果完全一致。
     const std::size_t half = period / 2;
     trend_.assign(n, kNaN);
-    for (std::size_t i = half; i + (period - half) <= n; ++i) {
-        double acc = 0.0;
-        for (std::size_t k = 0; k < period; ++k) {
-            acc += values_[i - half + k];
-        }
+    double acc = 0.0;
+    for (std::size_t k = 0; k < period; ++k) {
+        acc += values_[k];  // 首个窗口 [0, period-1]，对应 i = half
+    }
+    for (std::size_t i = half; ; ) {
         trend_[i] = acc / static_cast<double>(period);
+        const std::size_t next = i + 1;
+        if (next + (period - half) > n) {
+            break;  // 下一窗口右端越界，停止
+        }
+        acc -= values_[i - half];                  // 滑出窗口的左端
+        acc += values_[next + (period - half) - 1];  // 滑入窗口的新元素
+        i = next;
     }
 
     // 相位平均去趋势残差 → 季节分量（循环铺满）。

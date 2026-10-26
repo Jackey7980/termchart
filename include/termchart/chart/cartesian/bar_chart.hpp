@@ -31,6 +31,14 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 通路：柱是**实心矩形**（FillOp + RectOp），终端侧由 render_scene
+    // 光栅成半块实心格，导出侧就是 <rect fill>——不是逐格 █ 的转录。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
+    // 整组柱子是组 0：柱子从基线长高交给 `apply_animation` 按组进度做。
+    void animation_groups(std::vector<GroupProgress>& out) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:

@@ -95,6 +95,10 @@ constexpr std::uint8_t to_byte(double x) noexcept {
     return static_cast<std::uint8_t>(clamp01(x) * 255.0 + 0.5);
 }
 
+constexpr double absd(double v) noexcept {
+    return v < 0.0 ? -v : v;
+}
+
 }  // namespace detail
 
 constexpr Rgb hsv_to_rgb(double h, double s, double v) noexcept {
@@ -147,6 +151,68 @@ constexpr void rgb_to_hsv(Rgb c, double& h, double& s, double& v) noexcept {
         h = 0.0;
         return;
     }
+    if (mx == r) {
+        h = 60.0 * ((g - b) / d);
+    } else if (mx == g) {
+        h = 60.0 * (2.0 + (b - r) / d);
+    } else {
+        h = 60.0 * (4.0 + (r - g) / d);
+    }
+    if (h < 0.0) {
+        h += 360.0;
+    }
+}
+
+// ── HSL（HSV 同族，lightness 版；"调亮/调暗"类配色更符合直觉）──────────────
+constexpr Rgb hsl_to_rgb(double h, double s, double l) noexcept {
+    const double hue = detail::normalize_hue(h);
+    const double sat = detail::clamp01(s);
+    const double light = detail::clamp01(l);
+    const double c = (1.0 - detail::absd(2.0 * light - 1.0)) * sat;
+    const double hp = hue / 60.0;  // ∈ [0,6)
+    const double mod2 = hp - 2.0 * static_cast<double>(static_cast<int>(hp / 2.0));
+    const double x = c * (1.0 - (mod2 < 1.0 ? 1.0 - mod2 : mod2 - 1.0));
+    double r = 0.0;
+    double g = 0.0;
+    double b = 0.0;
+    if (hp < 1.0) {
+        r = c;
+        g = x;
+    } else if (hp < 2.0) {
+        r = x;
+        g = c;
+    } else if (hp < 3.0) {
+        g = c;
+        b = x;
+    } else if (hp < 4.0) {
+        g = x;
+        b = c;
+    } else if (hp < 5.0) {
+        r = x;
+        b = c;
+    } else {
+        r = c;
+        b = x;
+    }
+    const double m = light - c * 0.5;
+    return Rgb{detail::to_byte(r + m), detail::to_byte(g + m), detail::to_byte(b + m)};
+}
+
+constexpr void rgb_to_hsl(Rgb c, double& h, double& s, double& l) noexcept {
+    const double r = static_cast<double>(c.r) / 255.0;
+    const double g = static_cast<double>(c.g) / 255.0;
+    const double b = static_cast<double>(c.b) / 255.0;
+    const double mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const double mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const double d = mx - mn;
+    l = (mx + mn) * 0.5;
+    if (d <= 0.0) {
+        h = 0.0;
+        s = 0.0;
+        return;
+    }
+    const double denom = 1.0 - detail::absd(2.0 * l - 1.0);
+    s = denom > 0.0 ? d / denom : 0.0;
     if (mx == r) {
         h = 60.0 * ((g - b) / d);
     } else if (mx == g) {

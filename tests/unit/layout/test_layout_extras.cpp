@@ -11,7 +11,9 @@
 #include "termchart/layout/auto_margin.hpp"
 #include "termchart/layout/box.hpp"
 #include "termchart/layout/facet.hpp"
+#include "termchart/layout/label.hpp"
 #include "termchart/layout/label_avoid.hpp"
+#include "termchart/layout/legend.hpp"
 
 namespace {
 
@@ -258,4 +260,50 @@ TEST_CASE("layout/annotation: 标注放不下就不画") {
         }
     }
     CHECK(nonblank == 0);
+}
+
+TEST_CASE("layout/label: 轴标签抽稀按最小间隔贪心保留") {
+    // 位置版：间距 3 → 保留 0,3,6,9（首刻必留）。
+    const std::vector<double> pos{0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
+    const std::vector<std::size_t> kept = thin_tick_labels(pos, 3.0);
+    CHECK(kept == std::vector<std::size_t>{0, 3, 6, 9});
+
+    // 间隔非正 → 保留全部。
+    CHECK(thin_tick_labels(pos, 0.0).size() == pos.size());
+
+    // 空输入 → 空输出。
+    CHECK(thin_tick_labels({}, 3.0).empty());
+}
+
+TEST_CASE("layout/label: 轴标签抽稀按显式宽度判定（宽窄标签混排）") {
+    // 位置与宽度：宽标签夹在中间时不应被窄标签挤掉。
+    const std::vector<double> pos{0.0, 10.0, 20.0};
+    const std::vector<std::size_t> widths{6, 2, 6};
+    // 0 留（右沿 3）；10 左沿 9，9-3=6>=3 留（右沿 11）；20 左沿 17，17-11=6>=3 留。
+    const std::vector<std::size_t> kept = thin_tick_labels(pos, widths, 3.0);
+    CHECK(kept == std::vector<std::size_t>{0, 1, 2});
+}
+
+TEST_CASE("layout/legend: 超宽自动换行分组") {
+    // 项宽：2 列名→6、4 列名→8、2 列名→6；总 20-2=18。limit=14 时前两项(4+8=12)同行，第三项换行。
+    const std::vector<LegendEntry> entries{
+        {"aa", Color::ansi16(1)},
+        {"bbbb", Color::ansi16(2)},
+        {"cc", Color::ansi16(3)},
+    };
+    const std::vector<std::vector<std::size_t>> rows = legend_rows(entries, 14.0);
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0] == std::vector<std::size_t>{0, 1});
+    CHECK(rows[1] == std::vector<std::size_t>{2});
+
+    // limit 极大 → 单行。
+    const std::vector<std::vector<std::size_t>> one = legend_rows(entries, 1e9);
+    CHECK(one.size() == 1);
+    CHECK(one[0].size() == 3);
+
+    // limit 为 0 → 视为无限制，单行。
+    CHECK(legend_rows(entries, 0.0).size() == 1);
+
+    // 空 → 空。
+    CHECK(legend_rows({}, 10.0).empty());
 }

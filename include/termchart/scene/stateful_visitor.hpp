@@ -24,6 +24,8 @@
 #ifndef TERMCHART_SCENE_STATEFUL_VISITOR_HPP
 #define TERMCHART_SCENE_STATEFUL_VISITOR_HPP
 
+#include <vector>
+
 #include "termchart/core/point.hpp"
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
@@ -44,6 +46,27 @@ public:
     void visit(const StrokeOp& command) override;
     void visit(const TextOp& command) override;
     void visit(const ImageOp& command) override;
+    // 分组不参与状态机：不触发收口、不改变当前 fill/stroke、不开也不闭路径。
+    // 显式 override（而非依赖基类默认）一是消掉 -Woverloaded-virtual，二是
+    // 表明"这里是有意忽略"，不是忘了实现。
+    void visit(const GroupOp& command) override;
+
+    // 2026-10-26 扩编指令的状态机接入。这些 visit 只做"状态登记 / 路径管理"，
+    // 渲染由各后端 override 的 hook 完成；旧后端（PDF/GUI）继承 CommandVisitor
+    // 的默认空 visit 即编译通过，行为零影响。
+    void visit(const CurveTo& command) override;
+    void visit(const PushTransformOp& command) override;
+    void visit(const PopTransformOp& command) override;
+    void visit(const ClipOp& command) override;
+    void visit(const BeginPathOp& command) override;
+    void visit(const ClosePathOp& command) override;
+    void visit(const LinearGradientOp& command) override;
+    void visit(const RadialGradientOp& command) override;
+    void visit(const GlobalAlphaOp& command) override;
+    void visit(const DashOp& command) override;
+    void visit(const SetLineWidthOp& command) override;
+    void visit(const SetStrokeCapOp& command) override;
+    void visit(const BlendModeOp& command) override;
 
     // 遍历 + 收尾。调用方不应再自己调 end_path。
     void run(const Scene& scene);
@@ -63,19 +86,78 @@ protected:
     virtual void emit_text(const TextOp& text) = 0;
     virtual void emit_image(const ImageOp& image) = 0;
 
+    // 扩编 hook（默认空：PDF/GUI 等未实现的後端继承即可编译；Canvas/SVG override）
+    // 曲线段：from=当前点，c1/c2 控制点，to 终点（坐标已由基类变换）。
+    virtual void extend_path_curve(const Point& from, const Point& c1, const Point& c2,
+                                  const Point& to) {}
+    // 闭合当前子路径：Canvas 已由基类用直线连回起点，无需额外动作；SVG 发 'Z'。
+    virtual void close_path() {}
+    // 渐变填充（作用于其后 Fill / 带填充色的 RectOp）：rect 为已变换矩形。
+    // 默认回退：不支持渐变的后端（PDF/GUI）用首色实色填充，避免矩形消失。
+    virtual void emit_filled_rect_gradient(const Rect& rect, bool radial, const Point& g0,
+                                          const Point& g1, double radius,
+                                          const std::vector<GradientStop>& stops) {
+        (void)radial;
+        (void)g0;
+        (void)g1;
+        (void)radius;
+        const Rgb c = stops.empty() ? Rgb{0, 0, 0} : stops.front().color;
+        emit_filled_rect(rect, Color::rgb(c));
+    }
+
     // ── 当前状态只读视图（end_path 里读的是"旧值"，见文件头第 2 条）──
     [[nodiscard]] const Color& current_fill() const noexcept { return fill_; }
     [[nodiscard]] const Color& current_stroke() const noexcept { return stroke_; }
     [[nodiscard]] double current_stroke_width() const noexcept { return stroke_width_; }
+    [[nodiscard]] double current_alpha() const noexcept { return alpha_; }
+    [[nodiscard]] const DashOp* current_dash() const noexcept {
+        return dash_active_ ? &dash_ : nullptr;
+    }
+    [[nodiscard]] StrokeCap current_cap() const noexcept { return cap_; }
+    [[nodiscard]] BlendMode current_blend() const noexcept { return blend_; }
+    [[nodiscard]] const Rect* clip_rect() const noexcept {
+        return clips_.empty() ? nullptr : &clip_composed_;
+    }
+    [[nodiscard]] bool fill_is_gradient() const noexcept { return fill_is_gradient_; }
+    void fill_gradient_params(bool& radial, Point& g0, Point& g1, double& radius,
+                             const std::vector<GradientStop>*& stops) const noexcept {
+        radial = fill_grad_radial_;
+        g0 = fill_grad_g0_;
+        g1 = fill_grad_g1_;
+        radius = fill_grad_radius_;
+        stops = &fill_stops_;
+    }
+
+    // 坐标变换（应用当前 transform 栈）：派生类在 emit 前把用户坐标映射到画布坐标。
+    [[nodiscard]] Point transform_point(const Point& p) const noexcept;
+    [[nodiscard]] Rect transform_rect(const Rect& r) const noexcept;
 
 private:
     void finish_path();  // end_path + 重置 path_open_
 
+    // 状态（默认值均恒等，不影响旧 Op 行为）
     Color fill_ = Color::none();
     Color stroke_ = Color::none();
     double stroke_width_ = 1.0;
     Point current_{};
     bool path_open_ = false;
+    Point subpath_start_{};
+
+    std::vector<Transform> transforms_;  // 变换栈（空=恒等）
+    Rect clip_composed_{};               // 当前裁剪区（clips_ 非空时有效）
+    std::vector<Rect> clips_;            // 裁剪栈（intersect 累积；!intersect 覆盖）
+    double alpha_ = 1.0;
+    DashOp dash_;
+    bool dash_active_ = false;
+    StrokeCap cap_ = StrokeCap::Butt;
+    BlendMode blend_ = BlendMode::Normal;
+
+    bool fill_is_gradient_ = false;
+    bool fill_grad_radial_ = false;
+    Point fill_grad_g0_{};
+    Point fill_grad_g1_{};
+    double fill_grad_radius_ = 0.0;
+    std::vector<GradientStop> fill_stops_;
 };
 
 }  // namespace termchart::scene

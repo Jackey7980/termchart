@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "termchart/core/style.hpp"
+#include "termchart/export.hpp"
 #include "termchart/layout/box.hpp"
 #include "termchart/layout/layout.hpp"
 
@@ -14,6 +15,15 @@ class Canvas;
 
 namespace termchart::layout {
 
+class Sink;
+
+// 布局主体：只决定"哪几行哪几列有线"，落笔交给 sink。
+TERMCHART_API void draw_grid(Sink& sink, const PlotArea& area,
+                             const std::vector<double>& x_ticks,
+                             const std::vector<double>& y_ticks,
+                             const Style& style = Style{});
+
+// 兼容入口：内部转成 CanvasSink，布局逻辑不复制第二份。
 TERMCHART_API void draw_grid(canvas::Canvas& canvas, const PlotArea& area,
                              const std::vector<double>& x_ticks,
                              const std::vector<double>& y_ticks,

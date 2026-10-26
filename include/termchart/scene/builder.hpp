@@ -37,6 +37,11 @@ public:
 
     TERMCHART_API SceneBuilder& image(Rect rect, std::uint32_t image_id);
 
+    // 语义分组：成对使用，可嵌套。组内已有的图元不受影响，靠后的图元才归属
+    // 该组；同一段可以同时属于多个嵌套组（内层与外层都能查到）。
+    TERMCHART_API SceneBuilder& begin_group(std::uint32_t id);
+    TERMCHART_API SceneBuilder& end_group(std::uint32_t id);
+
     // 逃生口：直接压一条已构造好的指令（variant 新候选还没加语法糖时用）。
     TERMCHART_API SceneBuilder& push(Command command);
 

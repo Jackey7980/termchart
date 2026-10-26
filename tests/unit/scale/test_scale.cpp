@@ -10,6 +10,8 @@
 
 #include "termchart/scale/linear.hpp"
 #include "termchart/scale/log.hpp"
+#include "termchart/scale/symlog.hpp"
+#include "termchart/scale/registry.hpp"
 
 namespace {
 
@@ -95,3 +97,37 @@ TEST_CASE("scale: 任意底（自然对数）也能映射") {
     CHECK(scale.forward(std::exp(1.0)) == Approx(1.0));
     CHECK(scale.inverse(1.0) == Approx(std::exp(1.0)).epsilon(1e-9));
 }
+
+TEST_CASE("scale: 对称对数在零附近线性、远端对数") {
+    // domain [-100,100] over [0,1]，linthresh=1：0 落在中点。
+    const SymLogScale scale(-100.0, 100.0, 0.0, 1.0, 1.0, true);
+    CHECK(scale.valid());
+    CHECK(scale.forward(0.0) == Approx(0.5));
+    // 对称：±x 关于 0.5 镜像。
+    CHECK(scale.forward(-10.0) == Approx(1.0 - scale.forward(10.0)));
+    // 越界夹紧到端点。
+    CHECK(scale.forward(-1e9) == Approx(0.0));
+    CHECK(scale.forward(1e9) == Approx(1.0));
+}
+
+TEST_CASE("scale: 对称对数 forward/inverse 域内互逆") {
+    const SymLogScale scale(-1000.0, 1000.0, 0.0, 1.0, 2.0, true);
+    for (double v = -900.0; v <= 900.0; v += 137.0) {
+        CHECK(scale.inverse(scale.forward(v)) == Approx(v).epsilon(1e-9));
+    }
+}
+
+TEST_CASE("scale: 对称对数退化/非正数 linthresh 无效") {
+    const SymLogScale bad(-10.0, 10.0, 0.0, 1.0, 0.0, true);
+    CHECK_FALSE(bad.valid());
+    const SymLogScale ok(-10.0, 10.0, 0.0, 1.0, 1.0, true);
+    CHECK(ok.valid());
+    CHECK(std::isnan(ok.forward(std::numeric_limits<double>::quiet_NaN())));
+}
+
+TEST_CASE("scale: 注册表能按名创建 symlog") {
+    auto s = ScaleRegistry::instance().create("symlog");
+    CHECK(s != nullptr);
+    CHECK(ScaleRegistry::instance().supports("symlog"));
+}
+

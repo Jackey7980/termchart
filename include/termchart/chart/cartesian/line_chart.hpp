@@ -61,6 +61,15 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：轴/刻度/图例/标题走 TextOp（它们本来就是字符艺术），
+    // 折线走 MoveTo/LineTo + StrokeOp（矢量，比逐格 • 更连续），
+    // 每条系列用 GroupOp 包起来供交互层成组命中。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
+    // 组 i = 第 i 条非空系列（与 to_scene 的 begin_group 编号一致）。
+    void animation_groups(std::vector<GroupProgress>& out) const override;
+
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 

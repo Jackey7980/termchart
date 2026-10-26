@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **390 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **394 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -14,7 +14,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | detail | L-1 | 9 |
 | core | L0 | 13 |
 | math | L1 | 7 |
-| util | L1 | 17 |
+| util | L1 | 18 |
 | color | L2 | 7 |
 | io | L2 | 4 |
 | math3d | L3 | 3 |
@@ -29,8 +29,8 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | document | L8 | 4 |
 | protocol | L9 | 7 |
 | canvas | L10 | 8 |
-| layout | L11 | 11 |
-| chart | L12 | 79 |
+| layout | L11 | 13 |
+| chart | L12 | 80 |
 | chart3d | L12 | 4 |
 | chart4d | L12 | 2 |
 | graph | L13 | 46 |
@@ -430,12 +430,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `math/linalg.hpp`
 
-> math/linalg.hpp —— 稠密小矩阵线性代数（行主序、span、无模板）
+> math/linalg.hpp —— 稠密小矩阵线性代数 + 向量距离/相似度（行主序、span、无模板）
 >
 > 定位：服务 chart3d/chart4d 的 3D/4D 矩阵与数据拟合的最小公倍集——乘法、求逆、
-> 解方程、行列式。**刻意不做**通用矩阵类型（那属于 Eigen 的生态位）：这里只认
-> span<const double> + 行主序 n×n，零分配、零模板、调用方自管缓冲。
-> * 所有尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+> 解方程、行列式，以及高维数据用的欧氏距离/余弦相似度。**刻意不做**通用矩阵类型
+> （那属于 Eigen 的生态位）：这里只认 span<const double> + 行主序 n×n，零分配、
+> 零模板、调用方自管缓冲。
+> * 矩阵运算：尺寸不匹配/奇异的输入返回 false 且不改 out —— fail-loud。
+> * 向量运算：长度不等取较短者；空、含 NaN 或零向量返回 NaN。
 > * 算法：部分选主元高斯消元（numerical stability 的底线）。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
@@ -477,7 +479,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * 均值用 Kahan 补偿求和；方差用 Welford 单遍算法——长序列上不丢有效位。
 > * 不抛异常、不分配堆内存（median 内部的局部 vector 除外）。
 
-- （无命名空间级声明，或为纯宏 / 伞形头）
+- `struct TukeyFence`
 
 ## util（L1）
 
@@ -515,6 +517,21 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 避免各处手写 `1 << (n - 1)` 而错位。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `util/easing.hpp`
+
+> easing.hpp —— 缓动曲线族（纯数学，无状态）
+>
+> 为什么在 util 而不是 app：缓动只依赖 `util::math`，没有任何时间/IO 语义；
+> 而消费方 `chart`(L12) 在 `app`(L20) 底下，按分层规则不能反向依赖 app。
+> 曲线族的唯一真源放在这里，`app::Easing` / `app::ease` 作为别名转发，
+> 老的调用点（`app/animation.hpp`、`examples/25`）零改动。
+>
+> 口径（与 app::Animation 一致）：
+> * 输入 t 与输出都在 [0,1]；ease() 先把 t 钳位到 [0,1] 再过曲线；
+> 非有限 t（NaN/Inf）不可比较，一律视为界外 → 0。
+
+- `enum class Easing : std::uint8_t`
 
 ### `util/format.hpp`
 
@@ -1293,6 +1310,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct StrokeOp`
 - `struct TextOp`
 - `struct ImageOp`
+- `struct GroupOp`
 - `enum class CommandKind : std::uint8_t`
 
 ### `scene/scene.hpp`
@@ -2154,6 +2172,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > axis.hpp —— 坐标轴绘制（左 y 轴 / 下 x 轴）：轴体 + 刻度 + 数字标签 + 轴名
 
 - `class Canvas`
+- `class Sink`
 
 ### `layout/box.hpp`
 
@@ -2165,6 +2184,16 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 于是 chart 只需 cell_of(x,y) 就能把任意数据点落到正确的格。
 
 - `class PlotArea`
+
+### `layout/canvas_sink.hpp`
+
+> canvas_sink.hpp —— 把布局落笔到字符格
+>
+> 行为与 Sink 化之前**逐字节一致**：同一对端点、同一个字符、同一个样式，
+> 调的都是同一个 Canvas 方法。它存在只是为了把 layout 的布局逻辑从
+> "必须持有 Canvas"里解耦出来，好让 SceneSink 复用同一份布局。
+
+- `class CanvasSink final : public Sink`
 
 ### `layout/facet.hpp`
 
@@ -2187,12 +2216,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > grid.hpp —— 网格线（虚线），在刻度位置铺背景参照
 
 - `class Canvas`
+- `class Sink`
 
 ### `layout/label.hpp`
 
-> label.hpp —— 轴名等文本标签
+> label.hpp —— 轴名标签（轴下方的 x 轴名 / 轴左侧的 y 轴名）
 
 - `class Canvas`
+- `class Sink`
 
 ### `layout/label_avoid.hpp`
 
@@ -2233,12 +2264,35 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class Canvas`
 - `struct LegendEntry`
+- `class Sink`
+
+### `layout/sink.hpp`
+
+> sink.hpp —— 布局落笔的抽象出口
+>
+> 为什么需要这层：轴、网格、标题、图例的**布局决策**（刻度落在第几列、
+> 标签怎么对齐、拐角画在哪一格）只应该有一份；但"落笔"的目标有两种：
+> * canvas::Canvas —— 终端字符格；
+> * Scene —— 矢量 IR（svg / pdf / 未来的交互层）。
+> 之前每个 draw_xxx 都直接吃 `canvas::Canvas&`，想导 Scene 就只能把布局
+> 逻辑抄一遍，两份实现对同一个刻度迟早会算出不一样的列——这正是
+> `canvas/scene_renderer.hpp` 开头警告的"两份解释会分叉"。
+>
+> 接口刻意按**语义**命名而不是按字符：
+> * put()  —— 字符艺术（角、刻度钩），只能以字符形式存在；
+> * text() —— 一段文本，起点是左上格；
+> * line() —— "这里有一条线"，用实线还是虚线由调用方按语义指定，
+> 至于最终是 ─ 还是盲文点，交给 sink 的实现决定。
+
+- `enum class LineStyle : std::uint8_t`
+- `class Sink`
 
 ### `layout/title.hpp`
 
-> title.hpp —— 标题：在矩形顶部居中（或按对齐）绘制
+> title.hpp —— 标题（居中/左/右对齐到给定矩形）
 
 - `class Canvas`
+- `class Sink`
 
 ## chart（L12）
 
@@ -2477,9 +2531,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > canvas::Canvas。**不碰 render 层**（架构禁止边），于是未来 to_document()
 > 通道独立存在。绘制上下文见 context.hpp。
 
+- `class Scene`
+- `class Sink`
 - `void data_bounds(const std::vector<Series>& series, double& xmin, double& xmax, double& ymin, double& ymax)`
 - `layout::PlotArea make_area(canvas::Canvas& canvas, const layout::Margin& margin, double xmin, double xmax, double ymin, double ymax, bool auto_domain, bool include_zero, std::optional<scale::Domain> y_override = std::nullopt)`
+- `layout::PlotArea make_area(std::uint32_t width, std::uint32_t height, const layout::Margin& margin, double xmin, double xmax, double ymin, double ymax, bool auto_domain, bool include_zero, std::optional<scale::Domain> y_override = std::nullopt)`
 - `void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series, const layout::PlotArea& area, bool show)`
+- `void draw_legend_for(layout::Sink& sink, const std::vector<Series>& series, const layout::PlotArea& area, bool show)`
+- `struct AnimationTrack`
 - `class Chart`
 
 ### `chart/context.hpp`
@@ -2941,6 +3000,22 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > AutoViz 路由、CLI --help、诊断都靠它，不许各表口径不一。
 
 - `class ChartRegistry`
+
+### `chart/scene_sink.hpp`
+
+> scene_sink.hpp —— 把 layout 的落笔语义翻译成**真实的 Scene 指令**
+>
+> 与"把 Canvas 逐格录成 TextOp"（那种只是把位图换了个容器）的区别：
+> * Solid 线 → MoveTo/LineTo + StrokeOp，是矢量。终端侧由 render_scene
+> 光栅成盲文/半块，信息量比逐格 • 更高；导出侧就是真正的 <line>。
+> * Dashed 线 → 逐格 TextOp。原因是盲文光栅器会把虚线画成实线，语义会丢；
+> 虚线本来就是字符艺术，保留字符才是忠实的。
+> * 文本/角/刻度钩 → TextOp，它们本来就只能是字符。
+>
+> 分组：调用方用 begin_group()/end_group() 把一段指令包起来（见 SceneBuilder）。
+> 分组不改变任何像素，只让交互层能把 HitRegion 成组收拢。
+
+- `class SceneSink final : public layout::Sink`
 
 ### `chart/series.hpp`
 
@@ -5046,7 +5121,6 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * 时钟可注入（AnimationClock）：单测与 headless 不依赖真实时间流逝，
 > 真实时间只是缺省实现（steady_clock，单调，见 util/timer.hpp 的理由）。
 
-- `enum class Easing : std::uint8_t`
 - `class Animation`
 
 ### `app/app.hpp`

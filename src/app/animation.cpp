@@ -15,31 +15,6 @@ double default_clock() noexcept {
 
 }  // namespace
 
-double ease(Easing easing, double t) noexcept {
-    if (!util::is_finite(t)) {
-        return 0.0;  // NaN/Inf 不可比较，视为界外。
-    }
-    const double x = util::clamp<double>(t, 0.0, 1.0);
-    switch (easing) {
-        case Easing::Linear:
-            return x;
-        case Easing::EaseInQuad:
-            return x * x;
-        case Easing::EaseOutQuad:
-            return 1.0 - (1.0 - x) * (1.0 - x);
-        case Easing::EaseInOutQuad:
-            return x < 0.5 ? 2.0 * x * x : 1.0 - 2.0 * (1.0 - x) * (1.0 - x);
-        case Easing::EaseInCubic:
-            return x * x * x;
-        case Easing::EaseOutCubic:
-            return 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x);
-        case Easing::EaseInOutCubic:
-            return x < 0.5 ? 4.0 * x * x * x
-                           : 1.0 - 4.0 * (1.0 - x) * (1.0 - x) * (1.0 - x);
-    }
-    return x;
-}
-
 Animation::Animation(double duration_seconds, Easing easing, AnimationClock clock)
     : duration_(util::is_finite(duration_seconds) && duration_seconds > 0.0 ? duration_seconds : 0.0),
       easing_(easing),

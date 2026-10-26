@@ -31,6 +31,15 @@
   `linscale`）+ 跨零点的刻度生成（主要风险点：tick 序列与网格对齐）+ `layout` 的零线/负区约定。
   **决策依据**：裁剪已覆盖真实脏数据场景（量级是"脏"而非"信号"），为单一图种动 `scale` 与 22 层
   架构的收益不划算；触发条件是出现"量级本身就是业务信号"的真实需求。
+- [ ] **chart → 真实 Scene 的图种迁移**（2026-10-25 登记）：`Chart::to_scene` 通路已建
+  （`layout::Sink` 双落笔端 + `chart::SceneSink` + `scene::GroupOp` + `api::chart_to_scene` /
+  `chart_to_svg`，示例 `78_chart_scene`）。**已迁移：`LineChart`（矢量描边 + 组）、`BarChart`
+  （FillOp+RectOp 实心柱）**；其余 21 个 cartesian 图种与 polar/statistical/hierarchical/
+  financial/flow/geo/text/indicator 全部仍只有 `draw()`，`to_scene` 返回 `false`，
+  `api` 层表现为 `Unsupported`（刻意 fail-loud，不产出"Canvas 转录"的假 Scene）。
+  迁移口径：几何图元（折线/柱/弧/框）走矢量，字符艺术（轴/刻度/图例/标签/散点标记）
+  保持 TextOp——判据是"该元素应该跟随缩放，还是本身就是字符"。逐图种迁移需各自补
+  golden/单测（`78_chart_scene` 演示了三条验证线：指令种类与分组、render_scene 落格、SVG 元素）。
 - [ ] **已知遗留小项**（2026-10-21 登记）：① `data::rolling` 的纯 SMA 仍 O(N·window)，
   滑动求和 O(N) 化属局部优化（EMA 已 O(N)）；② `math::interpolate` 的 monotone (PCHIP)
   变体未做（自然样条在噪声数据上轻微过冲）；③ `io/csv` 与 `dsl/csv_sniff` 两份解析器

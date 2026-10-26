@@ -13,24 +13,15 @@
 #include <functional>
 
 #include "termchart/export.hpp"
+#include "termchart/util/easing.hpp"
 
 namespace termchart::app {
 
-// 缓动曲线族。选择原则：终端动画大多是 UI 过渡（面板展开、数值滚动），
-// 二次/三次曲线族够用且单调；不带 overshoot 的 Back/elastic——回弹会让
-// 字符画布上的元素"越过"目标格，与"输出在 [0,1]"的口径冲突。
-enum class Easing : std::uint8_t {
-    Linear,
-    EaseInQuad,
-    EaseOutQuad,
-    EaseInOutQuad,
-    EaseInCubic,
-    EaseOutCubic,
-    EaseInOutCubic,
-};
-
-// 缓动映射：t 会被钳位；输出在 [0,1]。
-[[nodiscard]] TERMCHART_API double ease(Easing easing, double t) noexcept;
+// 曲线族与 ease() 的唯一真源在 `util/easing.hpp`（L1）——下沉是因为消费方
+// `chart`(L12) 在本模块(L20)之下，反向依赖会被 check_layers 拦。
+// 这里保留同名别名，`app::Easing::Linear` / `app::ease(...)` 照旧可用。
+using util::Easing;
+using util::ease;
 
 // 时钟：返回"当前时刻"（秒）。缺省实现基于 steady_clock。
 using AnimationClock = std::function<double()>;

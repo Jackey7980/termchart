@@ -38,7 +38,7 @@ GUI（窗口/位图渲染）与终端（字符格渲染）是**平行栈**，共
 ## 现状
 
 widget/plugin/app 已在 `include/termchart/` 落地（终端栈使用）。GUI 平行栈的**渲染核心**已落地：
-`include/termchart/gui/`（层 22）提供 `font`（点阵等宽字体）与 `scene_renderer`（Scene → RGBA 位图，
+`include/termchart/gui/`（层 22）提供 `font`（`FontBackend` 多态：ASCII 内置 5×7 点阵 + 非 ASCII 惰性加载系统 TTF）与 `scene_renderer`（Scene → RGBA 位图，
 超采样抗锯齿），复用 `scene::StatefulVisitor` 时序与 `image/png_encode` 出图，可运行产物见
 `examples/55_gui_scene_png.cpp`。
 

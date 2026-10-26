@@ -8,9 +8,9 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径（2026-10-22 实测）：`include/termchart/**/*.hpp`（372 个）、`src/**/*.cpp`（309 个）、
-`examples/`（76 个源）、`tests/`（157 个源）、golden 14 份。
-`ctest` **80 项**（5 套件 + 76 示例 + 3 bench 冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
+数字口径（2026-10-26 复核文件计数；doctest 用例/断言为 2026-10-22 全量跑值）：`include/termchart/**/*.hpp`（396 个）、`src/**/*.cpp`（332 个）、
+`examples/`（81 个源）、`tests/`（164 个源）、golden 14 份（与 `tests/golden/` 一致）。
+`ctest`：5 套件 + 81 示例（个别 bench 经 `--quick` 进冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
 doctest：**termchart_tests 单套件 1053 用例 / 194246 断言**；含 golden/render/core/util 共 5 套件。
 改动后请重跑下列命令再更新本文件。
 
@@ -52,13 +52,13 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `document` | 8 | 可用 | Document/Block/Span/TableModel IR | — |
 | `graph` | 13 | 部分 | 节点/边/元数据/占用栅格/箭头/端口/标签避让/交叉计数（判定复用 `util/geom`）；布局（网格/分层/根树/力导向/**径向/圆周**——径向按子树扇区均分、半径按层递增，圆周按外接圆判据推半径保证不重叠；**`metro` 地铁 45°（链分解 + 之字 + 锚点候选对栅格路由）**/ **`cluster` 聚类**）；路由（直线/正交/**样条 `spline`**/**弧线 `arc`**/**`bundling` 边捆绑**/**`obstacle` 障碍避让**）；**形状八种**；图种（流程图/状态机图/思维导图/**组织架构图**/节点-连线/**`dag`（含环检测）**/**`dependency`**） | `sugiyama`（分层已覆盖其分层部分）`kamada_kawai`；`18_uml_sequence` 示例（等序列渲染） |
 | `interaction` | 15 | **可用** | 输入解析（ANSI/UTF-8/SGR 鼠标流式，未完成序列有 **256 KiB 缓冲上限**）、事件、命中测试、分发、焦点、**视口缩放/平移**（`Viewport`：锚点缩放 + 双向夹取；`PanGesture`：纯几何拖拽状态机）、**悬停读数层 `crosshair`**（横/纵准线 + 轴侧读数，默认只改样式保留数据字符）、**浮层 `tooltip`**（边框 + 自动翻边 + 宽字符按 2 列算 + 超长截断）；后两者的核心不变量都是**`clear()` 逐格逐属性精确还原**（覆盖层不得永久污染画布）；**`highlight`**（高亮放大：锚点居中、跨度 /magnify）、**`select`**（框选状态机 begin/update/end/cancel，矩形归一化 + payloads_inside 保序）、**`brush`**（半径吸附刷选，首次顺序去重）、**`legend_toggle`**（id→可见性，payload 0 永不生效，click_at 复用 topmost_hit）、**`immediate`**（Event 流→Viewport/BoxSelect 的路由粘合层）。各配单测；`examples/30` 锁图例语义 | 序列图/表格的交互绑定（等渲染侧落地） |
-| `backend` | 16 | 可用 | 三物种各至少一个后端：snapshot（ansi/text/html_pre/json）、vector（svg）、structured（html/markdown） | `png_screenshot`；structured/vector 的 `latex_backend` |
+| `backend` | 16 | 可用 | 三物种各至少一个后端：snapshot（ansi/text/html_pre/json）、vector（svg、**pdf（部分：线/填充/文本可用；ArcOp 以边界矩形近似、位图嵌入未做）**）、structured（html/markdown） | `png_screenshot`；`latex_backend`；`pdf_backend` 的 ArcOp 与位图嵌入未完成 |
 | `protocol` | 9 | 可用 | sixel（量化+调色板+RLE）、kitty（原始 RGBA+base64 分块）、**iterm2 内联（PNG+base64+OSC 1337）**、半块图像、降级选择（Kitty > Iterm2 > Sixel > HalfBlock > None）、环境探测（含 WezTerm/Konsole/iTerm 与手动覆盖） | — |
 | `dsl` | 17 | **可用（14/14 文件齐备）** | 词法/框架：`lexer`（箭头感知切分 / UTF-8 标签 / 注释前缀可配 / 非法字节不阻塞游标）、`parser_base`（递归下降 + 首个诊断定位）、`ast`（+`to_graph` 唯一适配点）、`dsl_registry`（function-local static + 快照语义 + 幂等内置登记，登记 6 个图产出方言）。方言：`mermaid_flow`（8 形状 / 9 箭头 / 两种边标签 / 边链 / subgraph）、`mermaid_class`（类体成员 + 六种关系语义 + 多重度 + 构造型）、`mermaid_state`（`[*]` 起止 + 组合态 + note）、`mermaid_sequence`（**独立类型 `AstSequence`**：参与者 / 8 种消息 / note / 激活，刻意不进图模型）、`graphviz_dot`（rankdir / 属性按原文切片 / 并列节点集 / `{a b}->c` 展开）、`plantuml`（类体 + 五关系 + 多重度 + 宽松容错）、`d2`（`name: Type` 形状 / 连接 / 容器块 / `name.prop` 属性）、`table_markdown`（GFM 管道表格 + 转义竖线）、`csv_sniff`（引号字段跨行 / BOM / 七类列型推断）。测试：`tests/unit/dsl/` 5 个文件、`tests/fixtures/` 4 份生成物、`fuzz_mermaid` + `fuzz_dsl_lexer`（`--self-test` 进 ctest）、`bench_mermaid_parse`（200/400/800/1600 节点四方言基线） | `table_markdown`/`csv_sniff`/`mermaid_sequence` 的**渲染**侧（尚无表格图与时序图渲染器）；DOT 的 HTML 标签与端口、PlantUML 的组件/活动图族、D2 的 SQL/markdown 嵌入块 |
 | `widget` | 18 | **可用（6 头 / 3 实现）** | `widget`（布局 + 生命周期 + 事件注入）、`immediate_widget`（每帧重建的即时模式）、`reactive`（信号式，脏标记 + 重建）、主题三份（`theme_dark` / `theme_light` / `theme_mono`） | GUI 平行栈的 `widget` 层由 GUI 自己重写（设计选择，见第六节） |
 | `plugin` | 19 | **可用（4 头 / 4 实现）** | `plugin`（接口 + 生命周期）、`manifest`（元数据）、`loader`（加载）、`dynamic`（动态库）；注册表为 function-local static + App 构造时冻结快照（见 `docs/design/registry.md`） | 真·跨动态库加载（当前为同进程登记） |
 | `app` | 20 | **可用（7 头 / 7 实现）** | `app`（reactive 主循环）/ `immediate_app`（即时模式循环）、`loop`（事件循环）、`headless`（无 tty 可测）、`animation`（帧调度）、`post`（帧后处理）、`config`（运行期配置） | 平台原生循环（GUI 侧自写） |
-| `gui` | 22 | **可用（3 头 / 3 实现）** | `font`（5×7 点阵等宽字体：ASCII 全量 95 字形、缺字画占位框、UTF-8/显示宽度口径）、`scene_renderer`（Scene → RGBA Bitmap：3× 超采样盒式 AA、线宽随 autofit 与 SVG 同构、文本下采样后直绘置顶、透明背景）、`hover_chart`（悬停层：`chart::HitRegion` + `interaction::topmost_hit` 命中 → 浮层翻译成 RectOp/TextOp 叠进 Scene 副本 → 重放；渲染器零改动。`examples/55` 出底图、`examples/58` 出悬停帧） | 文本仅内置 ASCII 字形（非 ASCII 画占位框）；真实窗口/鼠标事件循环在平行栈 `termchart_gui`（`backend_tk` 现为无头参考） |
+| `gui` | 22 | **可用（3 头 / 3 实现）** | `font`（`FontBackend` 多态：ASCII 0x20..0x7E 走内置 5×7 点阵零成本契约；非 ASCII 码点惰性加载系统 TTF（`image::TtfFont`，Windows 自动试 `msyh.ttc`/`simhei.ttf`，`TERMCHART_GUI_FONT` 可覆盖），缺失/解析失败 fail-safe 退回点阵占位框；UTF-8/显示宽度口径）、`scene_renderer`（Scene → RGBA Bitmap：3× 超采样盒式 AA、线宽随 autofit 与 SVG 同构、文本下采样后直绘置顶、透明背景）、`hover_chart`（悬停层：`chart::HitRegion` + `interaction::topmost_hit` 命中 → 浮层翻译成 RectOp/TextOp 叠进 Scene 副本 → 重放；渲染器零改动。`examples/55` 出底图、`examples/58` 出悬停帧） | 文本已支持系统 TTF（CJK 经 `examples/73_gui_cjk` / `75_gui_cjk_4d` 验证上屏）；真实窗口/鼠标事件循环在平行栈 `termchart_gui`（`backend_tk`/`QtBackend`/`Win32Backend` 待接真事件循环） |
 | `termchart_gui` | — | **平行栈已落地（见 `include/termchart_gui/`）** | 自写 `layout`/`widget_tree`/`native_loop`/`backend_tk`/`render::style_map`；呈现侧复用主库 `gui/font` + `gui/scene_renderer` + `gui/hover_chart`。**四种后端并列**：无头 `HeadlessBackend`（测试/PNG）、终端 `TuiBackend`（halfblock 真彩上屏）、原生 `Win32Backend`（`plugins/gui_win32`）、原生 `QtBackend`（`plugins/gui_qt`，Qt5/Qt6 Widgets + AUTOMOC + photo 可移植事件）；`TkBackend`（`plugins/gui_tk`，Tcl/Tk C API + `Tk_PhotoPutBlock` 贴图 + Tcl 层 bindings）已落地但本机无 Tcl/Tk 未编译验证 | Qt/Tk 后端未在本机编译（无对应开发库）；两者均 fail-loud（配置期找不到依赖即报错） |
 
 ## 二、三物种导出能力
@@ -71,7 +71,7 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 
 > 后端不做跨渲染模型转换：输入是哪一种物种，就在类型上钉死（见各 `backend/*/backend.hpp`）。
 
-## 三、示例索引（57 个源，规格示例 01–54 齐备，全部在 ctest 里冒烟）
+## 三、示例索引（81 个源，规格示例 01–54 齐备，全部在 ctest 里冒烟）
 
 | 示例 | 路径 | 渲染方式 | 备注 |
 | --- | --- | --- | --- |
@@ -103,12 +103,31 @@ cmake --build --preset ninja --target check_all # 分层 + 自洽 + 生成物 + 
 | `74_hypercube_4d` | 终端 | `math4d` + `chart4d` → `scene` → `render_scene` + `app::HeadlessSession` | 4D 超立方体：16 顶点/32 边，XW+YZ 两平面自转，两阶段投影，差分重绘 60 帧（帧角=帧号×定步长；stdout tty 门控节流） |
 | `75_gui_cjk_4d` | PNG | `chart4d` + `gui/font`（TTF）+ `gui::SceneRenderer` | 4D 缝合怪：超立方体固定帧角 + 中文标题/注脚（系统 TTF）+ 3× 超采样 → PNG；两次运行 SHA256 一致；标题带 ink 656px（真字形量级） |
 | `76_csv_to_chart` | 终端 | `io/csv` + `data` + `math/stats` + braille 光栅 | 数据管线端到端：CSV（含 NA）→ LinearInterp → EMA(5) → 双曲线 + 尾部统计行（mean/pearson），确定性 |
+| `77_chart_animation` | 终端 | `chart` 按名动画表 | 折线扫入 / 柱生长；`AnimationTrack{duration,delay,easing}`，未 `tick` 一律 1.0（静态路径零影响） |
+| `78_chart_scene` | 终端 + 文件 | `chart::to_scene` → `scene` → `render_scene` / `vector/svg` | 一份 Scene 三个消费者：终端盲文图、`<path>/<rect>/<text>` SVG、`GroupOp` 成组命中 |
 
 **重要澄清（避免再踩 R12 的坑）**：`chart`/`graph`/`layout` 这些"高级 API"示例
-**本来就直连 `canvas.draw_line`/`draw_text` + 显式字符**，从不经过 `scene::Scene`，
-因此历史上从未出现 `*` 占位（实测占位计数为 0）。R12 的真实影响面是
-**同一份 `scene::Scene` 在终端侧能否出真图**——该缝已收口：`render_scene` 的描边
-走 braille 2×4 子像素、填充走 halfblock 1×2 实心（golden `scene_raster/basic.txt` 锁外观）。
+**本来就直连 `canvas.draw_line`/`draw_text` + 显式字符**，因此历史上从未出现 `*` 占位
+（实测占位计数为 0）。R12 的真实影响面是**同一份 `scene::Scene` 在终端侧能否出真图**
+——该缝已收口：`render_scene` 的描边走 braille 2×4 子像素、填充走 halfblock 1×2 实心
+（golden `scene_raster/basic.txt` 锁外观）。
+
+**图表 → 真实 Scene（2026-10-25 新增）**：上面那条"从不经过 Scene"只在
+`draw()` 路径上成立；现在 `chart::Chart::to_scene(width,height)` 提供了第二条通路，
+它产出的是**几何指令流**，不是把 Canvas 逐格抄成 `TextOp`：
+
+| 层 | 能力 | 说明 |
+| --- | --- | --- |
+| `layout::Sink` | 布局落笔口（`put`/`text`/`line`） | 轴/网格/标题/图例的**布局决策只有一份**；`CanvasSink` 落到字符格、`SceneSink` 落到 Scene。两份实现分叉的隐患被结构性消除 |
+| `chart::SceneSink` | Sink → Scene 翻译 | 轴向实线/虚线 → `─│┄┆` 的 TextOp（盲文光栅会把 `│` 画成 `⣿`、`─` 画成 `⠛`，反而更糊）；**非轴向几何 → StrokeOp + MoveTo/LineTo** |
+| `scene::GroupOp` | 分组指令（variant 末尾，index 8） | 每条系列 begin/end 成对、可嵌套；访问者默认空实现，SVG/PDF/ScenePainter 零改动即可忽略 |
+| `chart::LineChart` | `to_scene` | 折线 = 矢量描边；部分段（动画揭开）按数据坐标插值后 `LineTo`；标记点保留 `●` TextOp |
+| `chart::BarChart` | `to_scene` | 柱 = `FillOp + RectOp`（半块实心光栅），不是 `█` 逐格 |
+| `api::chart_to_scene` | `Result<scene::Scene>` | 显式要 Scene：未迁移图种返回 `Unsupported`，**不静默给假几何** |
+| `api::chart_to_svg` | `Result<std::string>` | 同一份 Scene → `<path>`/`<rect>`/`<text>`；字号默认 1.0（场景单位就是字符格） |
+
+示例 `78_chart_scene`：一份 Scene 三个消费者（终端 `render_scene`、SVG、按组命中）。
+其余图种仍只有 `draw()`，`to_scene` 默认返回 `false`（`api` 层表现为 `Unsupported`）。
 
 ## 四、性能基线（`bench/`，零外部依赖）
 
@@ -128,15 +147,15 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 **372 头**，`src/` **309 个 `.cpp`**。
+- 按 `结构.md` 的具名文件表核对：`include/` 现有 **396 头**，`src/` **332 个 `.cpp`**。
   规格具名头文件约 336–338 个，**经 `math3d`/`chart3d`/`math4d`/`chart4d`/`network`/`math`/`io`/`data`
-  八轮扩展后已远超规格（372 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
+  八轮扩展后已远超规格（396 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
   （此前为零代码），`termchart_gui/` 属于 GUI 平行栈、已开工（见第六节）。
-- `examples/`：规格 60 个，实存 **76 个源**（规格编号示例 01–54 全部齐备；
+- `examples/`：规格 60 个，实存 **81 个源**（规格编号示例 01–54 全部齐备；
   `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`、`07_fractal`、
   `08_fractal_levels`、`40_advanced_master`、`71_fetch_stb`、`72_3d` 等为规格外补充，
   部分来自并行会话）。
-- `bench/` **3 条基线**（`bench_sugiyama` / `bench_force` / `bench_mermaid_parse`），
+- `bench/` **5 条基线**（`bench_sugiyama` / `bench_force` / `bench_mermaid_parse` / `bench_render` / `bench_svg_backend`），
   零外部依赖、`--quick` 进 ctest 冒烟。
 - `tests/fuzz/` **8 个目标**，`--self-test` 已进 ctest（`ctest --preset fuzz`），
   跑过 6×20000 组随机输入无崩溃；语料 24 条共享 + PNG 专项 6 条。

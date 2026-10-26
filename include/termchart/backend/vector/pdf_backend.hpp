@@ -5,12 +5,12 @@
 //   * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
 //     TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）；
 //   * 真彩 RGB（颜色类型 / PDF Color Operators rg/RG）；
-//   * 内嵌 PNG（走 image::Bitmap → encode_png → /Filter /FlateDecode）；
 //   * 单页（多页留给后续切片，初始只支持 1 页）；
 //   * 文本流：仅 BaseFont / Helvetica（PDF 14 标准字体之一，零嵌入）。
 //
-// 故意不写：
-//   * 圆弧 / 贝塞尔（PDF 支持但与 Scene 圆弧表示不一致，留 TODO）；
+// 故意不写 / 未做：
+//   * 圆弧（ArcOp 以折线逼近，非原生圆弧算子）；贝塞尔（未做）；
+//   * 位图嵌入（ImageOp 落 1×1 白占位 XObject，未内嵌 PNG）；
 //   * 透明度 / 混合模式；
 //   * 字体嵌入（用标准字体零成本，但 ASCII only）。
 //

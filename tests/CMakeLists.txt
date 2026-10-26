@@ -127,6 +127,10 @@ add_executable(termchart_tests
     unit/chart/test_chart_geo.cpp
     unit/chart/test_chart_text.cpp
     unit/chart/test_chart_indicator.cpp
+    unit/chart/test_chart_financial_indicators.cpp
+    unit/chart/test_chart_animation.cpp
+    unit/chart/test_chart_scene.cpp
+    unit/chart/test_scene_animation.cpp
 
     # ── document ──
     unit/document/test_doc_ir.cpp
@@ -151,6 +155,7 @@ add_executable(termchart_tests
     unit/interaction/test_interaction_immediate.cpp
     unit/interaction/test_interaction_viewport.cpp
     unit/interaction/test_interaction_overlay.cpp
+    unit/interaction/test_interaction_data_zoom.cpp
 
     # ── graph ──
     unit/graph/test_graph.cpp

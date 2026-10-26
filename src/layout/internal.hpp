@@ -6,17 +6,21 @@
 
 #include "termchart/core/rect.hpp"
 #include "termchart/layout/layout.hpp"
+#include "termchart/layout/sink.hpp"
 
 namespace termchart::layout {
 
 // 占位级线/网格/刻度字符（最终观感由渲染层决定，这里只负责几何）。
-inline constexpr char32_t kHLine = U'\u2500';    // ─
-inline constexpr char32_t kVLine = U'\u2502';    // │
+// 线字符的**唯一真源**已上移到公开头 layout/sink.hpp：CanvasSink 与 SceneSink
+// 都要用同一套字形，两处各写一份字面量迟早会分叉。这里保留旧名做别名。
+inline constexpr char32_t kHLine = kSolidH;      // ─
+inline constexpr char32_t kVLine = kSolidV;      // │
 inline constexpr char32_t kTickDown = U'\u2534';   // ┴
 inline constexpr char32_t kTickRight = U'\u2524';  // ┤
+inline constexpr char32_t kTickLeft = U'\u251c';   // ├
 inline constexpr char32_t kCorner = U'\u2514';   // └
-inline constexpr char32_t kGridH = U'\u2504';    // ┄
-inline constexpr char32_t kGridV = U'\u2506';    // ┆
+inline constexpr char32_t kGridH = kDashedH;     // ┄
+inline constexpr char32_t kGridV = kDashedV;     // ┆
 
 // 把 text 按 halign 放到 [x0, x1] 区间内的起始列；超长则左对齐截断。
 inline double align_start(double x0, double x1, std::size_t len, HAlign align) noexcept {
