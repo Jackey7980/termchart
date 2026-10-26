@@ -34,6 +34,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：每段 █ 柱走 RectOp+FillOp，连接线（─）走
+    // MoveTo/LineTo+StrokeOp。三色（增/减/小计）按 opts_ 取色。无图例。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // set_data 后的累计序列（与保留的条目一一对应，小计项为其自身值）。
     [[nodiscard]] const std::vector<double>& cumulative() const noexcept {

@@ -7,6 +7,7 @@
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/scale/ticks.hpp"
 
 namespace termchart::chart {
@@ -99,6 +100,66 @@ void YieldCurveChart::draw(DrawContext ctx) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
     (void)show_legend_;
+}
+
+bool YieldCurveChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    if (points_.empty()) {
+        return true;
+    }
+    double xmin = points_.front().x;
+    double xmax = points_.back().x;
+    double ymin = points_.front().y;
+    double ymax = points_.back().y;
+    for (const Point& p : points_) {
+        xmin = std::min(xmin, p.x);
+        xmax = std::max(xmax, p.x);
+        ymin = std::min(ymin, p.y);
+        ymax = std::max(ymax, p.y);
+    }
+    if (xmax - xmin <= 0.0) {
+        xmin -= 1.0;
+        xmax += 1.0;
+    }
+    if (ymax - ymin <= 0.0) {
+        ymin -= 0.5;
+        ymax += 0.5;
+    }
+    const double pad_y = (ymax - ymin) * 0.05;
+    ymin -= pad_y;
+    ymax += pad_y;
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks, Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "maturity", Style{});
+    layout::draw_axis_y(sink, area_, yticks, name_, Style{});
+
+    const Style line_style = Style{}.set_fg(color_);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    if (points_.size() >= 2) {
+        for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
+            b.stroke(line_style.fg());
+            b.move_to(area_.cell_of(points_[i].x, points_[i].y));
+            b.line_to(area_.cell_of(points_[i + 1].x, points_[i + 1].y));
+        }
+    }
+    if (options_.show_markers) {
+        for (const Point& p : points_) {
+            sink.put(area_.cell_of(p.x, p.y), kMarkerChar, line_style);
+        }
+    }
+    b.end_group(0);
+
+    const Rect inner = area_.inner_rect();
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

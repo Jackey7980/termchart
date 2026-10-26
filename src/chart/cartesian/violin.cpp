@@ -9,6 +9,7 @@
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/scale/ticks.hpp"
 
 namespace termchart::chart {
@@ -150,6 +151,107 @@ void ViolinChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool ViolinChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    std::vector<std::vector<double>> groups;
+    groups.reserve(groups_.size());
+    for (const std::vector<double>& g : groups_) {
+        std::vector<double> xs;
+        xs.reserve(g.size());
+        for (double v : g) {
+            if (std::isfinite(v)) {
+                xs.push_back(v);
+            }
+        }
+        if (!xs.empty()) {
+            groups.push_back(std::move(xs));
+        }
+    }
+    if (groups.empty()) {
+        return true;
+    }
+
+    double ymin = groups.front().front();
+    double ymax = ymin;
+    for (const auto& xs : groups) {
+        for (double v : xs) {
+            ymin = std::min(ymin, v);
+            ymax = std::max(ymax, v);
+        }
+    }
+    if (!(ymax > ymin)) {
+        ymax = ymin + 1.0;
+    }
+
+    const auto n = static_cast<double>(groups.size());
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5, n - 0.5, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks, Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "group", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "value", Style{});
+
+    const Rect inner = area_.inner_rect();
+    const int bands = opts_.bands > 0 ? std::clamp(opts_.bands, 4, 128)
+                                      : std::clamp(static_cast<int>(inner.h), 4, 64);
+    const Style st = Style{}.set_fg(opts_.color);
+    const double half_w = std::max(0.5, inner.w / n * 0.5 - 0.5);
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        const std::vector<double>& xs = groups[g];
+        const double xc = area_.x_scale().forward(static_cast<double>(g));
+        const double h = silverman_bandwidth(xs);
+
+        std::vector<double> density(static_cast<std::size_t>(bands), 0.0);
+        double dmax = 0.0;
+        for (int k = 0; k < bands; ++k) {
+            const double t =
+                ymin + (static_cast<double>(k) + 0.5) * (ymax - ymin) /
+                           static_cast<double>(bands);
+            double d = 0.0;
+            for (double v : xs) {
+                const double u = (t - v) / h;
+                d += std::exp(-0.5 * u * u);
+            }
+            density[static_cast<std::size_t>(k)] = d;
+            dmax = std::max(dmax, d);
+        }
+        if (!(dmax > 0.0)) {
+            continue;
+        }
+
+        for (int k = 0; k < bands; ++k) {
+            const double t =
+                ymin + (static_cast<double>(k) + 0.5) * (ymax - ymin) /
+                           static_cast<double>(bands);
+            const double t_norm = density[static_cast<std::size_t>(k)] / dmax;
+            const double hw = std::max(0.5, t_norm * half_w);
+            const double row = area_.y_scale().forward(t);
+            b.fill(st.fg());
+            b.rect(Rect{xc - hw, row, hw * 2.0, 1.0});
+        }
+        if (opts_.show_median) {
+            std::vector<double> sorted = xs;
+            std::sort(sorted.begin(), sorted.end());
+            const double med = sorted.size() % 2 == 1
+                                   ? sorted[sorted.size() / 2]
+                                   : (sorted[sorted.size() / 2 - 1] +
+                                      sorted[sorted.size() / 2]) / 2.0;
+            sink.put(Point{xc, area_.y_scale().forward(med)}, kMedianMark, st);
+        }
+    }
+    b.end_group(0);
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

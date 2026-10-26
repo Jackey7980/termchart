@@ -33,6 +33,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 

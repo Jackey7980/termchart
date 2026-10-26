@@ -33,6 +33,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：各组密度轮廓用矢量 RectOp+FillOp 复刻（分数行用薄矢量矩形
+    // 代替 draw() 的八分块字符），组图例走 LegendEntry。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:

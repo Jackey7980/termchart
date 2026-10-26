@@ -30,6 +30,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：marching squares 逐级提取的等值线段用矢量 StrokeOp 复刻，
+    // 网格/轴/标题走 TextOp（与 AreaChart::to_scene 同构）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:

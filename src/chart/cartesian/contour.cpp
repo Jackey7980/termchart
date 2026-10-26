@@ -9,6 +9,7 @@
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 namespace termchart::chart {
 namespace {
@@ -201,6 +202,164 @@ void ContourChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool ContourChart::to_scene(scene::Scene& out, std::uint32_t width,
+                            std::uint32_t height) const {
+    // 与 draw() 同源：场裁成矩形、剔除非有限值；不足 2×2 直接返回空 Scene。
+    if (rows_.size() < 2) {
+        return true;
+    }
+    std::size_t cols = rows_.front().size();
+    for (const std::vector<double>& row : rows_) {
+        cols = std::min(cols, row.size());
+    }
+    if (cols < 2) {
+        return true;
+    }
+    const std::size_t nrows = rows_.size();
+
+    double vmin = 0.0;
+    double vmax = 0.0;
+    bool have = false;
+    for (const std::vector<double>& row : rows_) {
+        for (std::size_t i = 0; i < cols && i < row.size(); ++i) {
+            if (std::isfinite(row[i])) {
+                vmin = have ? std::min(vmin, row[i]) : row[i];
+                vmax = have ? std::max(vmax, row[i]) : row[i];
+                have = true;
+            }
+        }
+    }
+    if (!have) {
+        return true;
+    }
+
+    // 等值线级：显式给定则用之（剔除非有限），否则在值域内均分、不含端点。
+    std::vector<double> levels;
+    if (!opts_.levels.empty()) {
+        for (double l : opts_.levels) {
+            if (std::isfinite(l)) {
+                levels.push_back(l);
+            }
+        }
+    } else {
+        const int count = std::clamp(opts_.level_count, 1, 16);
+        levels.reserve(static_cast<std::size_t>(count));
+        for (int k = 1; k <= count; ++k) {
+            levels.push_back(vmin + (vmax - vmin) * static_cast<double>(k) /
+                                        static_cast<double>(count + 1));
+        }
+    }
+    if (levels.empty()) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, 0.0, static_cast<double>(cols - 1), 0.0,
+                      static_cast<double>(nrows - 1), false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "col", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "row", Style{});
+
+    const Style st = Style{}.set_fg(opts_.color);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 复刻 draw() 的 marching squares：每段的端点用 area_.cell_of 落到格坐标，
+    // 再 emit 矢量线段（StrokeOp + MoveTo/LineTo）。
+    for (double level : levels) {
+        for (std::size_t j = 0; j + 1 < nrows; ++j) {
+            const std::vector<double>& row_top = rows_[j];
+            const std::vector<double>& row_bot = rows_[j + 1];
+            if (row_top.size() < cols || row_bot.size() < cols) {
+                continue;
+            }
+            for (std::size_t i = 0; i + 1 < cols; ++i) {
+                const double v00 = row_top[i];
+                const double v10 = row_top[i + 1];
+                const double v01 = row_bot[i];
+                const double v11 = row_bot[i + 1];
+                if (!std::isfinite(v00) || !std::isfinite(v10) || !std::isfinite(v01) ||
+                    !std::isfinite(v11)) {
+                    continue;
+                }
+                const int case_bits = (v00 > level ? 8 : 0) | (v10 > level ? 4 : 0) |
+                                      (v11 > level ? 2 : 0) | (v01 > level ? 1 : 0);
+                if (case_bits == 0 || case_bits == 15) {
+                    continue;
+                }
+                const double x0 = static_cast<double>(i);
+                const double x1 = static_cast<double>(i + 1);
+                const double y0 = static_cast<double>(j);
+                const double y1 = static_cast<double>(j + 1);
+                Point top{};
+                Point bottom{};
+                Point left{};
+                Point right{};
+                const bool has_top = edge_crossing(v00, v10, level, x0, y0, x1, y0, top);
+                const bool has_bottom =
+                    edge_crossing(v01, v11, level, x0, y1, x1, y1, bottom);
+                const bool has_left = edge_crossing(v00, v01, level, x0, y0, x0, y1, left);
+                const bool has_right =
+                    edge_crossing(v10, v11, level, x1, y0, x1, y1, right);
+                Seg segs[2] = {};
+                int nseg = 0;
+                switch (case_bits) {
+                    case 1:
+                    case 14:
+                        if (has_left && has_bottom) segs[nseg++] = Seg{left, bottom};
+                        break;
+                    case 2:
+                    case 13:
+                        if (has_bottom && has_right) segs[nseg++] = Seg{bottom, right};
+                        break;
+                    case 3:
+                    case 12:
+                        if (has_left && has_right) segs[nseg++] = Seg{left, right};
+                        break;
+                    case 4:
+                    case 11:
+                        if (has_top && has_right) segs[nseg++] = Seg{top, right};
+                        break;
+                    case 6:
+                    case 9:
+                        if (has_top && has_bottom) segs[nseg++] = Seg{top, bottom};
+                        break;
+                    case 7:
+                    case 8:
+                        if (has_left && has_top) segs[nseg++] = Seg{left, top};
+                        break;
+                    case 5:
+                        if (has_left && has_top) segs[nseg++] = Seg{left, top};
+                        if (has_bottom && has_right) segs[nseg++] = Seg{bottom, right};
+                        break;
+                    case 10:
+                        if (has_top && has_right) segs[nseg++] = Seg{top, right};
+                        if (has_left && has_bottom) segs[nseg++] = Seg{left, bottom};
+                        break;
+                    default:
+                        break;
+                }
+                for (int s = 0; s < nseg; ++s) {
+                    b.stroke(st.fg());
+                    b.move_to(area_.cell_of(segs[s].a.x, segs[s].a.y));
+                    b.line_to(area_.cell_of(segs[s].b.x, segs[s].b.y));
+                }
+            }
+        }
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

@@ -35,6 +35,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：背景带/度量条走 RectOp+FillOp（实心色块），目标竖线走
+    // MoveTo/LineTo+StrokeOp，行标签走 TextOp。无独立图例（draw 也未画）。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:

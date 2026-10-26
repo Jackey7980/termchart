@@ -10,6 +10,7 @@
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
 #include "termchart/layout/title.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/scale/ticks.hpp"
 
 namespace termchart::chart {
@@ -114,6 +115,95 @@ void StepChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool StepChart::to_scene(scene::Scene& out, std::uint32_t width,
+                         std::uint32_t height) const {
+    // 与 draw() 同源：剔除非有限点 → 按 x 升序。
+    std::vector<Point> pts;
+    pts.reserve(points_.size());
+    for (const Point& p : points_) {
+        if (std::isfinite(p.x) && std::isfinite(p.y)) {
+            pts.push_back(p);
+        }
+    }
+    std::sort(pts.begin(), pts.end(),
+              [](const Point& a, const Point& b) noexcept { return a.x < b.x; });
+
+    double xmin = 0.0;
+    double xmax = 1.0;
+    double ymin = 0.0;
+    double ymax = 1.0;
+    if (!pts.empty()) {
+        xmin = xmax = pts.front().x;
+        ymin = ymax = pts.front().y;
+        for (const Point& p : pts) {
+            xmin = std::min(xmin, p.x);
+            xmax = std::max(xmax, p.x);
+            ymin = std::min(ymin, p.y);
+            ymax = std::max(ymax, p.y);
+        }
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, true, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "x", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "y", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 复刻 draw_step 的台阶逻辑：每段的矢量线（不再走 canvas 辅助函数）。
+    auto seg = [&](Point p, Point q) {
+        b.stroke(st.fg());
+        b.move_to(p);
+        b.line_to(q);
+    };
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+        const Point a = area_.cell_of(pts[i - 1].x, pts[i - 1].y);
+        const Point c = area_.cell_of(pts[i].x, pts[i].y);
+        switch (where_) {
+            case Where::Pre:
+                seg(a, Point{a.x, c.y});
+                seg(Point{a.x, c.y}, c);
+                break;
+            case Where::Mid: {
+                const double mid = (a.y + c.y) / 2.0;
+                seg(a, Point{a.x, mid});
+                seg(Point{a.x, mid}, Point{c.x, mid});
+                seg(Point{c.x, mid}, c);
+                break;
+            }
+            case Where::Post:
+            default:
+                seg(a, Point{c.x, a.y});
+                seg(Point{c.x, a.y}, c);
+                break;
+        }
+    }
+    for (const Point& p : pts) {
+        sink.put(area_.cell_of(p.x, p.y), kMarkerChar, st);
+    }
+
+    if (!pts.empty() && show_legend_) {
+        const std::vector<layout::LegendEntry> entries{layout::LegendEntry{name_, color_}};
+        layout::draw_legend(sink, entries, Rect{inner.x, 0.0, inner.w, 1.0},
+                            layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

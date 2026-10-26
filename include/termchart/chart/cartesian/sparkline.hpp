@@ -25,6 +25,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<double> values_;
     Options options_;

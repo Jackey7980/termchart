@@ -9,6 +9,7 @@
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 namespace termchart::chart {
 namespace {
@@ -113,6 +114,84 @@ void WaterfallChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool WaterfallChart::to_scene(scene::Scene& out, std::uint32_t width,
+                               std::uint32_t height) const {
+    if (items_.empty()) {
+        return true;
+    }
+
+    // 与 draw() 同源：先算出每段的 [base, top]，y 域连同 0（基线）一起包进来。
+    struct Seg {
+        double base = 0.0;
+        double top = 0.0;
+        bool is_total = false;
+        bool rising = false;
+    };
+    std::vector<Seg> segs;
+    segs.reserve(items_.size());
+    double running = 0.0;
+    double ymin = 0.0;
+    double ymax = 0.0;
+    for (const Item& it : items_) {
+        Seg s;
+        s.is_total = it.is_total;
+        s.rising = it.is_total || it.value >= 0.0;
+        s.base = it.is_total ? 0.0 : running;
+        s.top = it.is_total ? it.value : running + it.value;
+        running = it.is_total ? it.value : s.top;
+        ymin = std::min(ymin, std::min(s.base, s.top));
+        ymax = std::max(ymax, std::max(s.base, s.top));
+        segs.push_back(s);
+    }
+
+    const auto n = static_cast<double>(items_.size());
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5, n - 0.5, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "step", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "value", Style{});
+
+    const Rect inner = area_.inner_rect();
+    const double bw = std::max(1.0, inner.w / n * 0.6);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = 0; i < segs.size(); ++i) {
+        const Seg& s = segs[i];
+        const double xc = area_.x_scale().forward(static_cast<double>(i));
+        const Color col = s.is_total ? opts_.total
+                                     : (s.rising ? opts_.increase : opts_.decrease);
+        const Style st = Style{}.set_fg(col);
+        const double top_cell = area_.y_scale().forward(std::max(s.base, s.top));
+        const double h = std::max(1.0, std::fabs(area_.y_scale().forward(s.base) -
+                                                 area_.y_scale().forward(s.top)));
+        // 每段是"从累计基线画到新累计值"的实心柱（增/减/小计三色）。
+        b.fill(st.fg());
+        b.rect(Rect{xc - bw / 2.0, top_cell, bw, h});
+
+        // 连接线：从本段右缘到下一段左缘，画在本段结束的累计高度。
+        if (opts_.show_connectors && i + 1 < segs.size()) {
+            const double lvl = area_.y_scale().forward(s.top);
+            const double xc_next = area_.x_scale().forward(static_cast<double>(i + 1));
+            const Style lc = Style{}.set_fg(opts_.total);
+            b.stroke(lc.fg());
+            b.move_to(Point{xc + bw / 2.0, lvl});
+            b.line_to(Point{xc_next - bw / 2.0, lvl});
+        }
+    }
+    b.end_group(0);
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

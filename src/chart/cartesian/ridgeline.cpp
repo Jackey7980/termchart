@@ -12,6 +12,7 @@
 #include "termchart/layout/legend.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 namespace termchart::chart {
 
@@ -143,6 +144,127 @@ void RidgelineChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool RidgelineChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height) const {
+    std::vector<Group> groups;
+    groups.reserve(groups_.size());
+    for (const Group& g : groups_) {
+        Group clean;
+        clean.name = g.name;
+        clean.color = g.color;
+        for (double v : g.values) {
+            if (std::isfinite(v)) {
+                clean.values.push_back(v);
+            }
+        }
+        if (!clean.values.empty()) {
+            groups.push_back(std::move(clean));
+        }
+    }
+    if (groups.empty()) {
+        return true;
+    }
+
+    double vmin = groups.front().values.front();
+    double vmax = vmin;
+    for (const auto& g : groups) {
+        for (double v : g.values) {
+            vmin = std::min(vmin, v);
+            vmax = std::max(vmax, v);
+        }
+    }
+    if (!(vmax > vmin)) {
+        vmin -= 0.5;
+        vmax += 0.5;
+    }
+
+    const int bins = std::clamp(options_.bins, 4, 128);
+    const auto dim = static_cast<std::size_t>(bins);
+    const double bin_w = (vmax - vmin) / static_cast<double>(bins);
+
+    std::vector<std::vector<std::size_t>> counts(groups.size());
+    std::size_t global_max = 0;
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        counts[g].assign(dim, 0);
+        for (double v : groups[g].values) {
+            const int b = std::clamp(static_cast<int>(std::floor((v - vmin) / bin_w)), 0, bins - 1);
+            ++counts[g][static_cast<std::size_t>(b)];
+        }
+        for (std::size_t c : counts[g]) {
+            global_max = std::max(global_max, c);
+        }
+    }
+    if (global_max == 0) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, vmin, vmax, 0.0, 1.0, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    SceneSink sink(out);
+    layout::draw_axis_x(sink, area_, xticks, "value", Style{});
+
+    const Rect inner = area_.inner_rect();
+    const int inner_h = static_cast<int>(inner.h);
+    const int gcount = static_cast<int>(groups.size());
+    int band = std::max(options_.band_height, 2);
+    while (band + (gcount - 1) * (band - 1) > inner_h && band > 2) {
+        --band;
+    }
+    const int offset = band - 1;
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (int gi = gcount - 1; gi >= 0; --gi) {
+        const Group& grp = groups[static_cast<std::size_t>(gi)];
+        const double y_base = inner.bottom() - 1.0 -
+                              static_cast<double>(gi) * static_cast<double>(offset);
+        const Style st = Style{}.set_fg(grp.color);
+        for (int bidx = 0; bidx < bins; ++bidx) {
+            const std::size_t c = counts[static_cast<std::size_t>(gi)][static_cast<std::size_t>(bidx)];
+            if (c == 0) {
+                continue;
+            }
+            const double t = static_cast<double>(c) / static_cast<double>(global_max);
+            const double h = t * static_cast<double>(band);
+            const int full = static_cast<int>(h);
+            const double frac = h - static_cast<double>(full);
+            const double x0 = area_.x_scale().forward(vmin + bin_w * static_cast<double>(bidx));
+            const double x1 = area_.x_scale().forward(vmin + bin_w * static_cast<double>(bidx + 1));
+            const double y_top = y_base - static_cast<double>(full) + 1.0;
+            const Rect body{std::min(x0, x1), y_top, std::abs(x1 - x0),
+                            static_cast<double>(full)};
+            const Rect clipped = body.intersection(inner);
+            if (full > 0 && !clipped.empty()) {
+                b.fill(st.fg());
+                b.rect(clipped);
+            }
+            if (frac > 0.125) {
+                const double fy = y_top - 1.0;
+                if (fy >= inner.y) {
+                    b.fill(st.fg());
+                    b.rect(Rect{x0, fy, x1 - x0, 1.0});
+                }
+            }
+        }
+    }
+    b.end_group(0);
+
+    if (options_.show_legend) {
+        std::vector<layout::LegendEntry> entries;
+        entries.reserve(groups.size());
+        for (const Group& grp : groups) {
+            entries.push_back(layout::LegendEntry{grp.name, grp.color});
+        }
+        layout::draw_legend(sink, entries, Rect{inner.x, 0.0, inner.w, 1.0},
+                            layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart
