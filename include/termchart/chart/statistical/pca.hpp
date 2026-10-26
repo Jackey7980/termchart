@@ -31,6 +31,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // 投影后的 2D 点（与有效样本一一对应；未拟合时为空）。
     [[nodiscard]] const std::vector<Point>& projected() const noexcept { return projected_; }

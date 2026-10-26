@@ -34,6 +34,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] bool fitted() const noexcept { return fitted_; }
     [[nodiscard]] double slope() const noexcept { return slope_; }
     [[nodiscard]] double intercept() const noexcept { return intercept_; }

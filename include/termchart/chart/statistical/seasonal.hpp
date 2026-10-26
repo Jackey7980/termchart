@@ -31,6 +31,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // 三个分量与输入等长（未定义处为 NaN；未分解时为空）。
     [[nodiscard]] const std::vector<double>& trend() const noexcept { return trend_; }
     [[nodiscard]] const std::vector<double>& seasonal() const noexcept { return seasonal_; }

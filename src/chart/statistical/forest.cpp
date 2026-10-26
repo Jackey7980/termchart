@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <string_view>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
@@ -142,6 +144,108 @@ void ForestChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool ForestChart::to_scene(scene::Scene& out, std::uint32_t width,
+                            std::uint32_t height) const {
+    std::size_t rows = studies_.size() + (has_total_ ? 1 : 0);
+    if (rows == 0) {
+        return true;
+    }
+    double lo = 0.0;  // x 域并入 0
+    double hi = 0.0;
+    bool any = false;
+    auto widen = [&](const ForestStudy& s) {
+        if (!std::isfinite(s.estimate) || !std::isfinite(s.lower) ||
+            !std::isfinite(s.upper) || s.lower > s.upper) {
+            return false;
+        }
+        lo = std::min(lo, s.lower);
+        hi = std::max(hi, s.upper);
+        any = true;
+        return true;
+    };
+    for (const ForestStudy& s : studies_) {
+        widen(s);
+    }
+    if (has_total_) {
+        widen(total_);
+    }
+    if (!any) {
+        return true;
+    }
+    if (!(hi > lo)) {
+        lo -= 0.5;
+        hi += 0.5;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, lo, hi, -0.5, static_cast<double>(rows) - 0.5,
+                      false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, {},
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "effect", Style{});
+
+    const Style st = Style{}.set_fg(options_.color);
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    if (options_.show_zero_line && lo < 0.0 && hi > 0.0) {
+        const double x0 = area_.x_scale().forward(0.0);
+        b.stroke(default_color(DefaultColor::Muted));
+        b.move_to(Point{x0, inner.y});
+        b.line_to(Point{x0, inner.bottom()});
+    }
+
+    std::size_t row = 0;
+    for (const ForestStudy& s : studies_) {
+        if (!std::isfinite(s.estimate) || !std::isfinite(s.lower) ||
+            !std::isfinite(s.upper) || s.lower > s.upper) {
+            continue;
+        }
+        const double y = area_.y_scale().forward(static_cast<double>(row));
+        b.stroke(st.fg());
+        b.move_to(Point{area_.x_scale().forward(s.lower), y});
+        b.line_to(Point{area_.x_scale().forward(s.upper), y});
+        sink.put(Point{area_.x_scale().forward(s.estimate), y}, kMarkerChar, st);
+        ++row;
+    }
+    if (has_total_ && std::isfinite(total_.estimate) && std::isfinite(total_.lower) &&
+        std::isfinite(total_.upper) && total_.lower <= total_.upper) {
+        const double y = area_.y_scale().forward(static_cast<double>(row));
+        b.stroke(st.fg());
+        b.move_to(Point{area_.x_scale().forward(total_.lower), y});
+        b.line_to(Point{area_.x_scale().forward(total_.upper), y});
+        sink.put(Point{area_.x_scale().forward(total_.estimate), y}, U'\u25C6', st);
+    }
+    b.end_group(0);
+
+    // 行标签写在左侧留白区。
+    const std::size_t max_chars =
+        static_cast<std::size_t>(m.left >= 1.0 ? static_cast<std::size_t>(m.left) - 1 : 0);
+    if (max_chars > 0) {
+        std::size_t label_row = 0;
+        for (const ForestStudy& s : studies_) {
+            if (!std::isfinite(s.estimate) || !std::isfinite(s.lower) ||
+                !std::isfinite(s.upper) || s.lower > s.upper) {
+                continue;
+            }
+            if (!s.label.empty()) {
+                const double y = area_.y_scale().forward(static_cast<double>(label_row));
+                sink.text(Point{0.0, y}, clip_utf8(s.label, max_chars),
+                          Style{}.set_fg(default_color(DefaultColor::Series)));
+            }
+            ++label_row;
+        }
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

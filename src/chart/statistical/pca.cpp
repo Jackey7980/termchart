@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
@@ -211,6 +213,53 @@ void PcaChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool PcaChart::to_scene(scene::Scene& out, std::uint32_t width,
+                         std::uint32_t height) const {
+    if (projected_.empty()) {
+        return true;
+    }
+    double xmin = projected_.front().x;
+    double xmax = xmin;
+    double ymin = projected_.front().y;
+    double ymax = ymin;
+    for (const Point& p : projected_) {
+        xmin = std::min(xmin, p.x);
+        xmax = std::max(xmax, p.x);
+        ymin = std::min(ymin, p.y);
+        ymax = std::max(ymax, p.y);
+    }
+    if (!(xmax - xmin > 1e-12)) {
+        xmin -= 1.0;
+        xmax += 1.0;
+    }
+    if (!(ymax - ymin > 1e-12)) {
+        ymin -= 1.0;
+        ymax += 1.0;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xmin, xmax, ymin, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "PC1", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "PC2", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (const Point& p : projected_) {
+        sink.put(area_.cell_of(p.x, p.y), kMarkerChar, st);
+    }
+    b.end_group(0);
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

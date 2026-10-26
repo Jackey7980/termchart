@@ -25,6 +25,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：手算 inner 矩形（无坐标轴），逐列占比堆叠走 RectOp +
+    // FillOp，图例/标题走 TextOp。与 draw() 同源。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     StreamOptions options;
 
 private:

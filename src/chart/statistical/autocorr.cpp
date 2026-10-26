@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
@@ -107,6 +109,67 @@ void AutocorrChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool AutocorrChart::to_scene(scene::Scene& out, std::uint32_t width,
+                             std::uint32_t height) const {
+    if (acf_.size() < 2) {
+        return true;  // 只有 r[0]（或空）：没有可画的滞后
+    }
+    double lo = -conf_;
+    double hi = conf_;
+    for (std::size_t k = 1; k < acf_.size(); ++k) {
+        lo = std::min(lo, acf_[k]);
+        hi = std::max(hi, acf_[k]);
+    }
+    if (!(hi > lo)) {
+        lo -= 0.5;
+        hi += 0.5;
+    }
+    const double xmax = static_cast<double>(acf_.size() - 1) + 0.5;
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, 0.5, xmax, lo, hi, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "lag", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "r", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    const Rect inner = area_.inner_rect();
+    const double y0 = area_.y_scale().forward(0.0);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // ±1.96/√n 置信带：水平参考线（矢量）。
+    if (options_.show_band && conf_ > 0.0) {
+        const double y1 = area_.y_scale().forward(conf_);
+        const double y2 = area_.y_scale().forward(-conf_);
+        b.stroke(default_color(DefaultColor::Muted));
+        b.move_to(Point{inner.x, y1});
+        b.line_to(Point{inner.right(), y1});
+        b.stroke(default_color(DefaultColor::Muted));
+        b.move_to(Point{inner.x, y2});
+        b.line_to(Point{inner.right(), y2});
+    }
+
+    // 棒棒糖：零线到 r_k 的竖线 + 顶端 '●'。
+    for (std::size_t k = 1; k < acf_.size(); ++k) {
+        const double x = area_.x_scale().forward(static_cast<double>(k));
+        const double y = area_.y_scale().forward(acf_[k]);
+        b.stroke(st.fg());
+        b.move_to(Point{x, y0});
+        b.line_to(Point{x, y});
+        sink.put(Point{x, y}, kMarkerChar, st);
+    }
+    b.end_group(0);
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

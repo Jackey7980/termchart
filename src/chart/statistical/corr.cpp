@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <string_view>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/title.hpp"
 
 namespace termchart::chart {
@@ -148,6 +150,59 @@ void CorrMatrixChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool CorrMatrixChart::to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const {
+    const std::size_t n = r_.size();
+    if (n == 0) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{
+        m.left, m.top,
+        static_cast<double>(width) - m.left - m.right,
+        static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 1.0 || inner.h < 1.0) {
+        return true;
+    }
+    const double nw = inner.w / static_cast<double>(n);
+    const double nh = inner.h / static_cast<double>(n);
+    const double cw = (nw >= options_.cell_w) ? options_.cell_w : (nw >= 1.0 ? nw : 1.0);
+    const double ch = (nh >= options_.cell_h) ? options_.cell_h : (nh >= 1.0 ? nh : 1.0);
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < n; ++j) {
+            const double r = r_[i][j];
+            b.fill(sign_color(r));
+            b.rect(Rect{inner.x + static_cast<double>(j) * cw,
+                        inner.y + static_cast<double>(i) * ch, cw, ch});
+        }
+    }
+    b.end_group(0);
+
+    // 行名写在左侧留白区（截到 margin_left - 1 格）。
+    if (!names_.empty()) {
+        const std::size_t max_chars =
+            static_cast<std::size_t>(m.left >= 1.0 ? static_cast<std::size_t>(m.left) - 1 : 0);
+        if (max_chars > 0) {
+            for (std::size_t i = 0; i < n && i < names_.size(); ++i) {
+                if (names_[i].empty()) {
+                    continue;
+                }
+                sink.text(Point{0.0, inner.y + static_cast<double>(i) * ch},
+                          clip_utf8(names_[i], max_chars),
+                          Style{}.set_fg(default_color(DefaultColor::Series)));
+            }
+        }
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

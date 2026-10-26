@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
@@ -133,6 +135,82 @@ void SurvivalChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool SurvivalChart::to_scene(scene::Scene& out, std::uint32_t width,
+                              std::uint32_t height) const {
+    if (curve_.empty()) {
+        return true;
+    }
+    double tmax = curve_.back().x;
+    if (!censored_.empty()) {
+        tmax = std::max(tmax, censored_.back());
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, 0.0, tmax > 0.0 ? tmax : 1.0, 0.0, 1.0,
+                      false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "time", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "S(t)", Style{});
+
+    const Style st = Style{}.set_fg(options_.color);
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    double prev_x = inner.x;
+    double prev_y = area_.y_scale().forward(1.0);
+    std::size_t cens = 0;
+    for (const Point& step : curve_) {
+        const double x = area_.x_scale().forward(step.x);
+        const double y = area_.y_scale().forward(step.y);
+        if (x > prev_x) {
+            b.stroke(st.fg());
+            b.move_to(Point{prev_x, prev_y});
+            b.line_to(Point{x, prev_y});
+            b.stroke(st.fg());
+            b.move_to(Point{x, prev_y});
+            b.line_to(Point{x, y});
+        }
+        while (cens < censored_.size() && censored_[cens] <= step.x) {
+            if (options_.show_censored) {
+                const double cx = area_.x_scale().forward(censored_[cens]);
+                sink.put(Point{cx, prev_y}, U'+', st);
+            }
+            ++cens;
+        }
+        prev_x = x;
+        prev_y = y;
+    }
+    while (cens < censored_.size()) {
+        if (options_.show_censored) {
+            const double cx = area_.x_scale().forward(censored_[cens]);
+            sink.put(Point{cx, prev_y}, U'+', st);
+        }
+        ++cens;
+    }
+    if (prev_x < inner.right()) {
+        b.stroke(st.fg());
+        b.move_to(Point{prev_x, prev_y});
+        b.line_to(Point{inner.right(), prev_y});
+    }
+    b.end_group(0);
+
+    if (show_legend_ && !name_.empty()) {
+        const std::vector<layout::LegendEntry> entries{
+            layout::LegendEntry{name_, options_.color}};
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

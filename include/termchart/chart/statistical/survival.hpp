@@ -36,6 +36,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // KM 曲线（(时间, S) 数据坐标；无有效样本时为空）。
     [[nodiscard]] const std::vector<Point>& curve() const noexcept { return curve_; }
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }

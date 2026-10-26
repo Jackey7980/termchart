@@ -36,6 +36,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     [[nodiscard]] double mean_diff() const noexcept { return mean_; }
     [[nodiscard]] double sd_diff() const noexcept { return sd_; }

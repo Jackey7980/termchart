@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstddef>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
@@ -146,6 +148,55 @@ void DistributionChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool DistributionChart::to_scene(scene::Scene& out, std::uint32_t width,
+                                  std::uint32_t height) const {
+    if (xs_.empty() || xs_.size() != ys_.size()) {
+        return true;
+    }
+    double ymax = 0.0;
+    for (double y : ys_) {
+        ymax = std::max(ymax, y);
+    }
+    if (!(ymax > 0.0)) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, xs_.front(), xs_.back(), 0.0, ymax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "x", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "density", Style{});
+
+    const Style st = Style{}.set_fg(color_);
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = 0; i < xs_.size(); ++i) {
+        const Point p = area_.cell_of(xs_[i], ys_[i]);
+        if (options_.fill_under) {
+            b.fill(st.fg());
+            b.rect(Rect{p.x, p.y, 1.0, inner.bottom() - p.y});
+        }
+        sink.put(p, kLineChar, st);
+    }
+    b.end_group(0);
+
+    if (show_legend_ && !name_.empty()) {
+        const std::vector<layout::LegendEntry> entries{
+            layout::LegendEntry{name_, color_}};
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

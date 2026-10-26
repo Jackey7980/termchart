@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "termchart/chart/hierarchical/node.hpp"
+#include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/layout.hpp"
 #include "termchart/layout/title.hpp"
 
@@ -56,6 +57,58 @@ void FunnelChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(canvas, title_, inner);
     }
+}
+
+bool FunnelChart::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    // 与 draw() 同源：空数据/零可见区域直接返回成功（不画任何图元）。
+    if (stages_.empty()) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 4.0 || inner.h < 1.0) {
+        return true;
+    }
+    double vmax = 0.0;
+    for (const FunnelStage& stage : stages_) {
+        vmax = std::max(vmax, stage.value);
+    }
+    if (vmax <= 0.0) {
+        return true;
+    }
+
+    // 行数多于画布时截断（draw() 同样处理，避免除 0）。
+    const std::size_t rows = std::min(stages_.size(),
+                                      static_cast<std::size_t>(inner.h));
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = 0; i < rows; ++i) {
+        const FunnelStage& stage = stages_[i];
+        const Color color =
+            stage.color.is_none() ? hier::hier_palette(i) : stage.color;
+        const Style st = Style{}.set_fg(color);
+        const double row_y = inner.y + static_cast<double>(i);
+        const double bar_w = inner.w * (stage.value / vmax);
+        const double bar_x = inner.x + (inner.w - bar_w) / 2.0;
+        b.fill(st.fg());
+        b.rect(Rect{bar_x, row_y, bar_w, 1.0});
+
+        std::string label = stage.name;
+        if (options().show_values) {
+            label += ' ';
+            label += layout::format_tick(stage.value);
+        }
+        sink.text(Point{0.0, row_y}, label, st);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

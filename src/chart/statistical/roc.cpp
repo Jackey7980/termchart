@@ -7,6 +7,8 @@
 #include <numeric>
 #include <vector>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/legend.hpp"
@@ -152,6 +154,68 @@ void RocChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool RocChart::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    const std::vector<Point>& curve =
+        (options_.mode == RocMode::Pr) ? pr_ : roc_;
+    if (curve.empty()) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, 0.0, 1.0, 0.0, 1.0, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    const bool pr = options_.mode == RocMode::Pr;
+    layout::draw_axis_x(sink, area_, xticks, pr ? "recall" : "fpr", Style{});
+    layout::draw_axis_y(sink, area_, yticks, pr ? "precision" : "tpr", Style{});
+
+    const Style st = Style{}.set_fg(default_color(DefaultColor::Neutral));
+    const Rect inner = area_.inner_rect();
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    if (options_.mode == RocMode::Roc && options_.show_diagonal) {
+        // 随机分类器基线：(0,0) → (1,1)。
+        b.stroke(default_color(DefaultColor::Muted));
+        b.move_to(Point{inner.x, inner.bottom()});
+        b.line_to(Point{inner.right(), inner.y});
+    }
+    for (std::size_t i = 0; i < curve.size(); ++i) {
+        const Point cell = area_.cell_of(curve[i].x, curve[i].y);
+        if (i > 0) {
+            const Point prev = area_.cell_of(curve[i - 1].x, curve[i - 1].y);
+            b.stroke(st.fg());
+            b.move_to(prev);
+            b.line_to(cell);
+        }
+        sink.put(cell, kMarkerChar, st);
+    }
+    b.end_group(0);
+
+    if (show_legend_ && !name_.empty()) {
+        std::vector<layout::LegendEntry> entries;
+        if (options_.mode == RocMode::Roc) {
+            entries.push_back(layout::LegendEntry{
+                name_ + " (AUC=" + layout::format_tick(auc_roc_) + ")",
+                default_color(DefaultColor::Neutral)});
+        } else {
+            entries.push_back(layout::LegendEntry{
+                name_ + " (AUC=" + layout::format_tick(auc_pr_) + ")",
+                default_color(DefaultColor::Neutral)});
+        }
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

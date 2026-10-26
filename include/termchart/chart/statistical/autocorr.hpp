@@ -32,6 +32,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // r[k] 为滞后 k 的自相关（k = 0..实际最大滞后；r[0] = 1；未算成为空）。
     [[nodiscard]] const std::vector<double>& acf() const noexcept { return acf_; }
     // 置信带半宽 1.96/√n（未算成为 0）。

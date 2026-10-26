@@ -35,6 +35,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：手算 inner 矩形（无坐标轴），居中横条走 RectOp + FillOp，
+    // 阶段名称/数值走 TextOp。与 draw() 同源。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<FunnelStage> stages_;
     FunnelOptions options_{};

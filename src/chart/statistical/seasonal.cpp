@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <limits>
 
+#include "termchart/chart/scene_sink.hpp"
+
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/title.hpp"
@@ -173,6 +175,93 @@ void SeasonalChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool SeasonalChart::to_scene(scene::Scene& out, std::uint32_t width,
+                             std::uint32_t height) const {
+    if (trend_.empty()) {
+        return true;
+    }
+    const std::size_t n = trend_.size();
+    double vlo = std::numeric_limits<double>::infinity();
+    double vhi = -vlo;
+    for (double v : values_) {
+        if (std::isfinite(v)) {
+            vlo = std::min(vlo, v);
+            vhi = std::max(vhi, v);
+        }
+    }
+    if (!std::isfinite(vlo) || !std::isfinite(vhi)) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, 0.0, static_cast<double>(n) - 1.0, vlo, vhi,
+                      false, false);
+
+    const Rect inner{
+        m.left, m.top,
+        static_cast<double>(width) - m.left - m.right,
+        static_cast<double>(height) - m.top - m.bottom};
+    const double band_h = (inner.h - 2.0) / 3.0;
+    if (band_h < 2.0) {
+        return true;
+    }
+
+    const std::vector<double> xticks =
+        scale::ticks_for(scale::LinearScale(0.0, static_cast<double>(n) - 1.0,
+                                            inner.x, inner.right()));
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, {},
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+
+    struct Band {
+        const char* label;
+        const std::vector<double>* series;
+    };
+    const Band bands[3] = {
+        {"trend", &trend_}, {"season", &seasonal_}, {"remain", &remainder_}};
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (int bb = 0; bb < 3; ++bb) {
+        const std::vector<double>& series = *bands[bb].series;
+        double lo = std::numeric_limits<double>::infinity();
+        double hi = -lo;
+        for (double v : series) {
+            if (!std::isnan(v)) {
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+        }
+        if (!std::isfinite(lo) || !std::isfinite(hi)) {
+            continue;
+        }
+        if (!(hi > lo)) {
+            lo -= 0.5;
+            hi += 0.5;
+        }
+        const double gap = static_cast<double>(bb) * (band_h + 1.0);
+        const layout::Margin bm{m.top + gap, m.right,
+                                m.bottom + (2.0 * (band_h + 1.0) - gap), m.left};
+        const layout::PlotArea band_area =
+            make_area(width, height, bm, 0.0, static_cast<double>(n) - 1.0, lo, hi,
+                      false, false);
+        const Style st = Style{}.set_fg(color_);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (std::isnan(series[i])) {
+                continue;
+            }
+            sink.put(band_area.cell_of(static_cast<double>(i), series[i]), kLineChar, st);
+        }
+        sink.text(Point{0.0, band_area.inner_rect().y}, bands[bb].label,
+                  Style{}.set_fg(default_color(DefaultColor::Series)));
+        layout::draw_axis_x(sink, band_area, xticks, "", Style{});
+    }
+    b.end_group(0);
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    return true;
 }
 
 }  // namespace termchart::chart

@@ -42,6 +42,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // ROC/PR 曲线（数据坐标；正负类不全时为空）。
     [[nodiscard]] const std::vector<Point>& roc_curve() const noexcept { return roc_; }
     [[nodiscard]] const std::vector<Point>& pr_curve() const noexcept { return pr_; }

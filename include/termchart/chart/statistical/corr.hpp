@@ -30,6 +30,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // r[i][j] = 变量 i 与 j 的相关系数（对角线恒 1，退化格为 0）。
     [[nodiscard]] const std::vector<std::vector<double>>& r_matrix() const noexcept {
         return r_;
