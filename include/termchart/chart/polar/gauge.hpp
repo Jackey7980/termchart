@@ -32,6 +32,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     double value_ = 0.0;
     Color color_ = default_color(DefaultColor::Accent);

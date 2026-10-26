@@ -9,6 +9,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -102,6 +104,67 @@ void RenkoChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool RenkoChart::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    double pmin = 0.0;
+    double pmax = 0.0;
+    if (!prices_.empty()) {
+        pmin = *std::min_element(prices_.begin(), prices_.end());
+        pmax = *std::max_element(prices_.begin(), prices_.end());
+    }
+    double size = options.brick_size;
+    if (size <= 0.0 && pmax > pmin) {
+        size = (pmax - pmin) / 10.0;
+    }
+    const std::vector<Brick> bricks = build_bricks(prices_, size);
+    if (bricks.empty()) {
+        return true;  // 数据不足或全距为 0：无砖可画
+    }
+
+    int lv_min = bricks.front().level;
+    int lv_max = bricks.front().level;
+    for (const Brick& br : bricks) {
+        lv_min = std::min(lv_min, br.level);
+        lv_max = std::max(lv_max, br.level);
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const double xmin = -0.5;
+    const double xmax = static_cast<double>(bricks.size()) - 0.5;
+    area_ = make_area(width, height, m, xmin, xmax,
+                      static_cast<double>(lv_min), static_cast<double>(lv_max + 1),
+                      false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "brick", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "level", Style{});
+
+    const Rect inner = area_.inner_rect();
+    const double slot = inner.w / static_cast<double>(bricks.size());
+    const double bw = slot >= 2.0 ? 2.0 : slot;
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (std::size_t i = 0; i < bricks.size(); ++i) {
+        const Brick& br = bricks[i];
+        const double x0 = area_.x_scale().forward(static_cast<double>(i));
+        const double top = area_.y_scale().forward(static_cast<double>(br.level + 1));
+        const double bottom = area_.y_scale().forward(static_cast<double>(br.level));
+        b.fill(br.up ? options.up : options.down);
+        b.rect(Rect{x0, top, bw, bottom - top});
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

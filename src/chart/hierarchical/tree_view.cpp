@@ -1,5 +1,6 @@
 // tree_view.cpp —— 树形视图实现：缩进前缀递归（不依赖 graph/）
 #include "termchart/chart/hierarchical/tree_view.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 #include <string>
 
@@ -33,6 +34,29 @@ void emit(const hier::HierNode& node, const std::string& prefix, bool last,
     }
 }
 
+void emit_scene(const hier::HierNode& node, const std::string& prefix, bool last,
+                std::size_t& row, SceneSink& sink, double x, double top,
+                const TreeViewOptions& opt) {
+    std::string line = prefix;
+    line += row == 0 ? "" : (last ? "\u2514\u2500 " : "\u251C\u2500 ");  // └─ / ├─
+    line += node.name;
+    if (opt.show_values && node.value > 0.0) {
+        line += ' ';
+        line += layout::format_tick(node.value);
+    }
+    sink.text(Point{x, top + static_cast<double>(row)}, line, Style{}.set_fg(node.color));
+    ++row;
+
+    std::string child_prefix = prefix;
+    if (row > 1) {
+        child_prefix += last ? "  " : "\u2502 ";  // │
+    }
+    for (std::size_t i = 0; i < node.children.size(); ++i) {
+        emit_scene(node.children[i], child_prefix, i + 1 == node.children.size(), row, sink,
+                   x, top, opt);
+    }
+}
+
 }  // namespace
 
 void TreeView::set_root(hier::HierNode root) {
@@ -56,6 +80,24 @@ void TreeView::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(canvas, title_, inner);
     }
+}
+
+bool TreeView::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    if (!has_root_) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    std::size_t row = 0;
+    emit_scene(root_, "", true, row, sink, inner.x, inner.y, options);
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

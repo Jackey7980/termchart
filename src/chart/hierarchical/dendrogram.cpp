@@ -1,5 +1,6 @@
 // dendrogram.cpp —— 树状图实现：递归布局 + U 形连接线（不依赖 graph/）
 #include "termchart/chart/hierarchical/dendrogram.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 #include <cstddef>
 #include <vector>
@@ -132,6 +133,56 @@ void Dendrogram::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(canvas, title_, inner);
     }
+}
+
+bool Dendrogram::to_scene(scene::Scene& out, std::uint32_t width,
+                          std::uint32_t height) const {
+    if (!has_root_) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 2.0 || inner.h < 2.0) {
+        return true;
+    }
+
+    Walker walker;
+    walker.measure(root_, 0);
+    walker.walk(root_, 0);
+
+    // 预序下子节点下标 > 父节点，倒序即"先叶后根"，连接线自底向上画。
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (std::size_t i = walker.nodes.size(); i-- > 0;) {
+        const NodeGeom& node = walker.nodes[i];
+        if (node.leaf) {
+            if (options.show_leaves) {
+                sink.put(Point{node.x, node.row}, kMarkerChar,
+                         Style{}.set_fg(hier::hier_palette(0)));
+            }
+            continue;
+        }
+        const Style st = Style{}.set_fg(hier::hier_palette(0));
+        // 横杠：在父节点行连接最左/最右子节点的 x。
+        b.stroke(st.fg());
+        b.move_to(Point{node.child_x0, node.row});
+        b.line_to(Point{node.child_x1, node.row});
+        // 每个子节点从自己的行向上连垂线到父横杠行。
+        for (std::size_t c = node.first_child; c <= node.last_child; ++c) {
+            const NodeGeom& child = walker.nodes[c];
+            b.stroke(st.fg());
+            b.move_to(Point{child.x, node.row});
+            b.line_to(Point{child.x, child.row});
+        }
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

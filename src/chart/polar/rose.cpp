@@ -12,6 +12,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/util/math.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -145,6 +147,97 @@ void RoseChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool RoseChart::to_scene(scene::Scene& out, std::uint32_t width,
+                          std::uint32_t height) const {
+    // 与 draw() 同源：剔除非有限/非正值扇区。
+    std::vector<double> vals;
+    std::vector<std::string> names;
+    for (std::size_t i = 0; i < values_.size(); ++i) {
+        const double v = values_[i];
+        if (!(v > 0.0) || !std::isfinite(v)) {
+            continue;
+        }
+        vals.push_back(v);
+        names.push_back(i < labels_.size() ? labels_[i] : std::string{});
+    }
+    if (vals.empty()) {
+        return true;
+    }
+    double vmax = 0.0;
+    for (double v : vals) {
+        vmax = std::max(vmax, v);
+    }
+    if (!(vmax > 0.0)) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 3.0 || inner.h < 3.0) {
+        return true;
+    }
+    const PolarFrame f = make_frame(inner);
+    const double start_rad = util::deg_to_rad(options_.start_angle);
+    const double slot = kTwoPi / static_cast<double>(vals.size());
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 外圈参考环（格粒度采样，与 draw() 同法）。
+    {
+        const Style ring_st = Style{}.set_fg(default_color(DefaultColor::Muted));
+        const int steps =
+            std::max(12, static_cast<int>(std::lround(4.0 * (f.rx + f.ry))));
+        for (int i = 0; i < steps; ++i) {
+            const double ma = kTwoPi * static_cast<double>(i) / static_cast<double>(steps);
+            sink.put(Point{f.center.x + f.rx * std::cos(ma),
+                           f.center.y - f.ry * std::sin(ma)},
+                     U'\u00B7', ring_st);
+        }
+    }
+
+    // 逐格填充：扇区等角，落笔判据 rnorm ≤ value/vmax（与 draw() 一致）。
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const Point p{static_cast<double>(x), static_cast<double>(y)};
+            const double r = norm_radius(f, p);
+            if (r > 1.0) {
+                continue;
+            }
+            const double a = chart_angle(f, p, start_rad, options_.clockwise);
+            std::size_t idx = vals.size() - 1;
+            const auto k = static_cast<std::size_t>(a / slot);
+            idx = std::min(k, vals.size() - 1);
+            if (r > vals[idx] / vmax) {
+                continue;  // 超出该扇区的数值半径
+            }
+            const Rgb rgb = color::series_color(color::PaletteKind::Default, idx);
+            sink.put(p, kSectorChars[idx % kSectorChars.size()],
+                     Style{}.set_fg(Color::rgb(rgb.r, rgb.g, rgb.b)));
+        }
+    }
+
+    if (options_.show_legend) {
+        std::vector<layout::LegendEntry> entries;
+        entries.reserve(names.size());
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            const Rgb rgb = color::series_color(color::PaletteKind::Default, i);
+            entries.push_back(
+                layout::LegendEntry{names[i], Color::rgb(rgb.r, rgb.g, rgb.b)});
+        }
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

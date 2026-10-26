@@ -125,6 +125,8 @@ public:
     [[nodiscard]] TERMCHART_API std::vector<std::string> feature_names() const;
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // ── 高清出口 2：子像素栅格化（盲文/象限/半块）────────────────────────────
     // 输出 CellBuffer 的字符尺寸是 cols × rows；每格内部再按 style 切 2×4 等子像素。

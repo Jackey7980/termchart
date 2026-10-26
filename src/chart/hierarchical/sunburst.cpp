@@ -1,5 +1,6 @@
 // sunburst.cpp —— 旭日图实现：极坐标逐格采样（布局自给，不依赖 graph/）
 #include "termchart/chart/hierarchical/sunburst.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -111,6 +112,69 @@ void Sunburst::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(canvas, title_, Rect{m.left, m.top, w, h});
     }
+}
+
+bool Sunburst::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    if (!has_root_ || root_.value <= 0.0) {
+        return true;
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const double w = static_cast<double>(width) - m.left - m.right;
+    const double h = static_cast<double>(height) - m.top - m.bottom;
+    if (w < 3.0 || h < 3.0) {
+        return true;
+    }
+    const double cx = m.left + w / 2.0;
+    const double cy = m.top + h / 2.0;
+
+    std::vector<Seg> segs;
+    collect(root_, 0.0, 6.28318530717958647692, options.show_root ? 0 : 1,
+            options.show_root, segs);
+    if (segs.empty()) {
+        return true;
+    }
+
+    // 修正终端 1:2 宽高比：横向坐标先除以 2 再算极径，环宽按"行"计。
+    const double rx = w / 2.0 / 2.0;
+    const double ry = h / 2.0;
+    const double r_max = std::sqrt(rx * rx + ry * ry);
+    const std::size_t rings = max_depth(root_);
+    const double ring_w = r_max / static_cast<double>(rings);
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+    for (double y = m.top; y < m.top + h; y += 1.0) {
+        for (double x = m.left; x < m.left + w; x += 1.0) {
+            const double u = (x + 0.5 - cx) / 2.0;
+            const double v = y + 0.5 - cy;
+            const double r = std::sqrt(u * u + v * v);
+            if (r > r_max) {
+                continue;
+            }
+            std::size_t ring = static_cast<std::size_t>(r / ring_w);
+            if (ring >= rings) {
+                ring = rings - 1;
+            }
+            double a = std::atan2(v, u);
+            if (a < 0.0) {
+                a += 6.28318530717958647692;
+            }
+            for (const Seg& seg : segs) {
+                if (seg.ring != ring || a < seg.a0 || a >= seg.a1) {
+                    continue;
+                }
+                sink.put(Point{x, y}, kBarChar, Style{}.set_fg(seg.color));
+                break;
+            }
+        }
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, Rect{m.left, m.top, w, h});
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

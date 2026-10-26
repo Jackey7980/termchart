@@ -1,5 +1,6 @@
 // choropleth.cpp —— 分级统计图实现：区域格填色 + 值分级
 #include "termchart/chart/geo/choropleth.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +24,19 @@ Rect content_area(const DrawContext& ctx, const Chart& chart) {
               std::max(0.0, h - chart.margin_top() - chart.margin_bottom())};
     if (ctx.draw_title && !chart.title().empty() && area.h >= 2.0) {
         layout::draw_title(ctx.canvas, chart.title(), area);
+        area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
+    }
+    return area;
+}
+
+Rect content_area(SceneSink& sink, std::uint32_t w, std::uint32_t h, const Chart& chart) {
+    const double W = static_cast<double>(w);
+    const double H = static_cast<double>(h);
+    Rect area{chart.margin_left(), chart.margin_top(),
+              std::max(0.0, W - chart.margin_left() - chart.margin_right()),
+              std::max(0.0, H - chart.margin_top() - chart.margin_bottom())};
+    if (!chart.title().empty() && area.h >= 2.0) {
+        layout::draw_title(sink, chart.title(), area);
         area = Rect{area.x, area.y + 1.0, area.w, area.h - 1.0};
     }
     return area;
@@ -107,6 +121,71 @@ void Choropleth::draw(DrawContext ctx) {
         std::snprintf(buf, sizeof(buf), "max(%.1f)", vmax);
         ctx.canvas.draw_text(Point{area.x + 6.0, ly}, buf, Style{});
     }
+}
+
+bool Choropleth::to_scene(scene::Scene& out, std::uint32_t width,
+                          std::uint32_t height) const {
+    if (regions_.empty()) {
+        return true;
+    }
+
+    // 非有限值按 0 收敛后再求值域。
+    double vmin = 0.0;
+    double vmax = 0.0;
+    bool have = false;
+    for (const GeoRegion& r : regions_) {
+        const double v = std::isfinite(r.value) ? r.value : 0.0;
+        if (!have) {
+            vmin = vmax = v;
+            have = true;
+        } else {
+            vmin = std::min(vmin, v);
+            vmax = std::max(vmax, v);
+        }
+    }
+
+    SceneSink sink(out);
+    const Rect area = content_area(sink, width, height, *this);
+    const int bins = std::min(8, std::max(1, options_.bins));
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (const GeoRegion& r : regions_) {
+        const double v = std::isfinite(r.value) ? r.value : 0.0;
+        // 均分 bins 档：档位取整后再映射回 0..1，保证同档同色。
+        double frac = vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.0;
+        frac = std::min(1.0, std::max(0.0, frac));
+        if (bins > 1) {
+            const auto idx = static_cast<int>(std::llround(frac * (bins - 1)));
+            frac = static_cast<double>(idx) / static_cast<double>(bins - 1);
+        } else {
+            frac = 0.0;
+        }
+        const Style st = Style{}.set_fg(ramp_color(frac));
+        for (const Point& cell : r.cells) {
+            std::uint32_t cx = 0;
+            std::uint32_t cy = 0;
+            if (round_cell(cell.x, width, cx) && round_cell(cell.y, height, cy)) {
+                sink.put(Point{static_cast<double>(cx), static_cast<double>(cy)}, kBlock, st);
+            }
+        }
+    }
+
+    // 图例：内容区底行画 min 色 ─ max 色（空间不足则跳过，不挤主体）。
+    if (area.h >= 2.0 && area.w >= 14.0 && vmax > vmin) {
+        const double ly = area.bottom() - 1.0;
+        sink.text(Point{area.x, ly}, "min", Style{});
+        sink.put(Point{area.x + 3.0, ly}, kBlock, Style{}.set_fg(ramp_color(0.0)));
+        sink.put(Point{area.x + 4.0, ly}, kBlock, Style{}.set_fg(ramp_color(0.5)));
+        sink.put(Point{area.x + 5.0, ly}, kBlock, Style{}.set_fg(ramp_color(1.0)));
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "max(%.1f)", vmax);
+        sink.text(Point{area.x + 6.0, ly}, buf, Style{});
+    }
+
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

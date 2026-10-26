@@ -11,6 +11,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/util/math.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -131,6 +133,102 @@ void RadarChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool RadarChart::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    const std::size_t n = values_.size();
+    if (n < 3) {
+        return true;  // 少于 3 根轴不成多边形
+    }
+    double vmax = 0.0;
+    for (double v : values_) {
+        if (std::isfinite(v)) {
+            vmax = std::max(vmax, v);
+        }
+    }
+    if (!(vmax > 0.0)) {
+        vmax = 1.0;  // 全零数据：蛛网照画，数据多边形缩在中心
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 3.0 || inner.h < 3.0) {
+        return true;
+    }
+    const PolarFrame f = make_frame(inner);
+    const double start_rad = util::deg_to_rad(options_.start_angle);
+    const double slot = kTwoPi / static_cast<double>(n);
+
+    const Style web_style = Style{}.set_fg(default_color(DefaultColor::Muted));
+    const Style data_style = Style{}.set_fg(color_);
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 蛛网：3 层环（多边形）+ 每根轴的射线（与 draw() 一致）。
+    for (const double ring : {1.0 / 3.0, 2.0 / 3.0, 1.0}) {
+        for (std::size_t i = 0; i < n; ++i) {
+            const double swept = slot * static_cast<double>(i);
+            const Point from = polar_cell(f, ring, swept, start_rad, options_.clockwise);
+            const Point to =
+                polar_cell(f, ring, swept + slot, start_rad, options_.clockwise);
+            for (const Point& p : canvas::line_points(from, to)) {
+                sink.put(p, U'\u00B7', web_style);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const Point tip = polar_cell(f, 1.0, slot * static_cast<double>(i),
+                                     start_rad, options_.clockwise);
+        for (const Point& p : canvas::line_points(f.center, tip)) {
+            sink.put(p, U'\u00B7', web_style);
+        }
+    }
+
+    // 数据多边形：'•' 描边 + '●' 顶点。
+    std::vector<Point> data_cells;
+    data_cells.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double v = std::isfinite(values_[i]) ? values_[i] : 0.0;
+        const double rnorm = std::clamp(v / vmax, 0.0, 1.0);
+        data_cells.push_back(polar_cell(f, rnorm, slot * static_cast<double>(i),
+                                        start_rad, options_.clockwise));
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        for (const Point& p :
+             canvas::line_points(data_cells[i], data_cells[(i + 1) % n])) {
+            sink.put(p, U'\u2022', data_style);
+        }
+    }
+    for (const Point& p : data_cells) {
+        sink.put(p, U'\u25CF', data_style);
+    }
+
+    // 轴标签：外顶点外推 1.15 半径。
+    for (std::size_t i = 0; i < n && i < labels_.size(); ++i) {
+        if (labels_[i].empty()) {
+            continue;
+        }
+        const Point at = polar_cell(f, 1.15, slot * static_cast<double>(i), start_rad,
+                                    options_.clockwise);
+        sink.text(at, labels_[i], Style{});
+    }
+
+    if (options_.show_legend) {
+        const std::vector<layout::LegendEntry> entries{
+            layout::LegendEntry{name_, color_}};
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

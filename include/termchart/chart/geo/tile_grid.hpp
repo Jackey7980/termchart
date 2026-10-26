@@ -34,6 +34,8 @@ public:
     [[nodiscard]] std::size_t tile_count() const noexcept { return tiles_.size(); }
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<GeoTile> tiles_;

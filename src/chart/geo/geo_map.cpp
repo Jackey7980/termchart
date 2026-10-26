@@ -7,6 +7,7 @@
 //   * 字符格上用 canvas.draw_line 描外环 + canvas.put 写中心点 + draw_text 标 name
 //   * 不填字符（多边形填色字符会糊到一起，描边才有"地图感"）
 #include "termchart/chart/geo/geo_map.hpp"
+#include "termchart/chart/scene_sink.hpp"
 
 #include <algorithm>
 #include <array>
@@ -407,6 +408,94 @@ void GeoMap::draw(DrawContext ctx) {
         layout::draw_title(ctx.canvas, title(),
                            Rect{0, 0, static_cast<double>(W), static_cast<double>(H)});
     }
+}
+
+bool GeoMap::to_scene(scene::Scene& out, std::uint32_t width,
+                      std::uint32_t height) const {
+    if (!impl_->loaded || impl_->entries.empty()) return true;
+
+    // 1) bbox
+    const auto bbox = util::geo::compute_bounds(impl_->fc);
+
+    // 2) 值域
+    double vmin = 0, vmax = 0; bool have = false;
+    for (const auto& e : impl_->entries) {
+        if (!e.has_value) continue;
+        if (!have) { vmin = vmax = e.value; have = true; }
+        else { vmin = std::min(vmin, e.value); vmax = std::max(vmax, e.value); }
+    }
+
+    if (width == 0 || height == 0) return true;
+
+    // 等距矩形用 (lat, lon) 直接作 (y, x)；其他投影需 bbox → 单位方块映射。
+    // Y 轴：地理 lat 北正南负，画布 y 顶 0 底 H-1 → 翻转。
+    auto project_to_canvas = [&](double lat, double lon) -> Point {
+        const Point p = project(options_.projection, lat, lon, options_);
+        if (options_.projection == GeoProjection::Equirectangular) {
+            // 1:1 线性映射。v 用 (1 - frac) 让 lat=max（北）落到 y=0（顶），
+            // lat=min（南）落到 y=H-1（底）—— 否则南显示在画面顶部。
+            const double u = (lon - bbox.min_lon) / std::max(1e-9, bbox.max_lon - bbox.min_lon);
+            const double v = 1.0 - (lat - bbox.min_lat) / std::max(1e-9, bbox.max_lat - bbox.min_lat);
+            return {u * (width - 1), v * (height - 1)};
+        }
+        // 其他投影：直接返回投影坐标（caller 自行理解；后续可加投影后 bbox 自适应）
+        return p;
+    };
+
+    // 3) 描外环 + 中心标记 + name
+    const int bins = std::min(8, std::max(1, static_cast<int>(options_.bins)));
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (const auto& e : impl_->entries) {
+        // 选色：先按 bins 量化成"级"，再取色带颜色（否则 options_.bins 形同虚设）
+        Color256 rgb;
+        if (e.has_value && have && vmax > vmin) {
+            const double frac = (e.value - vmin) / (vmax - vmin);
+            const double quantized = std::clamp(
+                std::floor(frac * static_cast<double>(bins)) /
+                    std::max(1.0, static_cast<double>(bins) - 1.0),
+                0.0, 1.0);
+            rgb = ramp_color(quantized);
+        } else {
+            rgb = kNoData;
+        }
+        Style st = Style{}.set_fg(Color::rgb(rgb.r, rgb.g, rgb.b));
+
+        // 每条 ring → 描边：用矢量 StrokeOp 复刻 Canvas::draw_line 的几何。
+        for (const auto& ring : e.rings) {
+            for (std::size_t i = 1; i < ring.size(); ++i) {
+                const Point a = project_to_canvas(ring[i - 1].y, ring[i - 1].x);
+                const Point bb = project_to_canvas(ring[i].y, ring[i].x);
+                b.stroke(st.fg());
+                b.move_to(a);
+                b.line_to(bb);
+            }
+        }
+        // 中心点（实心方块，让小国家也可视）
+        if (!e.rings.empty() && !e.rings[0].empty()) {
+            Point c{0, 0};
+            for (const auto& p : e.rings[0]) { c.x += p.x; c.y += p.y; }
+            c.x /= static_cast<double>(e.rings[0].size());
+            c.y /= static_cast<double>(e.rings[0].size());
+            const Point cc = project_to_canvas(c.y, c.x);
+            std::uint32_t cx, cy;
+            if (round_cell(cc.x, width, cx) && round_cell(cc.y, height, cy)) {
+                sink.put(Point{static_cast<double>(cx), static_cast<double>(cy)},
+                         U'\u25A0', st);  // ■
+            }
+        }
+    }
+
+    // 5) 标题
+    if (!title().empty()) {
+        layout::draw_title(sink, title(),
+                           Rect{0, 0, static_cast<double>(width), static_cast<double>(height)});
+    }
+    b.end_group(0);
+    return true;
 }
 
 // ── 高清出口 2：子像素栅格化 ────────────────────────────────────────────────

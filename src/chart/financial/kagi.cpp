@@ -12,6 +12,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -130,6 +132,86 @@ void KagiChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool KagiChart::to_scene(scene::Scene& out, std::uint32_t width,
+                          std::uint32_t height) const {
+    std::vector<double> finite;
+    finite.reserve(prices_.size());
+    for (double p : prices_) {
+        if (std::isfinite(p)) {
+            finite.push_back(p);
+        }
+    }
+    if (finite.size() < 2) {
+        return true;  // 无摆动可言
+    }
+    const auto [pmin_it, pmax_it] = std::minmax_element(finite.begin(), finite.end());
+    const double range = *pmax_it - *pmin_it;
+    if (!(range > 0.0)) {
+        return true;
+    }
+    const double reversal = options.reversal > 0.0 ? options.reversal : range * 0.05;
+    const std::vector<double> pivots = build_pivots(finite, reversal);
+    const std::size_t columns = pivots.size() - 1;
+    if (columns == 0) {
+        return true;  // 全程未越过反转阈值
+    }
+
+    double lo = pivots[0];
+    double hi = pivots[0];
+    for (double p : pivots) {
+        lo = std::min(lo, p);
+        hi = std::max(hi, p);
+    }
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5, static_cast<double>(columns) - 0.5,
+                      lo, hi, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "swing", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "price", Style{});
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 阳柱判定：上行柱顶超过前一个上行柱顶（首个上行柱视为阳）。
+    double prev_up_top = -std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < columns; ++i) {
+        const double a = pivots[i];
+        const double c = pivots[i + 1];
+        const bool up = c > a;
+        const double top = std::max(a, c);
+        const double bottom = std::min(a, c);
+        const bool yang = up && top > prev_up_top;
+        if (up) {
+            prev_up_top = std::max(prev_up_top, top);
+        }
+        const Style st = Style{}.set_fg(yang ? options.yang : options.yin);
+        const double x = area_.x_scale().forward(static_cast<double>(i));
+        // 竖段（draw_line → 矢量描边）。
+        b.stroke(st.fg());
+        b.move_to(Point{x, area_.y_scale().forward(bottom)});
+        b.line_to(Point{x, area_.y_scale().forward(top)});
+        // 转折横线：本柱末价连到下一柱起点。
+        if (i + 1 < columns) {
+            const double x_next =
+                area_.x_scale().forward(static_cast<double>(i + 1));
+            b.stroke(st.fg());
+            b.move_to(Point{x, area_.y_scale().forward(c)});
+            b.line_to(Point{x_next, area_.y_scale().forward(c)});
+        }
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

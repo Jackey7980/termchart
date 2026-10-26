@@ -9,6 +9,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/util/math.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -100,6 +102,80 @@ void GaugeChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool GaugeChart::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    // 值域退化（min ≥ max 或非有限）：没有映射可言，不画（仍返回已迁移）。
+    if (!(options_.value_max > options_.value_min) ||
+        !std::isfinite(options_.value_min) || !std::isfinite(options_.value_max)) {
+        return true;
+    }
+    double sweep_deg = options_.clockwise ? (options_.start_angle - options_.end_angle)
+                                          : (options_.end_angle - options_.start_angle);
+    if (!(sweep_deg > 0.0) || sweep_deg > 360.0) {
+        sweep_deg = 360.0;  // 端点写反/相等时退化为整圆
+    }
+    const double sweep_rad = util::deg_to_rad(sweep_deg);
+    const double start_rad = util::deg_to_rad(options_.start_angle);
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 3.0 || inner.h < 3.0) {
+        return true;
+    }
+    const PolarFrame f = make_frame(inner);
+
+    const Style gauge_style = Style{}.set_fg(color_);
+    const Style tick_style = Style{}.set_fg(default_color(DefaultColor::Muted));
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 弧体：按角度采样（与 draw() 一致）。
+    const int steps = std::max(24, static_cast<int>(std::lround(
+                                       4.0 * (f.rx + f.ry) * sweep_deg / 360.0)));
+    for (int i = 0; i <= steps; ++i) {
+        const double t = static_cast<double>(i) / static_cast<double>(steps);
+        sink.put(sweep_cell(f, 1.0, t, start_rad, sweep_rad, options_.clockwise),
+                 U'\u25CF', gauge_style);
+    }
+
+    // 主刻度：'+' 压在弧体上并向内再点一粒（rnorm 0.88）。
+    const int ticks = std::clamp(options_.tick_count, 2, 64);
+    for (int k = 0; k < ticks; ++k) {
+        const double t = static_cast<double>(k) / static_cast<double>(ticks - 1);
+        sink.put(sweep_cell(f, 1.0, t, start_rad, sweep_rad, options_.clockwise),
+                 U'+', tick_style);
+        sink.put(sweep_cell(f, 0.88, t, start_rad, sweep_rad, options_.clockwise),
+                 U'+', tick_style);
+    }
+
+    // 指针：圆心 → rnorm 0.72 的 DDA 线段（'*'）。
+    if (std::isfinite(value_)) {
+        const double t = std::clamp((value_ - options_.value_min) /
+                                        (options_.value_max - options_.value_min),
+                                    0.0, 1.0);
+        const Point tip =
+            sweep_cell(f, 0.72, t, start_rad, sweep_rad, options_.clockwise);
+        for (const Point& p : canvas::line_points(f.center, tip)) {
+            sink.put(p, U'*', gauge_style);
+        }
+    }
+    sink.put(f.center, U'\u25CF', gauge_style);  // 轴帽
+
+    if (options_.show_value) {
+        const std::string text = layout::format_tick(value_);
+        sink.text(Point{f.center.x - 2.0, f.center.y + 2.0}, text, Style{});
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

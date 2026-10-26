@@ -36,6 +36,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<Point> points_;
     PolarHeatOptions options_{};

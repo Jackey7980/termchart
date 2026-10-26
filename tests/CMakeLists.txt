@@ -134,6 +134,7 @@ add_executable(termchart_tests
     unit/chart/test_chart_to_scene_batch2.cpp
     unit/chart/test_chart_to_scene_batch3.cpp
     unit/chart/test_chart_to_scene_batch4.cpp
+    unit/chart/test_chart_to_scene_batch5.cpp
     unit/chart/test_scene_animation.cpp
 
     # ── document ──

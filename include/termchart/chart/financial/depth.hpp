@@ -24,13 +24,19 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     DepthOptions options;
+
+    [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
     std::vector<double> bid_price_;
     std::vector<double> bid_qty_;
     std::vector<double> ask_price_;
     std::vector<double> ask_qty_;
+    mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
 }  // namespace termchart::chart

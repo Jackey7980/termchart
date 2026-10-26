@@ -10,6 +10,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/util/math.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -115,6 +117,93 @@ void PolarLineChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool PolarLineChart::to_scene(scene::Scene& out, std::uint32_t width,
+                               std::uint32_t height) const {
+    // 与 draw() 同源：剔除非有限点。
+    std::vector<Point> pts;
+    pts.reserve(points_.size());
+    for (const Point& p : points_) {
+        if (std::isfinite(p.x) && std::isfinite(p.y)) {
+            pts.push_back(p);
+        }
+    }
+    if (pts.empty()) {
+        return true;
+    }
+    double rmax = options_.rmax;
+    if (!(rmax > 0.0)) {
+        for (const Point& p : pts) {
+            rmax = std::max(rmax, p.y);
+        }
+    }
+    if (!(rmax > 0.0)) {
+        rmax = 1.0;  // 半径全零：线缩在圆心，也不除零
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 3.0 || inner.h < 3.0) {
+        return true;
+    }
+    const PolarFrame f = make_frame(inner);
+    const double start_rad = util::deg_to_rad(options_.start_angle);
+    const Style line_style = Style{}.set_fg(color_);
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 外圈参考环（grid，to_scene 默认开）。
+    {
+        const Style grid_style = Style{}.set_fg(default_color(DefaultColor::Muted));
+        const int steps =
+            std::max(12, static_cast<int>(std::lround(4.0 * (f.rx + f.ry))));
+        for (int i = 0; i < steps; ++i) {
+            const double swept =
+                kTwoPi * static_cast<double>(i) / static_cast<double>(steps);
+            sink.put(polar_cell(f, 1.0, swept, start_rad, options_.clockwise),
+                     U'\u00B7', grid_style);
+        }
+    }
+
+    // 数据点 → 格坐标。
+    std::vector<Point> cells;
+    cells.reserve(pts.size());
+    for (const Point& p : pts) {
+        double deg = std::fmod(p.x, 360.0);
+        if (deg < 0.0) {
+            deg += 360.0;
+        }
+        const double rnorm = std::clamp(p.y / rmax, 0.0, 1.0);
+        cells.push_back(polar_cell(f, rnorm, util::deg_to_rad(deg), start_rad,
+                                   options_.clockwise));
+    }
+
+    const std::size_t last = cells.size() - 1;
+    for (std::size_t i = 0; i < last; ++i) {
+        for (const Point& p : canvas::line_points(cells[i], cells[i + 1])) {
+            sink.put(p, U'\u2022', line_style);
+        }
+    }
+    if (options_.close && cells.size() > 2) {
+        for (const Point& p : canvas::line_points(cells[last], cells[0])) {
+            sink.put(p, U'\u2022', line_style);
+        }
+    }
+    if (options_.show_markers) {
+        for (const Point& p : cells) {
+            sink.put(p, U'\u25CF', line_style);
+        }
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

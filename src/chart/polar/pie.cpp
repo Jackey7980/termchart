@@ -11,6 +11,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/util/math.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -129,6 +131,80 @@ void PieChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, inner);
     }
+}
+
+bool PieChart::to_scene(scene::Scene& out, std::uint32_t width,
+                        std::uint32_t height) const {
+    // 与 draw() 同源：剔除非有限/非正值扇区。
+    std::vector<double> vals;
+    std::vector<std::string> names;
+    double total = 0.0;
+    for (std::size_t i = 0; i < values_.size(); ++i) {
+        const double v = values_[i];
+        if (!(v > 0.0) || !std::isfinite(v)) {
+            continue;
+        }
+        vals.push_back(v);
+        names.push_back(i < labels_.size() ? labels_[i] : std::string{});
+        total += v;
+    }
+    if (vals.empty() || !(total > 0.0)) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    const Rect inner{m.left, m.top,
+                     static_cast<double>(width) - m.left - m.right,
+                     static_cast<double>(height) - m.top - m.bottom};
+    if (inner.w < 3.0 || inner.h < 3.0) {
+        return true;
+    }
+    const PolarFrame f = make_frame(inner);
+    const double start_rad = util::deg_to_rad(options_.start_angle);
+
+    SceneSink sink(out);
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 逐格解析填充（格粒度）：落点判定与 draw() 一致，只是落到 SceneSink。
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const Point p{static_cast<double>(x), static_cast<double>(y)};
+            if (norm_radius(f, p) > 1.0) {
+                continue;
+            }
+            const double a = chart_angle(f, p, start_rad, options_.clockwise);
+            std::size_t idx = vals.size() - 1;  // 浮点边界：末扇区兜底
+            double acc = 0.0;
+            for (std::size_t i = 0; i < vals.size(); ++i) {
+                acc += kTwoPi * vals[i] / total;
+                if (a < acc) {
+                    idx = i;
+                    break;
+                }
+            }
+            const Rgb rgb = color::series_color(color::PaletteKind::Default, idx);
+            sink.put(p, kSectorChars[idx % kSectorChars.size()],
+                     Style{}.set_fg(Color::rgb(rgb.r, rgb.g, rgb.b)));
+        }
+    }
+
+    if (options_.show_legend) {
+        std::vector<layout::LegendEntry> entries;
+        entries.reserve(names.size());
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            const Rgb rgb = color::series_color(color::PaletteKind::Default, i);
+            entries.push_back(
+                layout::LegendEntry{names[i], Color::rgb(rgb.r, rgb.g, rgb.b)});
+        }
+        const Rect legend_rect{inner.x, 0.0, inner.w, 1.0};
+        layout::draw_legend(sink, entries, legend_rect, layout::HAlign::Left);
+    }
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, inner);
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

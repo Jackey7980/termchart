@@ -10,6 +10,8 @@
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+
 namespace termchart::chart {
 
 void PointFigureChart::set_prices(std::vector<double> prices) {
@@ -108,6 +110,53 @@ void PointFigureChart::draw(DrawContext ctx) {
     if (ctx.draw_title && !title_.empty()) {
         layout::draw_title(ctx.canvas, title_, area_.inner_rect());
     }
+}
+
+bool PointFigureChart::to_scene(scene::Scene& out, std::uint32_t width,
+                                 std::uint32_t height) const {
+    if (columns_.empty()) {
+        return true;
+    }
+    int lv_min = columns_.front().bottom;
+    int lv_max = columns_.front().top;
+    for (const PfColumn& c : columns_) {
+        lv_min = std::min(lv_min, c.bottom);
+        lv_max = std::max(lv_max, c.top);
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, -0.5,
+                      static_cast<double>(columns_.size()) - 0.5,
+                      static_cast<double>(lv_min), static_cast<double>(lv_max + 1),
+                      false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "column", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "box", Style{});
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    for (std::size_t i = 0; i < columns_.size(); ++i) {
+        const PfColumn& c = columns_[i];
+        const Style st = Style{}.set_fg(c.up ? options.up : options.down);
+        const double x = area_.x_scale().forward(static_cast<double>(i));
+        // 格档中心落字符：y 轴反转，档 lv 的中心在 lv + 0.5（与 draw() 一致）。
+        for (int lv = c.bottom; lv <= c.top; ++lv) {
+            sink.put(Point{x, area_.y_scale().forward(static_cast<double>(lv) + 0.5)},
+                     c.up ? U'X' : U'O', st);
+        }
+    }
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

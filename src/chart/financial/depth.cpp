@@ -7,6 +7,9 @@
 #include "termchart/layout/grid.hpp"
 #include "termchart/scale/ticks.hpp"
 
+#include "termchart/chart/scene_sink.hpp"
+#include "termchart/layout/title.hpp"
+
 namespace termchart::chart {
 namespace {
 
@@ -88,6 +91,81 @@ void DepthChart::draw(DrawContext ctx) {
     }
     draw_side(ctx.canvas, area, bid_price_, bid_qty_, options.bid);
     draw_side(ctx.canvas, area, ask_price_, ask_qty_, options.ask);
+}
+
+bool DepthChart::to_scene(scene::Scene& out, std::uint32_t width,
+                           std::uint32_t height) const {
+    if (bid_price_.empty() || ask_price_.empty()) {
+        return true;  // 两侧都非空才成"深度"；缺一侧无法成图
+    }
+    double pmin = bid_price_.front();
+    double pmax = bid_price_.back();
+    for (double p : bid_price_) {
+        pmin = std::min(pmin, p);
+        pmax = std::max(pmax, p);
+    }
+    for (double p : ask_price_) {
+        pmin = std::min(pmin, p);
+        pmax = std::max(pmax, p);
+    }
+    double qmax = 0.0;
+    for (double q : bid_qty_) {
+        qmax = std::max(qmax, q);
+    }
+    for (double q : ask_qty_) {
+        qmax = std::max(qmax, q);
+    }
+    if (pmax <= pmin || qmax <= 0.0) {
+        return true;
+    }
+
+    const layout::Margin m{margin_top_, margin_right_, margin_bottom_, margin_left_};
+    area_ = make_area(width, height, m, pmin, pmax, 0.0, qmax, false, false);
+
+    const std::vector<double> xticks = scale::ticks_for(area_.x_scale());
+    const std::vector<double> yticks = scale::ticks_for(area_.y_scale());
+    SceneSink sink(out);
+    layout::draw_grid(sink, area_, xticks, yticks,
+                      Style{}.set_fg(default_color(DefaultColor::Muted)));
+    layout::draw_axis_x(sink, area_, xticks, "price", Style{});
+    layout::draw_axis_y(sink, area_, yticks, "qty", Style{});
+
+    scene::SceneBuilder& b = sink.builder();
+    b.begin_group(0);
+
+    // 一侧订单簿：阶梯线 '•' + 下方 ░ 填充（与 draw_side 同源）。
+    auto draw_side = [&](const std::vector<double>& price,
+                         const std::vector<double>& qty, Color color) {
+        const Style st = Style{}.set_fg(color);
+        const Rect inner = area_.inner_rect();
+        for (std::size_t i = 0; i < price.size(); ++i) {
+            const double x = area_.x_scale().forward(price[i]);
+            const double y = area_.y_scale().forward(qty[i]);
+            sink.put(Point{x, y}, kLineChar, st);
+            const double next_x = (i + 1 < price.size())
+                                      ? area_.x_scale().forward(price[i + 1])
+                                      : inner.right();
+            if (next_x > x) {
+                b.fill(st.fg());
+                b.rect(Rect{x, y, next_x - x, inner.bottom() - y});
+            }
+            if (i + 1 < price.size()) {
+                const double y_next = area_.y_scale().forward(qty[i + 1]);
+                b.stroke(st.fg());
+                b.move_to(Point{next_x, y});
+                b.line_to(Point{next_x, y_next});
+            }
+        }
+    };
+
+    draw_side(bid_price_, bid_qty_, options.bid);
+    draw_side(ask_price_, ask_qty_, options.ask);
+
+    if (!title_.empty()) {
+        layout::draw_title(sink, title_, area_.inner_rect());
+    }
+    b.end_group(0);
+    return true;
 }
 
 }  // namespace termchart::chart

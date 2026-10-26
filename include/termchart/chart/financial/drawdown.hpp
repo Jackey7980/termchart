@@ -29,6 +29,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // 回撤序列（与有效样本一一对应，恒 ≤ 0；无有效样本时为空）。
     [[nodiscard]] const std::vector<double>& drawdown() const noexcept { return dd_; }
     [[nodiscard]] double max_drawdown() const noexcept;
