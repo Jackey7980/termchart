@@ -8,8 +8,8 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径（2026-10-26 复核文件计数；doctest 用例/断言为 2026-10-22 全量跑值）：`include/termchart/**/*.hpp`（396 个）、`src/**/*.cpp`（332 个）、
-`examples/`（81 个源）、`tests/`（164 个源）、golden 14 份（与 `tests/golden/` 一致）。
+数字口径（2026-10-28 复核文件计数；doctest 用例/断言为 2026-10-22 全量跑值）：`include/termchart/**/*.hpp`（399 个）+ 并列 `termchart_gui`（35 头）、`src/**/*.cpp`（335 个）、
+`examples/`（81 个源）、`tests/`（173 个源）、golden 14 份（与 `tests/golden/` 一致）。
 `ctest`：5 套件 + 81 示例（个别 bench 经 `--quick` 进冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
 doctest：**termchart_tests 单套件 1053 用例 / 194246 断言**；含 golden/render/core/util 共 5 套件。
 改动后请重跑下列命令再更新本文件。

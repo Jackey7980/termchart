@@ -39,6 +39,8 @@ public:
         g.pt = 20.0;
         g.pr = static_cast<double>(W) - 14.0;
         g.pb = static_cast<double>(H) - 14.0;
+        g.xs.resize(1);  // 维持 xs/ly 长度 == n 不变式（n=1）
+        g.ly.resize(1);
         return g;
     }
 

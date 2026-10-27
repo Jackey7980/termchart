@@ -11,6 +11,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **图表统一 `to_scene` 大迁移 + GeoMap 收尾**：`chart/` 各图种统一产出 `scene::Scene` IR（cartesian 核心 7 + 剩余 14、indicator 5、text 4、statistical 11、flow 2、polar 8、geo 5、hierarchical 6、financial 6 等，共 73 个图表头已接 `to_scene`）；`chart/geo`（GeoMap）补齐分级图例/色标、命中测试、离线地图数据分发、TopoJSON 缝合离线回归；`backend` 加 SVG/PDF 文字轮廓化 `text-to-outline`。
+
+### Fixed
+
+- **GUI 渲染库 `ChartGeom` 不变式越界崩溃**：`termchart_gui` 的 `lerp_geom`→`recompute_tangents` 在动画收敛时对 `g.xs`/`g.ly` 越界下标（`vector<double>::operator[]` abort）。根因 `GaugeRenderer`/`PolarRenderer::compute_geom` 只设 `n=1` 却留空 `xs`/`ly`，破坏“长度 == n”不变式，且 `lerp_geom` 守卫漏校验 `ly.size()` 与 `xs.size()==n`；天气 demo 联网必崩。修复：`recompute_tangents` 按 `min(n, xs, ly)` 收敛、`lerp_geom` 强制不变式校验（不齐即吸附目标）、`gauge`/`polar` 的 `compute_geom` 补齐 `xs`/`ly` 到 `n`；新增 `--dump`/`--simulate`/`--feed` 诊断开关；gdb 复现并验证真实联网交互不崩。
+
 ## [0.9.0] - 2026-10-24
 
 本版把 AutoViz 对**不可信输入**的处理口径收口（`v0.8.1` 之后的四类修复见下面

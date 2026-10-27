@@ -50,6 +50,7 @@ termchart::api::flush_stdout();
 | 三条出口 | 终端实时渲染；矢量导出（SVG / HTML / Mermaid / JSON）；位图（PNG） |
 | 可扩展 | 光栅器 / 图表类型 / 比例尺注册表，核心零改动接入 |
 | 图可视化 | Graph → 布局（分层 / 力导向 / 网格 / metro）→ 路由 → 图种（流程图 / 状态机 / 思维导图等 21 种） |
+| GUI 与统一 Scene | 并列 header-only 库 `termchart_gui`（原生 Win32 / Tk / Qt 后端 + 部件树）；图表统一经 `to_scene` 产出 `Scene` IR |
 | 护栏齐全 | 分层规则、头文件自洽、生成物一致、每头独立编译、golden、fuzz、性能基线，全部机器强制 |
 
 ## 构建三步

@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 394 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 399 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -3675,6 +3675,10 @@ constexpr std::uint8_t to_byte(double x) noexcept {
     return static_cast<std::uint8_t>(clamp01(x) * 255.0 + 0.5);
 }
 
+constexpr double absd(double v) noexcept {
+    return v < 0.0 ? -v : v;
+}
+
 }  // namespace detail
 
 constexpr Rgb hsv_to_rgb(double h, double s, double v) noexcept {
@@ -3727,6 +3731,68 @@ constexpr void rgb_to_hsv(Rgb c, double& h, double& s, double& v) noexcept {
         h = 0.0;
         return;
     }
+    if (mx == r) {
+        h = 60.0 * ((g - b) / d);
+    } else if (mx == g) {
+        h = 60.0 * (2.0 + (b - r) / d);
+    } else {
+        h = 60.0 * (4.0 + (r - g) / d);
+    }
+    if (h < 0.0) {
+        h += 360.0;
+    }
+}
+
+// ── HSL（HSV 同族，lightness 版；"调亮/调暗"类配色更符合直觉）──────────────
+constexpr Rgb hsl_to_rgb(double h, double s, double l) noexcept {
+    const double hue = detail::normalize_hue(h);
+    const double sat = detail::clamp01(s);
+    const double light = detail::clamp01(l);
+    const double c = (1.0 - detail::absd(2.0 * light - 1.0)) * sat;
+    const double hp = hue / 60.0;  // ∈ [0,6)
+    const double mod2 = hp - 2.0 * static_cast<double>(static_cast<int>(hp / 2.0));
+    const double x = c * (1.0 - (mod2 < 1.0 ? 1.0 - mod2 : mod2 - 1.0));
+    double r = 0.0;
+    double g = 0.0;
+    double b = 0.0;
+    if (hp < 1.0) {
+        r = c;
+        g = x;
+    } else if (hp < 2.0) {
+        r = x;
+        g = c;
+    } else if (hp < 3.0) {
+        g = c;
+        b = x;
+    } else if (hp < 4.0) {
+        g = x;
+        b = c;
+    } else if (hp < 5.0) {
+        r = x;
+        b = c;
+    } else {
+        r = c;
+        b = x;
+    }
+    const double m = light - c * 0.5;
+    return Rgb{detail::to_byte(r + m), detail::to_byte(g + m), detail::to_byte(b + m)};
+}
+
+constexpr void rgb_to_hsl(Rgb c, double& h, double& s, double& l) noexcept {
+    const double r = static_cast<double>(c.r) / 255.0;
+    const double g = static_cast<double>(c.g) / 255.0;
+    const double b = static_cast<double>(c.b) / 255.0;
+    const double mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const double mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const double d = mx - mn;
+    l = (mx + mn) * 0.5;
+    if (d <= 0.0) {
+        h = 0.0;
+        s = 0.0;
+        return;
+    }
+    const double denom = 1.0 - detail::absd(2.0 * l - 1.0);
+    s = denom > 0.0 ? d / denom : 0.0;
     if (mx == r) {
         h = 60.0 * ((g - b) / d);
     } else if (mx == g) {
@@ -6685,6 +6751,58 @@ private:
 
 }  // namespace termchart::scale
 
+// ===== include/termchart/scale/symlog.hpp =====
+// symlog.hpp —— 对称对数比例尺（SymLog）
+//
+// 普通对数轴无法表达负数与零（它们在 log 域没有位置，只能丢弃整段数据）。
+// SymLog 在零附近保留一段「线性区」（阈值 C = linthresh），线性区之外再走对数，
+// 因此能在同一张轴上同时容纳大跨度的正负数据，且平滑穿过 0。变换：
+//
+//     T(x) = sign(x) * log10(1 + |x| / C)
+//
+// 当 C → 0 时退化为纯对数；当 C → ∞ 时退化为纯线性。C 越大，零附近线性区越宽。
+
+
+namespace termchart::scale {
+
+class SymLogScale final : public Scale {
+public:
+    SymLogScale() = default;
+    SymLogScale(double domain_min, double domain_max, double range_min = 0.0,
+                double range_max = 1.0, double linthresh = 1.0,
+                bool clamp = true) noexcept;
+
+    void set_domain(double domain_min, double domain_max) noexcept;
+    void set_range(double range_min, double range_max) noexcept;
+    void set_linthresh(double linthresh) noexcept;
+    void set_clamp(bool on) noexcept;
+
+    // T(x) = sign(x) * log10(1 + |x| / C) —— 对称对数核心映射（不夹紧）。
+    [[nodiscard]] double transform(double data) const noexcept;
+
+    [[nodiscard]] double forward(double data) const noexcept override;
+    [[nodiscard]] double inverse(double pixel) const noexcept override;
+
+    [[nodiscard]] bool valid() const noexcept override;
+
+    [[nodiscard]] double domain_min() const noexcept override { return dmin_; }
+    [[nodiscard]] double domain_max() const noexcept override { return dmax_; }
+    [[nodiscard]] double range_min() const noexcept override { return rmin_; }
+    [[nodiscard]] double range_max() const noexcept override { return rmax_; }
+    [[nodiscard]] double linthresh() const noexcept { return linthresh_; }
+    [[nodiscard]] bool clamped() const noexcept { return clamp_; }
+
+private:
+    double dmin_ = -10.0;
+    double dmax_ = 10.0;
+    double rmin_ = 0.0;
+    double rmax_ = 1.0;
+    double linthresh_ = 1.0;
+    bool clamp_ = true;
+};
+
+}  // namespace termchart::scale
+
 // ===== include/termchart/scale/ticks.hpp =====
 // ticks.hpp —— 刻度生成
 //
@@ -7356,14 +7474,19 @@ struct JsonFrameResult {
 // ===== include/termchart/scene/command.hpp =====
 // command.hpp —— Scene 的指令集（header-only）
 //
-// Scene 是**非完备图形 IR**：这里只放 vector 后端（SVG / LaTeX-TikZ）与
-// canvas 都能消费的那部分图元。**不要往里塞 canvas 才有的能力**
-// （例如渐变填充、裁剪路径、图层合成）——那些属于 canvas/（L10）。
+// Scene 是**通用 2D 矢量 IR**：收纳 SVG / LaTeX-TikZ / canvas / PDF / GUI
+// 都能消费的图元与状态指令（含路径、变换、裁剪、渐变、透明度、虚线、
+// 线宽/线帽、混合模式）。把"状态机"放进 IR，可避免在各后端重复实现。
 //
 // 指令一律用聚合体 + std::variant：
 //   * variant 的 index() 就是指令类别，不需要额外的 kind 字段；
-//   * 聚合体天然可 constexpr 构造、可 operator==，于是 Scene 可整体比较；
-//   * 新增指令 = 往 variant 里加一个聚合体，访问者会**编译期**被逼着补全。
+//   * 聚合体天然可 constexpr 构造、可 operator==，于是 Scene 可整体比较。
+//
+// 扩编约定（2026-10-26）：
+//   * 新增指令一律**追加在 variant 末尾**；CommandKind 同步追加。kind_of()
+//     是 index 直映射，插在中间会把 0..8 的数值顶翻（那套值要进快照/序列化）。
+//   * CommandVisitor / StatefulVisitor 对新指令提供**默认空 visit**，旧后端
+//     无需改动即可编译；要真实渲染的后端自行 override 对应 hook。
 //
 // 本文件是 header-only（见 cmake/header_only.txt），不得有同名 src 实现。
 
@@ -7461,8 +7584,106 @@ struct GroupOp {
     constexpr bool operator==(const GroupOp&) const noexcept = default;
 };
 
+// ── 高级路径 / 状态（2026-10-26 扩编：升级为更完整的 2D 矢量 IR）──────────
+// 这些指令追加在 variant 末尾：SVG / TikZ / canvas / PDF / GUI 均消费，
+// 故收进 IR 避免各后端重复实现状态机。CommandVisitor / StatefulVisitor 对
+// 其提供默认空 visit，旧后端无需改动。
+
+// 三次贝塞尔曲线段：from = 当前点（同 LineTo 语义），ctrl1/ctrl2 控制点，end 终点。
+struct CurveTo {
+    Point ctrl1;
+    Point ctrl2;
+    Point end;
+
+    constexpr bool operator==(const CurveTo&) const noexcept = default;
+};
+
+// 2×3 仿射矩阵 [[a,c,e],[b,d,f]] · (x,y,1)：a/d 缩放、b/c 剪切、e/f 平移。
+struct Transform {
+    double a = 1.0, b = 0.0, c = 0.0, d = 1.0, e = 0.0, f = 0.0;
+
+    constexpr bool operator==(const Transform&) const noexcept = default;
+};
+struct PushTransformOp {
+    Transform matrix;
+    constexpr bool operator==(const PushTransformOp&) const noexcept = default;
+};
+struct PopTransformOp {
+    constexpr bool operator==(const PopTransformOp&) const noexcept = default;
+};
+
+// 裁剪区：intersect=true 与现有裁剪区取交；false 覆盖为 region。
+struct ClipOp {
+    Rect region;
+    bool intersect = true;
+    constexpr bool operator==(const ClipOp&) const noexcept = default;
+};
+// 开启/重置当前子路径（其后首个 LineTo/CurveTo 重新发 M）。
+struct BeginPathOp {
+    constexpr bool operator==(const BeginPathOp&) const noexcept = default;
+};
+// 闭合当前子路径（连回起点）。
+struct ClosePathOp {
+    constexpr bool operator==(const ClosePathOp&) const noexcept = default;
+};
+
+struct GradientStop {
+    Rgb color{};
+    double offset = 0.0;  // ∈ [0,1]
+    constexpr bool operator==(const GradientStop&) const noexcept = default;
+};
+// 线性渐变填充状态：作用于其后 Fill / 带填充色的 RectOp。
+struct LinearGradientOp {
+    Point start;
+    Point end;
+    std::vector<GradientStop> stops;
+    bool operator==(const LinearGradientOp& o) const noexcept {
+        return start == o.start && end == o.end && stops == o.stops;
+    }
+};
+struct RadialGradientOp {
+    Point center;
+    double radius = 0.0;
+    std::vector<GradientStop> stops;
+    bool operator==(const RadialGradientOp& o) const noexcept {
+        return center == o.center && radius == o.radius && stops == o.stops;
+    }
+};
+// 全局透明度：其后图元的颜色按 alpha 缩放（alpha=1 恒等）。
+struct GlobalAlphaOp {
+    double alpha = 1.0;
+    constexpr bool operator==(const GlobalAlphaOp&) const noexcept = default;
+};
+// 虚线：dashes 为"实、空、实、空…"像素长；长度为奇数时末项复用首项；offset 起步偏移。
+struct DashOp {
+    double offset = 0.0;
+    std::vector<double> dashes;
+    bool operator==(const DashOp& o) const noexcept {
+        return offset == o.offset && dashes == o.dashes;
+    }
+};
+
+enum class StrokeCap : std::uint8_t { Butt, Round, Square };
+struct SetLineWidthOp {
+    double width = 1.0;
+    constexpr bool operator==(const SetLineWidthOp&) const noexcept = default;
+};
+struct SetStrokeCapOp {
+    StrokeCap cap = StrokeCap::Butt;
+    constexpr bool operator==(const SetStrokeCapOp&) const noexcept = default;
+};
+
+enum class BlendMode : std::uint8_t { Normal, Multiply, Screen, Overlay };
+struct BlendModeOp {
+    BlendMode mode = BlendMode::Normal;
+    constexpr bool operator==(const BlendModeOp&) const noexcept = default;
+};
+
 using Command =
-    std::variant<MoveTo, LineTo, RectOp, ArcOp, FillOp, StrokeOp, TextOp, ImageOp, GroupOp>;
+    std::variant<MoveTo, LineTo, RectOp, ArcOp, FillOp, StrokeOp, TextOp, ImageOp, GroupOp,
+                CurveTo, PushTransformOp, PopTransformOp, ClipOp, BeginPathOp, ClosePathOp,
+                LinearGradientOp, RadialGradientOp, GlobalAlphaOp, DashOp, SetLineWidthOp,
+                SetStrokeCapOp, BlendModeOp>;
 
 // 顺序与 Command 的候选列表一一对应；值即 variant 的 index()。
 enum class CommandKind : std::uint8_t {
@@ -7475,6 +7696,19 @@ enum class CommandKind : std::uint8_t {
     Text,
     Image,
     Group,
+    Curve,
+    PushTransform,
+    PopTransform,
+    Clip,
+    BeginPath,
+    ClosePath,
+    LinearGradient,
+    RadialGradient,
+    GlobalAlpha,
+    Dash,
+    SetLineWidth,
+    SetStrokeCap,
+    BlendMode,
 };
 
 constexpr CommandKind kind_of(const Command& command) noexcept {
@@ -7627,6 +7861,22 @@ public:
     // 需要分组语义的消费者（交互层按组收拢 HitRegion、SVG 输出 <g>）自己
     // override；不 override 的消费者保持原有行为，无需改动。
     virtual void visit(const GroupOp& command) { (void)command; }
+
+    // 2026-10-26 扩编指令：默认空实现，旧后端无需改动即可编译；
+    // 要在状态机里生效的（曲线/变换/裁剪/渐变/…）由 StatefulVisitor override。
+    virtual void visit(const CurveTo&) {}
+    virtual void visit(const PushTransformOp&) {}
+    virtual void visit(const PopTransformOp&) {}
+    virtual void visit(const ClipOp&) {}
+    virtual void visit(const BeginPathOp&) {}
+    virtual void visit(const ClosePathOp&) {}
+    virtual void visit(const LinearGradientOp&) {}
+    virtual void visit(const RadialGradientOp&) {}
+    virtual void visit(const GlobalAlphaOp&) {}
+    virtual void visit(const DashOp&) {}
+    virtual void visit(const SetLineWidthOp&) {}
+    virtual void visit(const SetStrokeCapOp&) {}
+    virtual void visit(const BlendModeOp&) {}
 };
 
 TERMCHART_API void accept(const Command& command, CommandVisitor& visitor);
@@ -7660,6 +7910,7 @@ TERMCHART_API void accept_all(const Scene& scene, CommandVisitor& visitor);
 //      的处理顺序是「先收口、后赋值」。这正是想要的：几何按它出现时的状态着色。
 
 
+
 namespace termchart::scene {
 
 class StatefulVisitor : public CommandVisitor {
@@ -7676,6 +7927,23 @@ public:
     // 显式 override（而非依赖基类默认）一是消掉 -Woverloaded-virtual，二是
     // 表明"这里是有意忽略"，不是忘了实现。
     void visit(const GroupOp& command) override;
+
+    // 2026-10-26 扩编指令的状态机接入。这些 visit 只做"状态登记 / 路径管理"，
+    // 渲染由各后端 override 的 hook 完成；旧后端（PDF/GUI）继承 CommandVisitor
+    // 的默认空 visit 即编译通过，行为零影响。
+    void visit(const CurveTo& command) override;
+    void visit(const PushTransformOp& command) override;
+    void visit(const PopTransformOp& command) override;
+    void visit(const ClipOp& command) override;
+    void visit(const BeginPathOp& command) override;
+    void visit(const ClosePathOp& command) override;
+    void visit(const LinearGradientOp& command) override;
+    void visit(const RadialGradientOp& command) override;
+    void visit(const GlobalAlphaOp& command) override;
+    void visit(const DashOp& command) override;
+    void visit(const SetLineWidthOp& command) override;
+    void visit(const SetStrokeCapOp& command) override;
+    void visit(const BlendModeOp& command) override;
 
     // 遍历 + 收尾。调用方不应再自己调 end_path。
     void run(const Scene& scene);
@@ -7695,19 +7963,78 @@ protected:
     virtual void emit_text(const TextOp& text) = 0;
     virtual void emit_image(const ImageOp& image) = 0;
 
+    // 扩编 hook（默认空：PDF/GUI 等未实现的後端继承即可编译；Canvas/SVG override）
+    // 曲线段：from=当前点，c1/c2 控制点，to 终点（坐标已由基类变换）。
+    virtual void extend_path_curve(const Point& from, const Point& c1, const Point& c2,
+                                  const Point& to) {}
+    // 闭合当前子路径：Canvas 已由基类用直线连回起点，无需额外动作；SVG 发 'Z'。
+    virtual void close_path() {}
+    // 渐变填充（作用于其后 Fill / 带填充色的 RectOp）：rect 为已变换矩形。
+    // 默认回退：不支持渐变的后端（PDF/GUI）用首色实色填充，避免矩形消失。
+    virtual void emit_filled_rect_gradient(const Rect& rect, bool radial, const Point& g0,
+                                          const Point& g1, double radius,
+                                          const std::vector<GradientStop>& stops) {
+        (void)radial;
+        (void)g0;
+        (void)g1;
+        (void)radius;
+        const Rgb c = stops.empty() ? Rgb{0, 0, 0} : stops.front().color;
+        emit_filled_rect(rect, Color::rgb(c));
+    }
+
     // ── 当前状态只读视图（end_path 里读的是"旧值"，见文件头第 2 条）──
     [[nodiscard]] const Color& current_fill() const noexcept { return fill_; }
     [[nodiscard]] const Color& current_stroke() const noexcept { return stroke_; }
     [[nodiscard]] double current_stroke_width() const noexcept { return stroke_width_; }
+    [[nodiscard]] double current_alpha() const noexcept { return alpha_; }
+    [[nodiscard]] const DashOp* current_dash() const noexcept {
+        return dash_active_ ? &dash_ : nullptr;
+    }
+    [[nodiscard]] StrokeCap current_cap() const noexcept { return cap_; }
+    [[nodiscard]] BlendMode current_blend() const noexcept { return blend_; }
+    [[nodiscard]] const Rect* clip_rect() const noexcept {
+        return clips_.empty() ? nullptr : &clip_composed_;
+    }
+    [[nodiscard]] bool fill_is_gradient() const noexcept { return fill_is_gradient_; }
+    void fill_gradient_params(bool& radial, Point& g0, Point& g1, double& radius,
+                             const std::vector<GradientStop>*& stops) const noexcept {
+        radial = fill_grad_radial_;
+        g0 = fill_grad_g0_;
+        g1 = fill_grad_g1_;
+        radius = fill_grad_radius_;
+        stops = &fill_stops_;
+    }
+
+    // 坐标变换（应用当前 transform 栈）：派生类在 emit 前把用户坐标映射到画布坐标。
+    [[nodiscard]] Point transform_point(const Point& p) const noexcept;
+    [[nodiscard]] Rect transform_rect(const Rect& r) const noexcept;
 
 private:
     void finish_path();  // end_path + 重置 path_open_
 
+    // 状态（默认值均恒等，不影响旧 Op 行为）
     Color fill_ = Color::none();
     Color stroke_ = Color::none();
     double stroke_width_ = 1.0;
     Point current_{};
     bool path_open_ = false;
+    Point subpath_start_{};
+
+    std::vector<Transform> transforms_;  // 变换栈（空=恒等）
+    Rect clip_composed_{};               // 当前裁剪区（clips_ 非空时有效）
+    std::vector<Rect> clips_;            // 裁剪栈（intersect 累积；!intersect 覆盖）
+    double alpha_ = 1.0;
+    DashOp dash_;
+    bool dash_active_ = false;
+    StrokeCap cap_ = StrokeCap::Butt;
+    BlendMode blend_ = BlendMode::Normal;
+
+    bool fill_is_gradient_ = false;
+    bool fill_grad_radial_ = false;
+    Point fill_grad_g0_{};
+    Point fill_grad_g1_{};
+    double fill_grad_radius_ = 0.0;
+    std::vector<GradientStop> fill_stops_;
 };
 
 }  // namespace termchart::scene
@@ -8245,6 +8572,19 @@ struct TtfGlyph {
     double advance_x = 0.0;
 };
 
+// 字形矢量轮廓（文字轮廓化 / text-to-outline 用）。
+// contours：每个闭合轮廓的扁平化多边形点（像素空间，y 向下；原点 = 笔触基线原点，
+//   字形主体在基线上方 → y 为负）。已把 glyf 的二次贝塞尔展平成折线，可直接喂给
+//   SVG <path>/PDF 路径算子。
+// advance_x：排版步进宽度（像素）。left/top：轮廓外接框相对笔触原点的偏移
+//   （像素，top 通常为负，因字形位于基线上方），与 TtfGlyph 同义，便于定位。
+struct GlyphOutline {
+    std::vector<std::vector<Point>> contours;
+    double advance_x = 0.0;
+    std::int32_t left = 0;
+    std::int32_t top = 0;
+};
+
 // 已解析的 TrueType 字体。拷贝共享同一份解析结果（表目录 + cmap 映射 +
 // cache），拷贝便宜；glyph() 带 cache 且无锁——多线程请每线程独立 load，
 // 或只调 advance()。
@@ -8272,6 +8612,12 @@ public:
 
     // 步进宽度（像素），不生成位图——文本测量/排版用。
     [[nodiscard]] double advance(char32_t codepoint, double pixel_size) const noexcept;
+
+    // 取字形矢量轮廓（带 cache；码点缺失回退 .notdef，再不行回退空轮廓）。
+    // 与 glyph() 同源：glyf 轮廓 → 像素空间（y 翻转）→ 二次贝塞尔展平成多边形。
+    // 用于把文字转成自包含矢量路径（SVG/PDF 文字轮廓化），不再依赖渲染端字体。
+    [[nodiscard]] Result<GlyphOutline> glyph_outline(char32_t codepoint,
+                                                     double pixel_size) const noexcept;
 
 private:
     struct Impl;
@@ -10343,6 +10689,15 @@ TERMCHART_API void draw_axis_y(Sink& sink, const PlotArea& area,
                                const std::vector<double>& ticks, std::string_view label = {},
                                const Style& style = Style{});
 
+// 右 y 轴（双 Y 轴 / 次坐标轴）：在 inner 右边画竖线，向左长出刻度并标注数值；
+// label 置于轴右侧。与 draw_axis_y 共用 inner 的 y_scale()，因此"把某系列映射到
+// 次坐标轴"由调用方（chart）通过为右轴单独构造 PlotArea / 替换 y_scale 完成——
+// layout 只负责画，不做坐标映射语义。
+TERMCHART_API void draw_axis_y_right(Sink& sink, const PlotArea& area,
+                                     const std::vector<double>& ticks,
+                                     std::string_view label = {},
+                                     const Style& style = Style{});
+
 // ── 兼容入口（内部转 CanvasSink，布局逻辑不复制第二份）──────────────────
 TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
                                const std::vector<double>& ticks, std::string_view label = {},
@@ -10356,6 +10711,11 @@ TERMCHART_API void draw_axis_x(canvas::Canvas& canvas, const PlotArea& area,
 TERMCHART_API void draw_axis_y(canvas::Canvas& canvas, const PlotArea& area,
                                const std::vector<double>& ticks, std::string_view label = {},
                                const Style& style = Style{});
+
+TERMCHART_API void draw_axis_y_right(canvas::Canvas& canvas, const PlotArea& area,
+                                     const std::vector<double>& ticks,
+                                     std::string_view label = {},
+                                     const Style& style = Style{});
 
 }  // namespace termchart::layout
 
@@ -10410,6 +10770,19 @@ TERMCHART_API void draw_axis_label(canvas::Canvas& canvas, std::string_view text
                                    HAlign halign = HAlign::Center,
                                    const Style& style = Style{});
 
+// ── 轴标签抽稀（纯算法，无绘制）────────────────────────────────────────────
+// 刻度过密时标签会互相覆盖：给定刻度在屏幕上的位置（单元格坐标，升序）与最小标签
+// 间隔 min_gap_cells，返回应保留的刻度下标。贪心：从左到右，跳过与上一个保留项
+// 间距不足 min_gap_cells 的项（始终保留第一个）。
+[[nodiscard]] TERMCHART_API std::vector<std::size_t> thin_tick_labels(
+    const std::vector<double>& positions, double min_gap_cells);
+
+// 重载：显式给出每个标签宽度（单元格数），按"上一标签右沿 → 当前标签左沿"间距判定，
+// 适合标签宽度不等（如 "03-02 08:00" 与 "1e9" 跨度极大）的情况。
+[[nodiscard]] TERMCHART_API std::vector<std::size_t> thin_tick_labels(
+    const std::vector<double>& positions, const std::vector<std::size_t>& widths,
+    double min_gap_cells);
+
 }  // namespace termchart::layout
 
 // ===== include/termchart/layout/legend.hpp =====
@@ -10428,15 +10801,36 @@ struct LegendEntry {
     Color color = Color::ansi16(7);
 };
 
+// 图例布局选项。wrap=true 时超出 max_width_cells 自动换行（多行向下堆叠）。
+struct LegendOptions {
+    HAlign halign = HAlign::Left;
+    bool wrap = false;
+    double max_width_cells = 0.0;  // 0 = 用 rect 宽度
+};
+
 class Sink;
 
 TERMCHART_API void draw_legend(Sink& sink, std::span<const LegendEntry> entries, const Rect& rect,
                                HAlign halign = HAlign::Left,
                                const Style& base = Style{});
 
+TERMCHART_API void draw_legend(Sink& sink, std::span<const LegendEntry> entries, const Rect& rect,
+                               const LegendOptions& opts, const Style& base = Style{});
+
 TERMCHART_API void draw_legend(canvas::Canvas& canvas, std::span<const LegendEntry> entries,
                                const Rect& rect, HAlign halign = HAlign::Left,
                                const Style& base = Style{});
+
+TERMCHART_API void draw_legend(canvas::Canvas& canvas, std::span<const LegendEntry> entries,
+                               const Rect& rect, const LegendOptions& opts,
+                               const Style& base = Style{});
+
+// ── 图例行分组（纯算法，无绘制）────────────────────────────────────────────
+// 给定图例项与单行最大宽度（单元格数），贪心地把项分组到若干行，保证每行宽度不超
+// max_width_cells，返回每行包含的项下标。任一单项超过 max_width_cells 也独占一行
+// （不截断）。用于 draw_legend(wrap=true) 的内部计算，也可被调用方独立测试/复用。
+[[nodiscard]] TERMCHART_API std::vector<std::vector<std::size_t>> legend_rows(
+    std::span<const LegendEntry> entries, double max_width_cells);
 
 }  // namespace termchart::layout
 
@@ -10533,6 +10927,68 @@ TERMCHART_API void draw_title(canvas::Canvas& canvas, std::string_view title, co
 
 }  // namespace termchart::layout
 
+// ===== include/termchart/chart/animation.hpp =====
+// animation.hpp —— 动画的两块基本件：**配置**与**运行时状态**
+//
+// 为什么要把它们从 chart.hpp 里拆出来：
+//   * `AnimationTrack` 只是"多久、多晚、怎么缓"三个数，与 Chart 无关；
+//   * `AnimationState` 是这些数 + 一个累加的 elapsed，可以脱离 Chart 单独用
+//     （GUI 帧循环、导出脚本里自己算进度都行）；
+//   * Chart 只负责"按名字表持有这些状态"，不再自己拿着时钟做减法。
+//
+// 两套时钟口径并存且**共用同一份实现**：
+//   * `Chart::tick(now)`  绝对时刻（首次 tick 即起点）——暂停/续播/跳转友好；
+//   * `AnimationState::tick(dt)` 增量步进——帧循环天然拿到的是 dt。
+// Chart 内部把 `now` 差分成 dt 再喂给状态，于是两条路算出的进度逐位一致。
+
+
+namespace termchart::chart {
+
+using util::ease;
+using util::Easing;
+
+// 一段按名动画：延迟 + 时长 + 缓动曲线。
+// "名字"就是 `Series::name`（也就是图例上那行文本），用户不必知道任何内部 id。
+struct AnimationTrack {
+    double duration = 0.5;  // 秒；<= 0 或非有限 → 瞬间完成
+    double delay = 0.0;     // 秒；负数按 0 处理
+    Easing easing = Easing::EaseOutCubic;
+};
+
+// 进度状态机。**未 start 时 progress() 恒为 1.0**——这是刻意的安全阀：
+// 静态渲染路径（从不 tick）不该因为"登记过动画"而变成空白图。
+//
+// 寿命：`reset()` 回到未启动（下次 tick 重新计时）；`restart()` 语义同 reset，
+// 保留两个名字是因为调用点读起来不一样。
+class AnimationState {
+public:
+    AnimationState() = default;
+    explicit AnimationState(AnimationTrack cfg) noexcept : track(cfg) {}
+
+    // 配置（公开可改：改时长不影响已经累计的 elapsed，与"改参数立即生效"一致）。
+    AnimationTrack track;
+
+    // 增量推进。dt <= 0 或非有限一律忽略（脏时钟不污染时间轴）。
+    // 第一次**有效**调用把状态从"未启动"切成"运行中"，elapsed 从 0 开始。
+    TERMCHART_API void tick(double dt) noexcept;
+
+    TERMCHART_API void reset() noexcept;
+
+    // [0,1]。未启动 → 1.0；延迟内 → 0.0；零时长 → 延迟一过即 1.0。
+    [[nodiscard]] TERMCHART_API double progress() const noexcept;
+
+    // 已启动且 elapsed 越过 delay+duration。
+    [[nodiscard]] TERMCHART_API bool finished() const noexcept;
+    [[nodiscard]] bool started() const noexcept { return started_; }
+    [[nodiscard]] double elapsed() const noexcept { return elapsed_; }
+
+private:
+    double elapsed_ = 0.0;  // 含延迟的累计时间
+    bool started_ = false;
+};
+
+}  // namespace termchart::chart
+
 // ===== include/termchart/chart/context.hpp =====
 // context.hpp —— 图表绘制上下文（DrawContext）
 //
@@ -10561,6 +11017,50 @@ struct DrawContext {
 };
 
 }  // namespace termchart::chart
+
+// ===== include/termchart/chart/financial/indicators.hpp =====
+// indicators.hpp —— 金融技术指标（纯函数，与图表绘制解耦）
+//
+// 输入约定：收盘价序列按时间升序；所有函数输出长度与输入一致，头部不足窗口处
+// 及非有限输入处填 NaN。本模块只做数值计算，不画任何东西——叠加到 candlestick
+// 等图上的渲染由调用方负责。计算依赖 math::mean / math::stddev，未引入新依赖。
+
+
+
+namespace termchart::chart::financial {
+
+// 简单移动平均（SMA）。window >= 1；前 window-1 个不足窗口的位置为 NaN。
+[[nodiscard]] TERMCHART_API std::vector<double> sma(std::span<const double> values,
+                                                    std::size_t window);
+
+// 指数移动平均（EMA）。alpha = 2/(window+1)（pandas ewm(span=window).mean() 口径）；
+// 首值 = values[0]；window >= 1。EMA 不依赖窗口内历史，故全程有值（无前导 NaN）。
+[[nodiscard]] TERMCHART_API std::vector<double> ema(std::span<const double> values,
+                                                    std::size_t window);
+
+struct BollingerBands {
+    std::vector<double> mid;    // 中轨 = SMA(window)
+    std::vector<double> upper;  // 上轨 = mid + k * 滚动标准差(ddof=0)
+    std::vector<double> lower;  // 下轨 = mid - k * 滚动标准差(ddof=0)
+};
+
+// 布林带（BOLL）。默认 window=20、k=2；前 window-1 处 mid/upper/lower 为 NaN。
+[[nodiscard]] TERMCHART_API BollingerBands bollinger(std::span<const double> values,
+                                                    std::size_t window = 20, double k = 2.0);
+
+struct Macd {
+    std::vector<double> macd;    // 快线 - 慢线
+    std::vector<double> signal;  // macd 的 EMA(signal_window)
+    std::vector<double> hist;    // macd - signal（柱）
+};
+
+// MACD。默认 fast=12、slow=26、signal=9；macd 与 signal 均全程有值
+// （EMA 从首元素起即定义，signal[0] == macd[0]），hist = macd - signal。
+[[nodiscard]] TERMCHART_API Macd macd(std::span<const double> values,
+                                      std::size_t fast = 12, std::size_t slow = 26,
+                                      std::size_t signal = 9);
+
+}  // namespace termchart::chart::financial
 
 // ===== include/termchart/chart/hierarchical/node.hpp =====
 // node.hpp —— hierarchical/ 共享的树节点与布局辅助（自给，不依赖 graph/）
@@ -10746,10 +11246,8 @@ class Sink;
 
 namespace termchart::chart {
 
-// 曲线族由 util 提供（见 util/easing.hpp）；这里起别名，让 `chart::Easing`
-// 与 `chart::ease` 对调用方可见，避免每个图种都写 `util::Easing`。
-using util::ease;
-using util::Easing;
+// `AnimationTrack` / `AnimationState` 在 chart/animation.hpp 里定义（别名
+// `chart::Easing` 也在那里），这里只负责持有"名字 → 状态"的表。
 
 // 折线/柱共享的字符与几何辅助（定义见 chart.cpp）。
 inline constexpr char32_t kLineChar = U'\u2022';     // • 连线
@@ -10784,14 +11282,12 @@ void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series,
 void draw_legend_for(layout::Sink& sink, const std::vector<Series>& series,
                      const layout::PlotArea& area, bool show);
 
-// 一段按名动画：延迟 + 时长 + 缓动曲线。
-// "名字"就是 `Series::name`（也就是图例上那行文本），用户不必知道任何内部 id。
-// 这是刻意的：chart 层没有指令流，几十个系列的字符串哈希完全够用；
-// 真正需要 `uint32_t` 的是未来 Scene 指令流（每帧上千条），那是另一层的事。
-struct AnimationTrack {
-    double duration = 0.5;  // 秒；<= 0 或非有限 → 瞬间完成
-    double delay = 0.0;     // 秒；负数按 0 处理
-    Easing easing = Easing::EaseOutCubic;
+// "哪一组数据画到几成"：Scene 里的组 id ↔ 进度。
+// 它是 Chart 与 `apply_animation`（见 chart/scene_animation.hpp）之间的桥：
+// Chart 知道"组 0 是收入线"，Scene 只知道"组 0"，中间这张表补上语义。
+struct GroupProgress {
+    std::uint32_t group = 0;
+    double progress = 1.0;  // [0,1]
 };
 
 class Chart {
@@ -10817,8 +11313,9 @@ public:
     [[nodiscard]] const std::string& title() const noexcept { return title_; }
 
     // ── 按名动画 ────────────────────────────────────────────────────
-    // 只登记"这一段该多久、怎么缓"，不碰 Scene、不碰渲染管线；具体怎么用
-    // 进度（截断折线 / 柱高生长）由各图种的 draw 自己决定。
+    // 只登记"这一段该多久、怎么缓"，不碰 Scene、不碰渲染管线。
+    // 具体怎么用进度（截断折线 / 柱高生长）由 `apply_animation` 决定，
+    // 而不是散在每个图种的绘制代码里——那样每加一个图种就要重写一遍动画。
     // 同名重复登记 = 覆盖。
     void add_animation(std::string name, AnimationTrack track);
     void add_animation(std::string name, double duration_seconds,
@@ -10827,7 +11324,9 @@ public:
     [[nodiscard]] std::size_t animation_count() const noexcept { return tracks_.size(); }
 
     // 推进时钟。**第一次调用即动画起点**（不需要单独的 start()）：
-    // 之后每次 tick 传入"现在"，进度由 `now - 首帧` 算出。
+    // 之后每次 tick 传入"现在"，内部差分成 dt 再喂给每个 `AnimationState`。
+    // 选中绝对时刻而不是只收 dt，是因为暂停/续播/跳转要的是"对齐到外部时钟"；
+    // 需要纯增量步进的调用方直接用 `AnimationState::tick(dt)`。
     // 非有限值直接忽略，不污染时间轴。
     void tick(double now_seconds) noexcept;
     // 把当前时刻当作新的起点重放（交互里"重新播放"按钮用）。
@@ -10840,6 +11339,11 @@ public:
     [[nodiscard]] double progress_of(const std::string& name) const noexcept;
     // 是否还有未跑完的组（渲染循环据此决定要不要继续出帧）。
     [[nodiscard]] bool animating() const noexcept;
+
+    // 把"组 id → 当前进度"写进 out（**不追加到已有内容之外**：调用方先 clear）。
+    // 默认空实现 = 该图种不做动画，`apply_animation` 拿到空表就原样返回。
+    // 组 id 的分配口径由图种自己定，但**必须与 to_scene 里 begin_group 的编号一致**。
+    virtual void animation_groups(std::vector<GroupProgress>& out) const;
 
     void set_margins(double top, double right, double bottom, double left) {
         margin_top_ = top;
@@ -10860,7 +11364,9 @@ protected:
     double margin_left_ = 8.0;
 
 private:
-    std::unordered_map<std::string, AnimationTrack> tracks_;
+    // 存状态而不是配置：`tick(now)` 把 now 差分成 dt 累积进每个 state，
+    // "改配置"仍需走 add_animation（它会用新 AnimationTrack 重建状态）。
+    std::unordered_map<std::string, AnimationState> tracks_;
     double clock_origin_ = 0.0;  // 首帧时刻 = 动画起点
     double clock_now_ = 0.0;
     bool ticking_ = false;       // 从未 tick → 一律视为"已完成"
@@ -10896,6 +11402,11 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出（参考 LineChart/BarChart）：轴/网格/图例/标题走 TextOp，
+    // 折线走 MoveTo/LineTo + StrokeOp（矢量），逐列填充走 RectOp + FillOp。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -10941,6 +11452,9 @@ public:
     // 光栅成半块实心格，导出侧就是 <rect fill>——不是逐格 █ 的转录。
     [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
                                 std::uint32_t height) const override;
+
+    // 整组柱子是组 0：柱子从基线长高交给 `apply_animation` 按组进度做。
+    void animation_groups(std::vector<GroupProgress>& out) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -10994,6 +11508,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：须/箱体/中位/端帽走 LineOp/RectOp + FillOp（矢量），
+    // 离群点走 TextOp，组标签走 TextOp。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11032,6 +11551,11 @@ public:
     void set_data(std::vector<Bubble> bubbles) { bubbles_ = std::move(bubbles); }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：点标记走 TextOp（半径阶梯仍用字符大小档 glyph_for），
+    // 轴/网格走 layout，无图例系列（单系列，opts_.name/opts_.color）。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -11075,6 +11599,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：背景带/度量条走 RectOp+FillOp（实心色块），目标竖线走
+    // MoveTo/LineTo+StrokeOp，行标签走 TextOp。无独立图例（draw 也未画）。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11115,6 +11644,10 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：影线走 LineOp、实体/十字星走 RectOp + FillOp（矢量）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11150,6 +11683,11 @@ public:
     void set_field(std::vector<std::vector<double>> rows) { rows_ = std::move(rows); }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：marching squares 逐级提取的等值线段用矢量 StrokeOp 复刻，
+    // 网格/轴/标题走 TextOp（与 AreaChart::to_scene 同构）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11189,6 +11727,11 @@ public:
     [[nodiscard]] const Options& options() const noexcept { return options_; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：行内连线走 MoveTo/LineTo+StrokeOp，两端点（●）走 TextOp，
+    // 行标签走 TextOp。无图例（单系列）。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11230,6 +11773,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：中心点与误差区间走 MoveTo/LineTo+StrokeOp，端帽走
+    // RectOp+FillOp，数据点（●）走 TextOp。无图例。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11269,6 +11817,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：时间条用矢量 RectOp+FillOp 复刻，行标签走 TextOp；
+    // 仅画时间网格 + x 轴（任务行是分类，无 y 轴），与 draw() 一致。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11306,6 +11859,11 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：色块走 RectOp + FillOp（矢量，按色表取色），网格/轴/标题/色标
+    // 走 TextOp（它们本来就是字符艺术）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何（含定义域端点有限性）。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -11348,6 +11906,10 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：直方图柱走 RectOp + FillOp（矢量）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何（含定义域端点有限性）。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -11436,6 +11998,9 @@ public:
     [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
                                 std::uint32_t height) const override;
 
+    // 组 i = 第 i 条非空系列（与 to_scene 的 begin_group 编号一致）。
+    void animation_groups(std::vector<GroupProgress>& out) const override;
+
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11478,6 +12043,10 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：比例瓦片用矢量 RectOp+FillOp 复刻，行类别图例走 LegendEntry。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11514,6 +12083,10 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：各维竖轴 + 跨轴样本折线用矢量 StrokeOp 复刻，维名走 TextOp。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11547,6 +12120,10 @@ public:
     [[nodiscard]] const Options& options() const noexcept { return options_; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：参考线走 LineOp，样本点走 TextOp（● 字形）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11588,6 +12165,11 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：各组密度轮廓用矢量 RectOp+FillOp 复刻（分数行用薄矢量矩形
+    // 代替 draw() 的八分块字符），组图例走 LegendEntry。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11627,6 +12209,10 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：点标记走 TextOp（字符字形，气泡档位与 draw 一致）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11663,6 +12249,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<double> values_;
     Options options_;
@@ -11696,6 +12285,9 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 暴露最后使用的绘图区，供测试断言几何。
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -11739,6 +12331,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -11775,6 +12370,9 @@ public:
     }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
@@ -11815,6 +12413,11 @@ public:
     void set_data(std::vector<Item> items);
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：每段 █ 柱走 RectOp+FillOp，连接线（─）走
+    // MoveTo/LineTo+StrokeOp。三色（增/减/小计）按 opts_ 取色。无图例。
+    TERMCHART_API [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // set_data 后的累计序列（与保留的条目一一对应，小计项为其自身值）。
@@ -11910,13 +12513,19 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     DepthOptions options;
+
+    [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
     std::vector<double> bid_price_;
     std::vector<double> bid_qty_;
     std::vector<double> ask_price_;
     std::vector<double> ask_qty_;
+    mutable layout::PlotArea area_{1, 1, layout::Margin{}, 0, 1, 0, 1};
 };
 
 }  // namespace termchart::chart
@@ -11945,6 +12554,9 @@ public:
     void set_options(DrawdownOptions options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 回撤序列（与有效样本一一对应，恒 ≤ 0；无有效样本时为空）。
     [[nodiscard]] const std::vector<double>& drawdown() const noexcept { return dd_; }
@@ -11982,6 +12594,9 @@ public:
     void set_prices(std::vector<double> prices);
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     KagiOptions options;
 
@@ -12026,6 +12641,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     PointFigureOptions options;
 
     [[nodiscard]] const std::vector<PfColumn>& columns() const noexcept { return columns_; }
@@ -12061,6 +12679,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     RenkoOptions options;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -12094,6 +12715,9 @@ public:
     void set_values(std::vector<double> values, std::vector<int> dirs = {});
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     VolumeOptions options;
 
@@ -12132,6 +12756,9 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const std::vector<Point>& points() const noexcept { return points_; }
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -12179,6 +12806,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：手算 inner 矩形（无坐标轴），居中横条走 RectOp + FillOp，
+    // 阶段名称/数值走 TextOp。与 draw() 同源。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<FunnelStage> stages_;
     FunnelOptions options_{};
@@ -12208,6 +12840,11 @@ public:
     void set_series(std::vector<Series> series);
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：手算 inner 矩形（无坐标轴），逐列占比堆叠走 RectOp +
+    // FillOp，图例/标题走 TextOp。与 draw() 同源。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     StreamOptions options;
 
@@ -12247,6 +12884,8 @@ public:
     [[nodiscard]] std::size_t region_count() const noexcept { return regions_.size(); }
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<GeoRegion> regions_;
@@ -12285,6 +12924,8 @@ public:
     [[nodiscard]] std::size_t region_count() const noexcept { return regions_.size(); }
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<DotDensityRegion> regions_;
@@ -12369,6 +13010,8 @@ struct GeoBitmapOptions {
     // 纵向超采样（1 = 关）。水平方向本来就按精确重叠算覆盖率，纵向靠这个补。
     std::uint32_t supersample = 2;
     color::ColormapKind colormap = color::ColormapKind::Turbo;
+    // 在右侧留白带里画一条分级色标（纵向，高值在上）。关时地图占满整图。
+    bool draw_legend = false;
 };
 
 class GeoMap final : public Chart {
@@ -12405,6 +13048,8 @@ public:
     [[nodiscard]] TERMCHART_API std::vector<std::string> feature_names() const;
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // ── 高清出口 2：子像素栅格化（盲文/象限/半块）────────────────────────────
     // 输出 CellBuffer 的字符尺寸是 cols × rows；每格内部再按 style 切 2×4 等子像素。
@@ -12419,6 +13064,25 @@ public:
     [[nodiscard]] TERMCHART_API image::Bitmap render_bitmap(std::uint32_t width,
                                                            std::uint32_t height,
                                                            const GeoBitmapOptions& opts = {}) const;
+
+    // ── 分级图例（色标）─────────────────────────────────────────────────────
+    // 按 options_.bins 与已加载值域生成分级图例，可直接喂给 layout::draw_legend。
+    // 每项 name 形如 "lo–hi"（区间端点），color 为对应级色。无值或值域退化时返回空。
+    // kind 指定色带（默认 Turbo，与默认导出一致）；终端渲染请用同一 kind。
+    [[nodiscard]] TERMCHART_API std::vector<layout::LegendEntry>
+    legend_bins(color::ColormapKind kind = color::ColormapKind::Turbo) const;
+
+    // 把图例渲染成字符格（复用 layout::draw_legend），便于终端直接拼在地图下方/右侧。
+    // 无值或值域退化时返回空 CellBuffer。
+    [[nodiscard]] TERMCHART_API CellBuffer
+    render_legend(color::ColormapKind kind = color::ColormapKind::Turbo,
+                  std::uint32_t max_width_cells = 40) const;
+
+    // ── 命中测试（HitRegion 基础）─────────────────────────────────────────────
+    // 给定地理坐标 (lon, lat)，返回其所在（最上层）feature 的 name；不在任何要素内返回 ""。
+    // 用于点击交互：GUI 把屏幕格反投影到经纬度后调用即可取回要素名/数值。
+    // 与三条出口共用同一份原始经纬度环，故命中结果与投影/渲染方式无关。
+    [[nodiscard]] TERMCHART_API std::string hit_test(double lon, double lat) const;
 
 private:
     struct Impl;
@@ -12455,6 +13119,8 @@ public:
     [[nodiscard]] std::size_t point_count() const noexcept { return points_.size(); }
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<Point> points_;
@@ -12494,6 +13160,8 @@ public:
     [[nodiscard]] std::size_t tile_count() const noexcept { return tiles_.size(); }
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<GeoTile> tiles_;
@@ -12520,6 +13188,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     DendrogramOptions options;
 
@@ -12549,6 +13219,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     IcicleOptions options;
 
@@ -12577,6 +13249,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     PackOptions options;
 
@@ -12606,6 +13280,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     SunburstOptions options;
 
@@ -12634,6 +13310,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     TreeViewOptions options;
 
@@ -12664,6 +13342,8 @@ public:
     void set_root(hier::HierNode root);
 
     void draw(DrawContext ctx) override;
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     TreemapOptions options;
 
@@ -12701,6 +13381,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：边框 + 标签/主值/变化量均以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::string label_;
     std::string value_;
@@ -12735,6 +13419,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：椭圆采样的环点（●/·）与中心百分比均以 TextOp 落笔。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     double fraction_ = 0.0;
     Color color_ = default_color(DefaultColor::Cyan);
@@ -12764,6 +13452,10 @@ public:
     void set_options(const StarRatingOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：★/◐/☆ 逐格以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     double rating_ = 0.0;
@@ -12796,6 +13488,10 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：状态 ● 与可选标签以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     LightState state_ = LightState::Unknown;
     std::string label_;
@@ -12826,6 +13522,10 @@ public:
     void set_options(const ThermometerOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：管/球泡/液柱/刻度均以 TextOp 落笔，整体包在组 0。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     double value_ = 0.0;
@@ -12859,6 +13559,9 @@ public:
     void set_options(const DonutOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<double> values_;
@@ -12899,6 +13602,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     double value_ = 0.0;
     Color color_ = default_color(DefaultColor::Accent);
@@ -12934,6 +13640,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<double> values_;
     std::vector<std::string> labels_;
@@ -12968,6 +13677,9 @@ public:
     void set_options(const PolarBarOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<double> values_;
@@ -13008,6 +13720,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<Point> points_;
     PolarHeatOptions options_{};
@@ -13043,6 +13758,9 @@ public:
     void set_options(const PolarLineOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<Point> points_;
@@ -13081,6 +13799,9 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     std::vector<double> values_;
     std::vector<std::string> labels_;
@@ -13115,6 +13836,9 @@ public:
     void set_options(const RoseOptions& options) { options_ = options; }
 
     void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<double> values_;
@@ -13160,6 +13884,52 @@ private:
     ChartRegistry() = default;
     std::map<std::string, Factory, std::less<>> factories_;
 };
+
+}  // namespace termchart::chart
+
+// ===== include/termchart/chart/scene_animation.hpp =====
+// scene_animation.hpp —— 动画**后处理拦截器**：按进度改写一份已经生成的 Scene
+//
+// 两代做法，这一代是后者：
+//   1. 源端（第一代）：`LineChart::to_scene` 里读 `progress_of`，边生成边截断。
+//      缺点是"动画"散在每个图种的绘制代码里——加一个图种就要重写一遍，且
+//      Scene 无法缓存（同一份数据每个进度都要重新生成整张图，轴/刻度/文本全重算）。
+//   2. 后处理（本文件）：`to_scene` 只出**完整几何**，进度由这里统一施加。
+//      一份基准 Scene 可以反复生成多帧，动画逻辑只有一个实现点。
+//
+// 纯几何改写，Scene 里没有数据语义，所以只认两条通用不变式：
+//   * **组内才是数据**：轴/网格/标题/图例都在 GroupOp 之外，天然不动；
+//   * **柱的基线是组内共享的那条边**：垂直柱从它长出去。
+//
+// 代价也要写明：截断发生在**屏幕空间**（Scene 只有格坐标），非线性比例尺下
+// "等比例揭开"与在数据坐标插值的结果会差一点点。视觉上是擦除，不是重投影，
+// 对入场动画足够；要严格的按数据插值，仍可用源端那条路（draw）。
+
+
+
+namespace termchart::chart {
+
+// 三个开关只为一件事：**不同图种的数据图元种类不同**。
+// 默认全开；遇到"组里还有不参与动画的矩形"（例如背景框）时按需关掉。
+struct SceneAnimationOptions {
+    bool clip_lines = true;  // 组内路径按 X 截断（折线从左向右画出）
+    bool grow_bars = true;   // 组内矩形从基线向外长出（柱从底部长高）
+    bool clip_texts = true;  // 组内文本（数据点标记 ●）跟着截断一起消失
+};
+
+// 所有数据组共用同一个进度。最简单的一条路，也是 `apply_animation(scene, p)`
+// 的字面语义；多系列各自进度用下面的重载。
+//
+// 进度 >= 1：**原样返回**（不做任何重建），保证"动画结束 == 没有动画"逐位成立。
+// 进度 <= 0：组内几何全部丢弃（组标记保留，交互层拿到的仍是一张合法 Scene）。
+TERMCHART_API void apply_animation(scene::Scene& scene, double progress,
+                                   const SceneAnimationOptions& options = {});
+
+// 按组进度：`Chart::animation_groups()` 的产出直接喂进来即可。
+// 表里没有的组按 1.0（完全显示）处理——与 `Chart::progress_of` 口径一致。
+TERMCHART_API void apply_animation(scene::Scene& scene,
+                                   std::span<const GroupProgress> groups,
+                                   const SceneAnimationOptions& options = {});
 
 }  // namespace termchart::chart
 
@@ -13227,6 +13997,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // r[k] 为滞后 k 的自相关（k = 0..实际最大滞后；r[0] = 1；未算成为空）。
     [[nodiscard]] const std::vector<double>& acf() const noexcept { return acf_; }
     // 置信带半宽 1.96/√n（未算成为 0）。
@@ -13272,6 +14045,9 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     [[nodiscard]] double mean_diff() const noexcept { return mean_; }
@@ -13320,6 +14096,9 @@ public:
     void set_options(CorrMatrixOptions options) { options_ = options; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // r[i][j] = 变量 i 与 j 的相关系数（对角线恒 1，退化格为 0）。
     [[nodiscard]] const std::vector<std::vector<double>>& r_matrix() const noexcept {
@@ -13371,6 +14150,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // 最近一次评估的 KDE 曲线（x 升序；无有效样本时为空）。
     [[nodiscard]] const std::vector<double>& curve_x() const noexcept { return xs_; }
@@ -13418,6 +14200,9 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // 升序有限样本；无有效样本时为空。
@@ -13468,6 +14253,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
 
 private:
@@ -13505,6 +14293,9 @@ public:
     void set_options(PcaOptions options) { options_ = options; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
     // 投影后的 2D 点（与有效样本一一对应；未拟合时为空）。
@@ -13553,6 +14344,9 @@ public:
     void set_show_legend(bool on) { show_legend_ = on; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     [[nodiscard]] bool fitted() const noexcept { return fitted_; }
     [[nodiscard]] double slope() const noexcept { return slope_; }
@@ -13609,6 +14403,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // ROC/PR 曲线（数据坐标；正负类不全时为空）。
     [[nodiscard]] const std::vector<Point>& roc_curve() const noexcept { return roc_; }
     [[nodiscard]] const std::vector<Point>& pr_curve() const noexcept { return pr_; }
@@ -13655,6 +14452,9 @@ public:
     void set_options(SeasonalOptions options) { options_ = options; }
 
     TERMCHART_API void draw(DrawContext ctx) override;
+
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
     // 三个分量与输入等长（未定义处为 NaN；未分解时为空）。
     [[nodiscard]] const std::vector<double>& trend() const noexcept { return trend_; }
@@ -13705,6 +14505,9 @@ public:
 
     TERMCHART_API void draw(DrawContext ctx) override;
 
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
     // KM 曲线（(时间, S) 数据坐标；无有效样本时为空）。
     [[nodiscard]] const std::vector<Point>& curve() const noexcept { return curve_; }
     [[nodiscard]] const layout::PlotArea& last_area() const noexcept { return area_; }
@@ -13748,6 +14551,11 @@ public:
 
     void draw(DrawContext ctx) override;
 
+    // 真实 Scene 输出：标签 + 液条（█/░）+ 百分比，全部走 TextOp 字符落笔
+    // （本图不用 Area2D，按单元格坐标复刻 draw()，几何整体归入 group 0）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
+
 private:
     struct Bar {
         std::string label;
@@ -13782,6 +14590,11 @@ public:
     [[nodiscard]] std::size_t row_count() const noexcept { return rows_.size(); }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：表头 + 分隔线 + 单元格，全部走 TextOp 字符落笔
+    // （本图不用 Area2D，按单元格坐标复刻 draw()，几何整体归入 group 0）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     std::vector<std::string> columns_;
@@ -13819,6 +14632,11 @@ public:
     [[nodiscard]] std::size_t placed_count() const noexcept { return placed_; }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：流式标签，按 (col,row)+字符+颜色复刻 draw()
+    // （字号在矢量 Scene 里以加粗+配色表达，几何整体归入 group 0）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     struct Tag {
@@ -13863,6 +14681,11 @@ public:
     [[nodiscard]] std::size_t placed_count() const noexcept { return placed_; }
 
     void draw(DrawContext ctx) override;
+
+    // 真实 Scene 输出：螺线布局的标签，按 (col,row)+字符+颜色复刻 draw()
+    // （字号在矢量 Scene 里以加粗+配色表达，碰撞网格与 draw() 同口径）。
+    [[nodiscard]] bool to_scene(scene::Scene& out, std::uint32_t width,
+                                std::uint32_t height) const override;
 
 private:
     struct Word {
@@ -16390,6 +17213,103 @@ private:
 
 }  // namespace termchart::interaction
 
+// ===== include/termchart/interaction/data_zoom.hpp =====
+// data_zoom.hpp —— 数据轴范围滑块（DataZoom，纯几何 1D 组件）
+//
+// 终端图里"缩略窗口滑块"的本质：在数据轴 [data_min, data_max] 上开一个可见窗口
+// [window_min, window_max]，并在一条屏幕"轨道"（Rect）上把它画成可拖拽的手柄盒。
+// 用户拖左/右端点改窗口宽度、拖窗体内平移窗口；本类只吃几何量，不碰终端、不碰
+// 渲染、不认识图表类型，依赖 L0 的 Point/Rect，与 zoom/pan/brush 同族——
+// 可在无终端的单测里完整驱动，GUI/TUI 共用。
+//
+// 谁把窗口接到图上：调用方拿到 window_min()/window_max() 后，去改对应比例尺的
+// domain（或 interaction::Viewport 的可见矩形）；本类不替你改任何下游状态。
+//
+// 不变量（构造后与每次状态变更后都维持）：
+//   * 窗口始终完全落在数据界内：data_min <= window_min <= window_max <= data_max；
+//   * 窗口跨度 >= min_window（数据量纲），且恒 <= 数据界跨度；
+//   * 退化输入（数据界零跨度 / NaN·Inf / 轨道零长度）明确不改状态或取恒等值。
+
+
+
+namespace termchart::interaction {
+
+// 滑块沿哪个方向铺开：Horizontal 用轨道的 x..x+w，Vertical 用 y..y+h。
+enum class ZoomAxis : std::uint8_t {
+    Horizontal = 0,
+    Vertical = 1,
+};
+
+struct DataZoomOptions {
+    double min_window = 1e-9;  // 窗口允许的最小跨度（数据量纲）
+    double handle_frac = 0.04; // 端点手柄半宽占轨道长度的比例（仅用于命中）
+};
+
+class DataZoom {
+public:
+    DataZoom() noexcept = default;
+    DataZoom(double data_min, double data_max, double window_lo, double window_hi,
+             Rect track, ZoomAxis axis = ZoomAxis::Horizontal,
+             DataZoomOptions opts = {}) noexcept;
+
+    void set_data_range(double lo, double hi) noexcept;
+    void set_track(Rect track) noexcept;
+    void set_axis(ZoomAxis axis) noexcept;
+    void set_options(DataZoomOptions opts) noexcept;
+
+    // 设置可见窗口；自动夹取进数据界并满足 lo<=hi 与最小跨度。
+    void set_window(double lo, double hi) noexcept;
+    // 窗口回到 == 全数据界。
+    void reset() noexcept;
+
+    // 轨道屏幕坐标 ↔ 数据值（沿 axis 方向；轨道外的坐标仍可折算，便于拖出界夹取）。
+    [[nodiscard]] double value_at(double screen_pos) const noexcept;
+    [[nodiscard]] double screen_pos_of(double value) const noexcept;
+
+    enum class Grab { None, Left, Right, Body };
+
+    // 命中：须落在轨道"带"内（Vertical 方向也在带宽里，避免误触）；
+    // 端点手柄优先（屏幕像素半宽 handle_frac*轨道长），其次窗体内→Body，否则 None。
+    [[nodiscard]] Grab hit_test(double screen_pos, double screen_other = 0.0) const noexcept;
+
+    // 手势：begin 记录抓取部位；move 按部位改窗口；end 退出。
+    void begin(double screen_pos) noexcept;
+    void move(double screen_pos) noexcept;
+    void end() noexcept;
+    [[nodiscard]] bool dragging() const noexcept;
+
+    [[nodiscard]] double data_min() const noexcept { return dmin_; }
+    [[nodiscard]] double data_max() const noexcept { return dmax_; }
+    [[nodiscard]] double window_min() const noexcept { return wlo_; }
+    [[nodiscard]] double window_max() const noexcept { return whi_; }
+    [[nodiscard]] Rect track() const noexcept { return track_; }
+    [[nodiscard]] ZoomAxis axis() const noexcept { return axis_; }
+    [[nodiscard]] const DataZoomOptions& options() const noexcept { return opts_; }
+
+    // 窗口两端在轨道上的归一化位置 [0,1]，供绘制滑块手柄盒。
+    [[nodiscard]] double window_lo_frac() const noexcept;
+    [[nodiscard]] double window_hi_frac() const noexcept;
+
+private:
+    [[nodiscard]] double track_start() const noexcept;
+    [[nodiscard]] double track_span() const noexcept;
+    void clamp_window() noexcept;
+
+    double dmin_ = 0.0;
+    double dmax_ = 1.0;
+    double wlo_ = 0.0;
+    double whi_ = 1.0;
+    Rect track_{};
+    ZoomAxis axis_ = ZoomAxis::Horizontal;
+    DataZoomOptions opts_{};
+    Grab grab_ = Grab::None;
+    bool dragging_ = false;
+    double grab_offset_ = 0.0;  // Body 拖拽：指针初始位置相对窗口 lo 的偏移（数据量纲）
+    double body_width_ = 0.0;   // Body 拖拽：按下时记录的窗口宽度
+};
+
+}  // namespace termchart::interaction
+
 // ===== include/termchart/interaction/detail/overlay_cells.hpp =====
 // overlay_cells.hpp —— 覆盖层的"改写格簿记"共享实现（interaction 模块私有 detail）
 //
@@ -17475,6 +18395,11 @@ struct VectorOptions {
     // 恰好是 1px 字（历史金标如此）。以"格"为场景单位的图形（如 graph）要把
     // 它设成 1.0——字号是场景单位而不是输出单位，否则会放大 scale 倍。
     double font_size = 0.0;
+    // 文字轮廓化（text-to-outline）：开启后文字以矢量字形路径输出（自包含，不再
+    // 依赖渲染端字体），而非 <text>/Helvetica。需配合 outline_font 提供 TTF 字节；
+    // 未提供字体时自动回退到旧行为。
+    bool text_outline = false;
+    std::vector<std::uint8_t> outline_font;
 };
 
 class VectorBackend : public Backend {
@@ -17566,12 +18491,12 @@ private:
 //   * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
 //     TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）；
 //   * 真彩 RGB（颜色类型 / PDF Color Operators rg/RG）；
-//   * 内嵌 PNG（走 image::Bitmap → encode_png → /Filter /FlateDecode）；
 //   * 单页（多页留给后续切片，初始只支持 1 页）；
 //   * 文本流：仅 BaseFont / Helvetica（PDF 14 标准字体之一，零嵌入）。
 //
-// 故意不写：
-//   * 圆弧 / 贝塞尔（PDF 支持但与 Scene 圆弧表示不一致，留 TODO）；
+// 故意不写 / 未做：
+//   * 圆弧（ArcOp 以折线逼近，非原生圆弧算子）；贝塞尔（未做）；
+//   * 位图嵌入（ImageOp 落 1×1 白占位 XObject，未内嵌 PNG）；
 //   * 透明度 / 混合模式；
 //   * 字体嵌入（用标准字体零成本，但 ASCII only）。
 //
@@ -17579,12 +18504,20 @@ private:
 
 
 
+namespace termchart::image {
+class TtfFont;  // 文字轮廓化字体（成员为 shared_ptr，仅需前向声明）
+}
+
 namespace termchart::backend::vector {
 
 struct PdfOptions {
     double width_pt  = 612.0;   // US Letter 宽（pt）
     double height_pt = 792.0;   // US Letter 高（pt）
     bool   compress  = true;    // 内容流走 zlib /FlateDecode（需 TERMCHART_HAVE_ZLIB）
+    // 文字轮廓化（text-to-outline）：开启后文字以矢量字形路径输出（自包含），
+    // 而非 Helvetica Tj。需配合 outline_font 提供 TTF 字节；未提供字体时回退。
+    bool text_outline = false;
+    std::vector<std::uint8_t> outline_font;
 };
 
 class PdfBackend final : public VectorBackend {
@@ -17602,6 +18535,7 @@ public:
 private:
     PdfOptions opts_;
     std::string out_;
+    std::shared_ptr<image::TtfFont> outline_font_;  // 文字轮廓化字体缓存
 };
 
 // 便捷：begin + render + end，返回字节流拷贝。

@@ -15,12 +15,12 @@
 
 | 项 | 数值 |
 | --- | --- |
-| 模块 | 规格定义 22 个（L0–L21）；**L0–L16 与 `api` 已落地**，`dsl` / `widget` / `plugin` / `app` 四个空层 |
-| 代码量 | `include/termchart/**/*.hpp` **172** 个、`src/**/*.cpp` **134** 个；生成代码 0 行混入源树 |
-| 测试 | doctest **497 用例 / 189357 断言**全绿；`ctest` **31/31**（5 个套件 + 24 个示例 + 2 条 bench 冒烟）；golden 快照 9 份；另有 6 个 fuzz 目标的自检（`ctest --preset fuzz`） |
-| 护栏 | `check_all` 通过：分层规则 + include↔src 自洽 + 生成物无 diff + **每头独立编译**（172 头）；全量重编 **0 warning**（vendored `doctest` 按 SYSTEM include） |
+| 模块 | 规格定义 22 个（L0–L21）+ 阶段 8 **GUI 平行栈 `termchart_gui`**；**L0–L22 与 `api` 全部落地**，`dsl` / `widget` / `plugin` / `app` / `gui` 均已实现 |
+| 代码量 | `include/` 共 **434** 个头（`termchart` 399 + `termchart_gui` 35）、`src/**/*.cpp` **335** 个；生成代码 0 行混入源树 |
+| 测试 | doctest **1053 用例 / 194246 断言**全绿（见 `docs/reference/capability_matrix.md`）；`ctest` **5 套件 + 81 示例 + bench 冒烟**；golden 快照 **14** 份；另有 fuzz 目标的自检（`ctest --preset fuzz`） |
+| 护栏 | `check_all` 通过：分层规则 + include↔src 自洽 + 生成物无 diff + **每头独立编译**（434 头）；全量重编 **0 warning**（vendored `doctest` 按 SYSTEM include） |
 | 基准 | `bench/` 2 条：`layout_layered` ≈ 线性、`layout_force` ≈ 平方（已知边界，大图需 Barnes-Hut） |
-| 已知边界 | PNG 解码不支持 Adam7 隔行；16 位样本取高字节；`polar/` 与部分图种未实现 |
+| 已知边界 | PNG 解码不支持 Adam7 隔行；16 位样本取高字节；图表统一经 `to_scene` 产出 `Scene` IR（`to_scene` 大迁移已覆盖主要图种） |
 
 精确的能力矩阵、示例索引与规格差距见 [`docs/reference/capability_matrix.md`](docs/reference/capability_matrix.md)；
 进度与阶段出口条件见 [`ROADMAP.md`](ROADMAP.md)；规格（做成什么样）见 [`结构.md`](结构.md)。
@@ -78,8 +78,8 @@ termchart::api::print_line("done", termchart::Style{}.set_attr(termchart::Attr::
 cmake --preset ninja              # 配置（预设见 CMakePresets.json）
 cmake --build --preset ninja -j    # 构建：库 + 测试 + 示例 + bench
 
-ctest --preset ninja               # 全部测试与冒烟（29 项）
-./build/ninja/tests/termchart_tests             # doctest 全量（463 用例）
+ctest --preset ninja               # 全部测试与冒烟（5 套件 + 81 示例 + bench 冒烟）
+./build/ninja/tests/termchart_tests             # doctest 全量（1053 用例 / 194246 断言）
 ./build/ninja/bench/bench_sugiyama --quick      # 性能基线（--quick 为冒烟档）
 ```
 
@@ -93,8 +93,7 @@ ctest --preset fuzz                                   # 6 个目标的 --self-te
 ```
 
 六个目标：`fuzz_utf8` / `fuzz_grapheme` / `fuzz_input_parser` / `fuzz_colormap` / `fuzz_sixel` /
-`fuzz_png`（规格还列了 `fuzz_mermaid` / `fuzz_dsl_lexer`，但 L17 `dsl` 是空层、没有可调用的解析器，
-**刻意不建空壳**）。语料内嵌在 `tests/fuzz/fuzz_common.hpp`（23 条共享 + PNG 目标另加 6 条专项），
+`fuzz_png`（规格还列了 `fuzz_mermaid` / `fuzz_dsl_lexer`，随 `dsl` 层落地逐步补齐）。语料内嵌在 `tests/fuzz/fuzz_common.hpp`（23 条共享 + PNG 目标另加 6 条专项），
 因此自检零文件依赖、可直接进 ctest。
 
 > 本工具链（MinGW-w64 GCC）**没有 libasan**（`cannot find -lasan`），所以 fuzz 不依赖 sanitizer，
@@ -145,8 +144,12 @@ L13 graph         节点边模型 · 布局 · 路由 · 形状 · 图种 · 占
 L14 render        全量 / 增量渲染 · 差分 · SGR 序列化（唯一生成点）
 L15 interaction   事件 / 分发 / 命中测试 / 键位表
 L16 backend       三物种后端（ANSI / SVG / HTML / Mermaid / JSON）
-L17–L20           dsl / widget / plugin / app（**空层**，尚未开工）
+L17 dsl           Mermaid 等 DSL 解析（已落地）
+L18 widget        部件树（已落地）
+L19 plugin        插件（已落地）
+L20 app           应用层（已落地）
 L21 api           print · quick（一行式）· 状态码
+L22 gui           并列 header-only 库 `termchart_gui`：GUI 原生后端 + 部件树（35 头，复用 scene 及以下，不碰终端呈现）
 ```
 
 三条渲染路径：**终端实时**（`raster → canvas → render::Renderer`）、**高级 API**
@@ -157,7 +160,7 @@ L21 api           print · quick（一行式）· 状态码
 
 | 路径 | 内容 |
 | --- | --- |
-| `include/termchart/` | 公共头（172 个）；`detail/` 是**生成的数据表**，禁手改 |
+| `include/termchart/` | 公共头（399 个）；并列 `include/termchart_gui/`（35 头）；`detail/` 是**生成的数据表**，禁手改 |
 | `src/` | 实现，与 `include/` 同路径同名（`check_header_only` 强制） |
 | `tests/unit/` `tests/integration/` `tests/golden/` | doctest 用例、跨模块集成、ANSI/golden 快照 |
 | `examples/` | 可运行示例（每个都是阶段出口条件的可执行形式） |

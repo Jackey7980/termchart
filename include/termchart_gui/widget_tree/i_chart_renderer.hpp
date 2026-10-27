@@ -55,7 +55,10 @@ inline std::string fmt_int(double v) {
 }
 
 inline void recompute_tangents(ChartGeom& g) {
-    const int n = g.n;
+    // 防御：xs/ly 长度可能 != n（非平滑插头 gauge/polar 把 xs/ly 留空），按 min 收敛，
+    // 绝不越界下标。实时数据过渡（tick 动画收敛）时若几何不齐，这里兜底不 abort。
+    const int n = std::min({g.n, static_cast<int>(g.xs.size()),
+                            static_cast<int>(g.ly.size())});
     g.m.assign(static_cast<std::size_t>(n < 0 ? 0 : n), 0.0);
     if (n < 2) return;
     std::vector<double> d(static_cast<std::size_t>(n - 1), 0.0);
@@ -107,7 +110,13 @@ inline bool geom_equal(const ChartGeom& a, const ChartGeom& b) {
 
 // 过渡显示几何：plot 矩形立即吸附到目标（撑满），只对内容（xs、ly、ytop）逐元素插值。
 inline ChartGeom lerp_geom(const ChartGeom& a, const ChartGeom& b, double e) {
-    if (a.n != b.n || a.xs.size() != b.xs.size()) return b;
+    // 几何不变式：xs/ly 长度必须 == n。gauge/polar 这类"非平滑"插头只设 n=1 而把 xs/ly 留空，
+    // 若直接插值会在 recompute_tangents / smooth_y_at 里越界 abort。不变式不齐就直接吸附到目标。
+    const bool inv_a = (a.xs.size() == static_cast<std::size_t>(a.n)) &&
+                        (a.ly.size() == static_cast<std::size_t>(a.n));
+    const bool inv_b = (b.xs.size() == static_cast<std::size_t>(b.n)) &&
+                        (b.ly.size() == static_cast<std::size_t>(b.n));
+    if (a.n != b.n || !inv_a || !inv_b) return b;
     ChartGeom g;
     g.n = a.n;
     g.pl = b.pl;  // 框架吸附到目标（撑满），不插值
@@ -117,13 +126,17 @@ inline ChartGeom lerp_geom(const ChartGeom& a, const ChartGeom& b, double e) {
     g.ytop = termchart::util::lerp(a.ytop, b.ytop, e);
     g.step = b.step;
     g.intervals = b.intervals;
-    g.xs.resize(a.xs.size());
-    g.ly.resize(a.ly.size());
-    for (std::size_t i = 0; i < a.xs.size(); ++i) {
-        g.xs[i] = termchart::util::lerp(a.xs[i], b.xs[i], e);
+    g.xs.resize(a.n);  // 按 n 定长，保证 xs/ly 长度 == n（供 smooth_y_at 安全下标）
+    g.ly.resize(a.n);
+    for (int i = 0; i < a.n; ++i) {
+        g.xs[static_cast<std::size_t>(i)] =
+            termchart::util::lerp(a.xs[static_cast<std::size_t>(i)],
+                                  b.xs[static_cast<std::size_t>(i)], e);
     }
-    for (std::size_t i = 0; i < a.ly.size(); ++i) {
-        g.ly[i] = termchart::util::lerp(a.ly[i], b.ly[i], e);
+    for (int i = 0; i < a.n; ++i) {
+        g.ly[static_cast<std::size_t>(i)] =
+            termchart::util::lerp(a.ly[static_cast<std::size_t>(i)],
+                                  b.ly[static_cast<std::size_t>(i)], e);
     }
     recompute_tangents(g);
     return g;

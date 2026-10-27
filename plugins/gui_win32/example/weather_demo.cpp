@@ -18,7 +18,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -150,6 +152,12 @@ bool parse_aqi(const std::string& body, double& aqi) {
     return true;
 }
 
+// 安全取值：越界返回 0.0 兜底。Open-Meteo 偶发 null 会让某些数组比 time 数组短，
+// 直接下标必崩（_n < size()）；所有 live 数据访问都走这里。
+double safe_at(const std::vector<double>& v, std::size_t i) {
+    return (i < v.size()) ? v[i] : 0.0;
+}
+
 #ifdef _WIN32
 #include <windows.h>
 #include <wininet.h>
@@ -179,7 +187,38 @@ std::string fetch_http(const std::string& url) {
 
 int main(int argc, char** argv) {
     using namespace termchart_gui;
-    const bool smoke = (argc > 1 && std::string(argv[1]) == "--smoke");
+    bool smoke = false, simulate = false;
+    std::string feed_path, dump_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--smoke") smoke = true;
+        else if (a == "--simulate") simulate = true;
+        else if (a == "--feed" && i + 1 < argc) feed_path = argv[++i];
+        else if (a == "--dump" && i + 1 < argc) dump_path = argv[++i];
+    }
+
+    // 构建时间戳横幅：跑起来第一行的 stderr 会打印，便于确认你跑的是不是带修复的新鲜 exe。
+    std::fprintf(stderr, "weather_demo build %s %s\n", __DATE__, __TIME__);
+
+    // --dump <file>：只抓真实 Open-Meteo 响应落盘、不渲染（因此不会崩），便于离线复现崩溃。
+#ifdef _WIN32
+    if (!dump_path.empty()) {
+        std::string body = fetch_http(kUrl);
+        {
+            std::ofstream f(dump_path, std::ios::binary);
+            f << body;
+        }
+        std::string abody = fetch_http(kAqiUrl);
+        std::string af = dump_path + ".aqi";
+        {
+            std::ofstream f(af, std::ios::binary);
+            f << abody;
+        }
+        std::fprintf(stderr, "weather: dumped %zu bytes -> %s  (aqi %zu bytes -> %s)\n",
+                     body.size(), dump_path.c_str(), abody.size(), af.c_str());
+        return 0;
+    }
+#endif
 
     const std::uint32_t W = 960;
     const std::uint32_t H = 700;
@@ -261,56 +300,134 @@ int main(int argc, char** argv) {
     mount.paint_all();
 
     // 后台拉取真实数据；拿到后由主循环安全写入 renderer 并重绘（避免 UI 线程阻塞）。
+    // --simulate：跳过联网，注入"故意不等长"的假数据，确定性验证 apply_live 防御 + 渲染器
+    // 补零（复现 Open-Meteo 因 null 丢值导致 temp/precip/wind_sp/tmax 比 time 数组短的场景）。
     std::atomic<bool> pending_ready{false};
     WeatherData pending;
     std::mutex pending_mtx;  // 防御性加固：即使有人把 flag 改成 relaxed 也不 race
-    std::thread([&]() {
-#ifdef _WIN32
+
+    auto make_simulated = []() -> WeatherData {
         WeatherData w;
-        std::string body = fetch_http(kUrl);
-        parse_weather(body, w);
-        std::string abody = fetch_http(kAqiUrl);
-        parse_aqi(abody, w.aqi);
+        w.h_time.assign(24, std::string("2026-10-17T00:00"));
+        w.temp.assign(20, 12.0);    // 比 24 短 4（温度 null 丢值）
+        w.precip.assign(22, 30.0);  // 比 24 短 2
+        w.wind_dir.assign(24, 90.0);
+        w.wind_sp.assign(18, 5.0);  // 比 24 短 6（风速 null 丢值）
+        w.d_time.assign(7, std::string("2026-10-17"));
+        w.tmax.assign(5, 20.0);     // 比 7 短 2
+        w.tmin.assign(7, 10.0);
+        w.pmax.assign(7, 40.0);
+        w.aqi = 165.0;
+        return w;
+    };
+
+    if (simulate) {
         {
+            std::lock_guard<std::mutex> lock(pending_mtx);
+            pending = make_simulated();
+        }
+        pending_ready.store(true, std::memory_order_release);
+        std::fprintf(stderr,
+                     "weather: --simulate injected mismatched data "
+                     "(h_time24/temp20/precip22/wind_dir24/wind_sp18/d_time7/tmax5)\n");
+    } else if (!feed_path.empty()) {
+        // 离线复现：把一份真实 Open-Meteo JSON 直接喂给 parse_weather → apply_live，
+        // 走完整"解析→渲染"链路（无需联网），用含 null 丢值的样本复现原始崩溃场景。
+        std::ifstream f(feed_path, std::ios::binary);
+        std::string body;
+        if (f) {
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            body = std::move(ss).str();
+        }
+        WeatherData w;
+        const bool ok = !body.empty() && parse_weather(body, w);
+        if (ok) {
+            std::fprintf(stderr,
+                         "weather: --feed parsed %s (%zu hourly temps / %zu daily max)\n",
+                         feed_path.c_str(), w.temp.size(), w.tmax.size());
             std::lock_guard<std::mutex> lock(pending_mtx);
             pending = std::move(w);
             pending_ready.store(true, std::memory_order_release);
+        } else {
+            std::fprintf(stderr, "weather: --feed failed to read/parse %s\n", feed_path.c_str());
+        }
+    } else {
+    std::thread([&]() {
+#ifdef _WIN32
+        try {
+            WeatherData w;
+            std::string body = fetch_http(kUrl);
+            parse_weather(body, w);
+            std::string abody = fetch_http(kAqiUrl);
+            if (!abody.empty()) {
+                double a = 0.0;
+                if (parse_aqi(abody, a)) w.aqi = a;
+            }
+            // 拿到非空响应才覆盖内置样本；body 为空（网络失败/超时）则保持内嵌真实样本，
+            // 平滑降级，不替换、不崩。解析出的数组长度不齐由 apply_live 的 safe_at 兜底。
+            if (!body.empty()) {
+                std::lock_guard<std::mutex> lock(pending_mtx);
+                pending = std::move(w);
+                pending_ready.store(true, std::memory_order_release);
+            } else {
+                std::fprintf(
+                    stderr,
+                    "weather: live fetch failed (no response) — falling back to embedded sample\n");
+            }
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr,
+                         "weather: fetch thread exception (%s) — embedded sample kept\n",
+                         ex.what());
+        } catch (...) {
+            std::fprintf(stderr,
+                         "weather: fetch thread unknown exception — embedded sample kept\n");
         }
 #endif
     }).detach();
+    }
 
     auto apply_live = [&]() {
         {
             std::lock_guard<std::mutex> lock(pending_mtx);
+            // 24h 温度 + 降水：以各数组实际长度为准，越界一律兜底 0（Open-Meteo 偶发 null
+            // 会让 temp/precip 比 h_time 短，直接下标必崩）。
             if (pending.h_time.size() >= 24) {
-                std::vector<std::string> hlab(24);
-                std::vector<double> htemp(24), hprec(24);
-                for (int i = 0; i < 24; ++i) {
-                    const std::string& t = pending.h_time[static_cast<std::size_t>(i)];
-                    std::size_t p = t.find('T');
-                    hlab[static_cast<std::size_t>(i)] =
-                        (p != std::string::npos) ? t.substr(p + 1, 5) : t;
-                    htemp[static_cast<std::size_t>(i)] = pending.temp[static_cast<std::size_t>(i)];
-                    hprec[static_cast<std::size_t>(i)] =
-                        pending.precip[static_cast<std::size_t>(i)];
+                const std::size_t n = 24;
+                std::vector<std::string> hlab(n);
+                std::vector<double> htemp(n), hprec(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    const std::string& t = pending.h_time[i];
+                    const std::size_t p = t.find('T');
+                    hlab[i] = (p != std::string::npos) ? t.substr(p + 1, 5) : t;
+                    htemp[i] = safe_at(pending.temp, i);
+                    hprec[i] = safe_at(pending.precip, i);
                 }
                 temp_renderer->set_series(hlab, {}, {htemp, hprec}, {"Temp C", "Prec %"});
             }
+            // 7 天：把各数组统一裁剪/补齐到标签数，避免 bars/lines 下标越界。
             if (!pending.d_time.empty()) {
                 std::vector<std::string> dlab;
+                dlab.reserve(pending.d_time.size());
                 for (const auto& t : pending.d_time) {
                     dlab.push_back(t.size() >= 5 ? t.substr(t.size() - 5) : t);
                 }
-                fc_renderer->set_series(dlab, pending.pmax, {pending.tmax, pending.tmin},
-                                        {"High", "Low"});
+                const std::size_t n = dlab.size();
+                std::vector<double> pmax(n), tmax(n), tmin(n);
+                for (std::size_t i = 0; i < n; ++i) {
+                    pmax[i] = safe_at(pending.pmax, i);
+                    tmax[i] = safe_at(pending.tmax, i);
+                    tmin[i] = safe_at(pending.tmin, i);
+                }
+                fc_renderer->set_series(dlab, pmax, {tmax, tmin}, {"High", "Low"});
             }
             if (pending.aqi > 0.0) gauge_renderer->set_value(pending.aqi);
-            if (pending.wind_sp.size() >= 24) {
+            // 风玫瑰：wind_dir 与 wind_sp 都需 >= 24，互不假设等长，缺一个就跳过。
+            if (pending.wind_dir.size() >= 24 && pending.wind_sp.size() >= 24) {
                 std::vector<termchart::Point> wp;
                 wp.reserve(24);
-                for (int i = 0; i < 24; ++i) {
-                    wp.push_back(termchart::Point{pending.wind_dir[static_cast<std::size_t>(i)],
-                                                 pending.wind_sp[static_cast<std::size_t>(i)]});
+                for (std::size_t i = 0; i < 24; ++i) {
+                    wp.push_back(termchart::Point{pending.wind_dir[i], pending.wind_sp[i]});
                 }
                 wind_renderer->set_points(std::move(wp));
             }
