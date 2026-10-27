@@ -173,6 +173,9 @@ install(TARGETS termchart
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+# 离线地图数据（assets/maps/*.json）：随安装包分发，供 GeoMap 免联网取用。
+install(DIRECTORY assets/maps DESTINATION ${CMAKE_INSTALL_DATADIR}/termchart)
+
 install(EXPORT termchartTargets
         FILE termchartTargets.cmake
         NAMESPACE termchart::
