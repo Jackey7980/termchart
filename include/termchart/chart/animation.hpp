@@ -37,7 +37,7 @@ struct AnimationTrack {
 class AnimationState {
 public:
     AnimationState() = default;
-    explicit AnimationState(AnimationTrack track) noexcept : track(track) {}
+    explicit AnimationState(AnimationTrack cfg) noexcept : track(cfg) {}
 
     // 配置（公开可改：改时长不影响已经累计的 elapsed，与"改参数立即生效"一致）。
     AnimationTrack track;

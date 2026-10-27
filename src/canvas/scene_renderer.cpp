@@ -143,7 +143,8 @@ protected:
             for (double x = std::max(0.0, rect.x); x < x1; ++x) {
                 if (!in_clip(x, y)) continue;
                 const Rgb col = apply_alpha(sample_gradient(radial, g0, g1, radius, stops, x, y));
-                canvas_->put(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)),
+                canvas_->put(static_cast<std::uint32_t>(std::lround(x)),
+                             static_cast<std::uint32_t>(std::lround(y)),
                              detail::kFullBlock, Style{}.set_fg(Color::rgb(col)));
             }
         }

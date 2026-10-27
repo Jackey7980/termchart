@@ -26,10 +26,7 @@ public:
     // 旧接口（combo 演示/测试用）：单条折线 + 柱 + 面积，保持原外观。
     void set_data(std::vector<std::string> labels, std::vector<double> bars,
                   std::vector<double> line) {
-        labels_ = std::move(labels);
-        bars_ = std::move(bars);
-        lines_ = {std::move(line)};
-        names_ = {"line"};
+        set_series(std::move(labels), std::move(bars), {std::move(line)});
     }
     void set_combo_data(std::vector<std::string> labels, std::vector<double> bars,
                         std::vector<double> line) override {
@@ -37,12 +34,20 @@ public:
     }
 
     // 多系列：类别标签 + 柱（可空）→ 折线系列（>=1 条）。
+    // 防御性：把 bars_ 与每条折线补齐到标签长度（缺的填 0），否则标签比数据长时
+    // compute_geom/build_line_scene/draw_* 里 lines_[k][i] 会越界 abort（weather_demo
+    // 喂 Open-Meteo 实时数据时，缺失小时 null 会让某数组比 time 短）。
     void set_series(std::vector<std::string> labels, std::vector<double> bars,
                     std::vector<std::vector<double>> lines,
                     std::vector<std::string> names = {}) {
         labels_ = std::move(labels);
         bars_ = std::move(bars);
         lines_ = std::move(lines);
+        const std::size_t N = labels_.size();
+        if (bars_.size() < N) bars_.resize(N, 0.0);
+        for (auto& ln : lines_) {
+            if (ln.size() < N) ln.resize(N, 0.0);
+        }
         if (names.empty()) {
             names_.resize(lines_.size());
             for (std::size_t k = 0; k < lines_.size(); ++k) {

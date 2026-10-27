@@ -109,7 +109,7 @@ public:
         // 顺序有讲究：先 ensure_column（新列为**既有行**补 Empty），再给所有列
         // 统一追加当前行槽位，最后赋值——反序会让新列少一个槽位、back() 错落到上一行。
         for (const auto& [name, cell] : cells) {
-            ensure_column(name);
+            (void)ensure_column(name);  // 返回新增列索引，这里仅需要确保列存在
         }
         for (auto& column : columns_) {
             column.emplace_back();

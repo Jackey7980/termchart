@@ -29,6 +29,16 @@ endif()
 set_target_properties(catalog_tui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/showcase")
 
+# autoviz "一张图"：复用 Panorama 难数据，交给 autoviz 自动选图，TUI 与 GUI 双版本。
+add_executable(autoviz_tui autoviz_tui.cpp autoviz_common.hpp)
+target_link_libraries(autoviz_tui PRIVATE termchart)
+termchart_set_warnings(autoviz_tui)
+if(MINGW)
+    target_link_options(autoviz_tui PRIVATE -static)  # 全静态：单独拷贝即可运行
+endif()
+set_target_properties(autoviz_tui PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/showcase")
+
 # GUI 真窗口版：走 gui_win32 平行栈（Win32Backend + SceneRenderer + Mount），
 # 与 plugins/gui_win32/example 同构；--png 无头出图，CI 可验证（无需桌面）。
 if(WIN32 AND TERMCHART_BUILD_GUI_WIN32 AND TARGET termchart_gui_win32)
@@ -43,6 +53,18 @@ if(WIN32 AND TERMCHART_BUILD_GUI_WIN32 AND TARGET termchart_gui_win32)
     endif()
     set_target_properties(panorama_gui PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/showcase")
+
+    add_executable(autoviz_gui autoviz_gui.cpp autoviz_common.hpp)
+    target_compile_definitions(autoviz_gui PRIVATE TERMCHART_BUILD_GUI_WIN32)
+    target_link_libraries(autoviz_gui PRIVATE termchart_gui_win32)
+    if(MINGW)
+        target_link_options(autoviz_gui PRIVATE -static)  # 全静态：单独拷贝即可运行
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(autoviz_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    set_target_properties(autoviz_gui PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/showcase")
 endif()
 
 # 冒烟测试：TUI 非 tty 一帧（stdout 被重定向 → 走一次性海报路径，退出 0）。
@@ -53,8 +75,13 @@ if(TERMCHART_BUILD_TESTS)
     add_test(NAME showcase_catalog_list COMMAND catalog_tui --list)
     set_tests_properties(showcase_catalog_list PROPERTIES
         PASS_REGULAR_EXPRESSION "total")
+    add_test(NAME showcase_autoviz_tui COMMAND autoviz_tui)
+    set_tests_properties(showcase_autoviz_tui PROPERTIES
+        PASS_REGULAR_EXPRESSION "autoviz 选中")
     if(WIN32 AND TERMCHART_BUILD_GUI_WIN32 AND TARGET termchart_gui_win32)
         add_test(NAME showcase_panorama_gui_png
                  COMMAND panorama_gui --png "${CMAKE_CURRENT_BINARY_DIR}/panorama_gui.png")
+        add_test(NAME showcase_autoviz_gui_png
+                 COMMAND autoviz_gui --png "${CMAKE_CURRENT_BINARY_DIR}/autoviz_gui.png")
     endif()
 endif()
