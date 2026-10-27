@@ -146,7 +146,17 @@
 
 ## 五、GUI 平行项目（已完成，2026-10-28）
 
-- [x] `termchart_gui`：平行栈已落地（详见 `capability_matrix.md` 第六节与 `ROADMAP` 修订记录）。渲染核心 `include/termchart/gui/`（`font` / `scene_renderer` / `hover_chart`）+ 并列顶层库 `include/termchart_gui/`（35 头：layout / widget_tree / native_loop / backend_tk / render）；原生后端 `Win32Backend` / `QtBackend` / `TkBackend` 均为完整实现（默认 OFF，仅因依赖外部运行时），无头 `HeadlessBackend` / 终端 `TuiBackend` 零依赖可用。GUI 复用边界是 `scene`(L4) 及以下，不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
+- [x] `termchart_gui`：平行栈已落地（详见 `capability_matrix.md` 第六节与 `ROADMAP` 修订记录）。
+  渲染核心 `include/termchart/gui/`（`font` / `scene_renderer` / `hover_chart`）+ 并列顶层 header-only
+  库 `include/termchart_gui/`（layout / widget_tree / native_loop / backend_tk / render，20+ 头）。
+  其中 **`backend_tk` 提供 `Backend` 抽象 + `HeadlessBackend`（`BitmapCanvas` + 内部事件队列）**，使整条栈
+  能在无窗口系统下编译、测试——`tests/unit/gui/test_gui_stack.cpp` 共 40 用例 / 181 断言（layout 重排、
+  widget 命中/回调、ChartWidget 悬停/缩放/淡入、Combo/Gauge/Polar 渲染均落真彩像素断言）**2026-10-28 复核全过**。
+  **真实落地边界（据实更正）**：原生窗口后端 `Win32Backend` / `QtBackend` / `TkBackend` 的完整实现位于
+  **`plugins/gui_win32` / `plugins/gui_qt` / `plugins/gui_tk`**（默认 OFF，仅因依赖外部运行时），**不在**
+  `include/termchart_gui/` 内；`termchart_gui::Backend` 接口目前只有无头实现，尚未桥接到某个真实窗口事件循环
+  （桥接需 Tk/Qt/Win32 运行时，无法在本机 headless / CI 验证，记为后续）。GUI 复用边界是 `scene`(L4) 及以下，
+  不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
 
 ## 六、地理图（`chart/geo`）与地图数据链（2026-10-18 登记）
 
