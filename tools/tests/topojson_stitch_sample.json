@@ -1,0 +1,25 @@
+{
+  "type": "Topology",
+  "transform": {"scale": [1, 1], "translate": [0, 0]},
+  "arcs": [
+    [[0, 0], [10, 0], [0, 10], [-10, 0]],
+    [[50, 50], [20, 0], [0, 20]]
+  ],
+  "objects": {
+    "countries": {
+      "type": "GeometryCollection",
+      "geometries": [
+        {
+          "type": "Polygon",
+          "arcs": [[0, -2]],
+          "properties": {"name": "Alpha"}
+        },
+        {
+          "type": "Polygon",
+          "arcs": [[1]],
+          "properties": {"name": "Beta"}
+        }
+      ]
+    }
+  }
+}

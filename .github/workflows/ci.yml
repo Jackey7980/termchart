@@ -41,6 +41,8 @@ jobs:
           python tools/gen_module_graph.py --check
           python tools/gen_single_header.py --check
           python tools/check_headers.py --compiler c++ --include "$PWD/include"
+      - name: TopoJSON 缝合回归
+        run: python tools/tests/test_topojson_stitch.py
 
   linux:
     name: ubuntu (gcc)

@@ -133,9 +133,12 @@
 > `tools/topojson_to_geojson.py::stitch_arc` 的两处解码错误（负索引必须取 `~idx`；必须**先**差分解码**再**反序），
 > 世界地图从"乱色块"恢复为可辨认形态。下列是这次改造暴露、但本轮**没做**的项。
 
-- [ ] **TopoJSON 缝合没有离线回归（优先）**：`stitch_arc` 的两个错误都**不报错、只产出合法 JSON**，
-  肉眼只能看出"地图不像地球"。目前唯一防线是 `fetch_map_data.py` 抓完立刻自检（要联网、只覆盖当下那份数据）。
-  应加一份最小夹具（1 条负索引反向弧 + 1 条正向弧、2 个 feature）与用例；验收＝把 `~idx` 改回 `idx` 后测试必须变红。
+- [x] **TopoJSON 缝合离线回归（2026-10-27 补）**：`stitch_arc` 的两处解码错误（负索引必须取
+  `~idx`；反序必须在 delta 解码之后）此前**不报错、只产出合法 JSON**。现已加最小夹具
+  `tools/tests/topojson_stitch_sample.json`（1 条负索引反向弧 + 1 条正向弧、2 个 feature）+
+  独立可运行回归测试 `tools/tests/test_topojson_stitch.py`（4 个用例：直接 stitch_arc 正反路径、
+  负索引解析到正确弧、端到端 convert 几何）。并接入 CI `guardrails` 作业，不再只靠联网自检。
+  **验收已做突变验证**：把 `~idx` 改回 `idx` 后测试确实变红，红线生效。
 - [ ] **`GeoMapOptions` 三个死字段**：`show_graticule` 全仓零消费者；`width` / `height` 在 `geo_map.cpp` 里
   没有任何 `options_.width` 读取（实际尺寸只认 `DrawContext` / `rasterize` 入参）。要么接上（画经纬网、
   作为 `draw()` 覆盖值），要么删字段并写进 CHANGELOG。验收＝`grep -r show_graticule src/ examples/` 有真实用途，否则字段消失。
