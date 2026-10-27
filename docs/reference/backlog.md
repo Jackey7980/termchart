@@ -24,13 +24,16 @@
   io：csv 零拷贝数值入口、json（dsl/json 核心下沉收编，dsl 留 shim）、stream 分块行读取；
   data：util/data 四件套上移（git mv，namespace termchart::data）+ ema + ohlc。
   验证：doctest 1103 用例 / 194733 断言 0 失败、ctest 79/79、check_all 全绿。
-- [ ] **SymLog（对称对数）轴**（2026-10-24 登记，长期，**明确不在近期做**）：`scale` 只有
-  线性与对数（对数轴拒非正值），没有 `symlog`（近零点线性、远处对数）。因此"0.001~1e21 跨十几个
-  数量级且含负值"这类列，目前靠 `autoviz` 的 Tukey 篱裁剪把极值钳到轴边缘处理（见
-  `docs/guide/autoviz.md` 的「极端离群值」）。真要做需三件套：`SymLogScale`（`linthresh` /
-  `linscale`）+ 跨零点的刻度生成（主要风险点：tick 序列与网格对齐）+ `layout` 的零线/负区约定。
-  **决策依据**：裁剪已覆盖真实脏数据场景（量级是"脏"而非"信号"），为单一图种动 `scale` 与 22 层
-  架构的收益不划算；触发条件是出现"量级本身就是业务信号"的真实需求。
+- [x] **SymLog（对称对数）轴**（2026-10-28 收尾）：`scale` 此前只有线性与对数（对数轴拒非正值），
+  没有 `symlog`。现 **`SymLogScale`（`linthresh`；`linscale` 暂未接，matplotlib 同款对称对数语义已够用）
+  + 跨零点刻度生成**均已落地**——`ticks_for` 通过 `dynamic_cast` 对 `SymLogScale` 分发到专用
+  `symlog_ticks`：线性区（[-C,C] 插 nice 细分 + 0 + ±C）与对数区（±C·10^k 及 2C/5C 中间档）拼接，
+  单调升序、去重、防爆抽稀。这解决了原 backlog 标注的**主要风险点**（tick 序列与网格对齐）。
+  新增 2 个单测（跨 0 含 0/±C/对数档；全在线性区内只给线性细分）。
+  剩余可选：`layout` 的零线加重 / 负区阴影（目前刻度已含 0 与 ±C，轴线表达已可用，强调为锦上添花）。
+  **决策说明保留**：原"明确不在近期做"的判据（量级多为脏数据、靠 Tukey 篱裁剪覆盖）仍成立；本收尾是
+  把先前并行 Agent 已实现、却未被 backlog 勾销的 `SymLogScale` + 本次补全的刻度一并登记闭环，而非
+  主动为单一图种推动 22 层架构变更。触发条件（量级本身是业务信号）仍未出现。
 - [ ] **chart → 真实 Scene 的图种迁移**（2026-10-25 登记）：`Chart::to_scene` 通路已建
   （`layout::Sink` 双落笔端 + `chart::SceneSink` + `scene::GroupOp` + `api::chart_to_scene` /
   `chart_to_svg`，示例 `78_chart_scene`）。**已迁移：`LineChart`（矢量描边 + 组）、`BarChart`

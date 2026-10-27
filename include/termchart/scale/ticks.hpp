@@ -11,6 +11,7 @@
 
 #include "termchart/export.hpp"
 #include "termchart/scale/scale.hpp"
+#include "termchart/scale/symlog.hpp"
 
 namespace termchart::scale {
 
@@ -21,6 +22,11 @@ TERMCHART_API std::vector<double> nice_ticks(double domain_min, double domain_ma
 // 对 Scale 生成刻度：在 range 上均匀取约 target 个点（用 nice_step 定步长），
 // 再 inverse 回数据坐标。要求 scale.valid()。
 TERMCHART_API std::vector<double> ticks_for(const Scale& scale, int target = 5) noexcept;
+
+// 对称对数轴专用刻度：线性区（[-C,C] 插 nice 细分 + 0 + ±C）与对数区
+// （±C·10^k 及 2C/5C 中间档）拼接，保证跨零点刻度与网格对齐。仅对 SymLogScale 调用——
+// 普通的「数据域等差采样 + inverse」会让 symlog 的刻度在屏幕上间距极不均匀。
+TERMCHART_API std::vector<double> symlog_ticks(const SymLogScale& scale, int target = 5) noexcept;
 
 }  // namespace termchart::scale
 

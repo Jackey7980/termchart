@@ -11,6 +11,7 @@
 #include "termchart/scale/linear.hpp"
 #include "termchart/scale/log.hpp"
 #include "termchart/scale/symlog.hpp"
+#include "termchart/scale/ticks.hpp"
 #include "termchart/scale/registry.hpp"
 
 namespace {
@@ -129,5 +130,51 @@ TEST_CASE("scale: 注册表能按名创建 symlog") {
     auto s = ScaleRegistry::instance().create("symlog");
     CHECK(s != nullptr);
     CHECK(ScaleRegistry::instance().supports("symlog"));
+}
+
+TEST_CASE("scale: symlog_ticks 跨零点含 0 与 ±C 且对数区按数量级铺") {
+    // domain [-100,100]，linthresh=1：应含 0、±1（线性边界）、以及 2/5/10/20/50/100 档。
+    const SymLogScale scale(-100.0, 100.0, 0.0, 1.0, 1.0, true);
+    const auto t = symlog_ticks(scale, 8);
+    CHECK_FALSE(t.empty());
+
+    bool has_zero = false, has_c = false, has_neg_c = false;
+    bool has_10 = false, has_100 = false;
+    for (double v : t) {
+        if (v == 0.0) has_zero = true;
+        else if (v == 1.0) has_c = true;
+        else if (v == -1.0) has_neg_c = true;
+        else if (v == 10.0) has_10 = true;
+        else if (v == 100.0) has_100 = true;
+    }
+    CHECK(has_zero);    // 跨零点必有 0
+    CHECK(has_c);       // 线性区上界 +C
+    CHECK(has_neg_c);   // 线性区下界 -C
+    CHECK(has_10);      // 对数区正档
+    CHECK(has_100);     // 对数区正档（域极值）
+
+    // 单调升序且在域内。
+    for (std::size_t i = 1; i < t.size(); ++i) CHECK(t[i] > t[i - 1]);
+    for (double v : t) CHECK((v >= -100.0 - 1e-9 && v <= 100.0 + 1e-9));
+
+    // ticks_for 对 SymLogScale 走同一条专用路径（dynamic_cast 分发）。
+    const auto tf = ticks_for(scale, 8);
+    CHECK(tf.size() == t.size());
+    for (std::size_t i = 0; i < t.size(); ++i) CHECK(tf[i] == t[i]);
+}
+
+TEST_CASE("scale: symlog_ticks 全在线性区内时只给线性细分") {
+    // domain [-0.5,0.5]，linthresh=1：整段落在线性区，应给 -0.5/0/0.5 这类，无对数档。
+    const SymLogScale scale(-0.5, 0.5, 0.0, 1.0, 1.0, true);
+    const auto t = symlog_ticks(scale, 8);
+    CHECK_FALSE(t.empty());
+    for (double v : t) {
+        CHECK((v >= -0.5 - 1e-9 && v <= 0.5 + 1e-9));
+        CHECK(std::fabs(v) <= 1.0 + 1e-9);   // 不能有超出线性区的对数档
+    }
+    // 必含 0。
+    bool has_zero = false;
+    for (double v : t) if (v == 0.0) has_zero = true;
+    CHECK(has_zero);
 }
 
