@@ -117,10 +117,11 @@
   第一节 `widget`/`plugin`/`app` 三行由"空"改为真实内容；开篇数字口径、示例索引标题同步。
 - [x] `ROADMAP.md` 现状节"未落地"清单：`dsl`/`widget`/`plugin`/`app` 改为"已落地"。
 - [x] 阶段 0 任务清单与出口条件：ci.yml / 格式化配置 / shell 封装三项勾选状态已与真实情况对齐。
-- [ ] **`capability_matrix.md` / `ROADMAP.md` 未登记 `chart/geo`**（2026-10-18）：两处全文无 `GeoMap`，
-  而实际已有 `GeoMap`（4 投影 / 3 条高清出口 / 位图）+ `examples/67–69` + `assets/maps/`。
-  需补：`capability_matrix` 第五节模块表加 `chart/geo` 行（5 个图种）、示例索引加 67–69；
-  `ROADMAP` 修订记录加一行。`docs/charts/geo.md` 已在本轮同步更新（口径从"库不做投影/不带数据"改为现状）。
+- [x] **`capability_matrix.md` / `ROADMAP.md` 登记 `chart/geo`（2026-10-28 收尾）**：`capability_matrix`
+  第五节模块表加 `chart/geo` 行（登记 GeoMap 4 投影 / 3 字符出口 + 位图 / 图例色标 / `hit_test` 命中、
+  `assets/maps` 离线数据随安装包分发），并把 `chart` 行原有 "geo 4/4" 字符图种提及交叉引用到该行；
+  示例索引补 `67_world_map` / `68_cn_province` / `69_city_plot`；`ROADMAP` 修订记录加 2026-10-28 一行。
+  `docs/charts/geo.md` 此前已同步更新（口径从"库不做投影/不带数据"改为现状）。
 
 ## 五、GUI 平行项目（不阻塞库本体）
 
