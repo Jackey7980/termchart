@@ -25,6 +25,7 @@
 #include "termchart/color/named_colors.hpp"
 #include "termchart/core/rect.hpp"
 #include "termchart/detail/braille_table.hpp"
+#include "termchart/layout/legend.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/util/geo/projection.hpp"
 
@@ -696,6 +697,35 @@ CellBuffer GeoMap::rasterize(std::uint32_t cols, std::uint32_t rows,
 
 // ── 高清出口 3：真彩色位图 ─────────────────────────────────────────────────
 
+// 在 (x0..x1, y0..y1) 矩形内画一条纵向分级色标：顶部 = 高值 bin，底部 = 低值 bin。
+// 与 legend_bins() 共用同一套 bins/色带，保证字符格图例与位图色标一致。
+static void draw_geo_colorbar(image::Bitmap& bmp, double x0, double x1, double y0, double y1,
+                             int bins, color::ColormapKind kind) {
+    const int W = static_cast<int>(bmp.width());
+    const int H = static_cast<int>(bmp.height());
+    const int ix0 = std::max(0, static_cast<int>(std::ceil(x0)));
+    const int ix1 = std::min(W - 1, static_cast<int>(std::floor(x1)));
+    const int iy0 = std::max(0, static_cast<int>(std::ceil(y0)));
+    const int iy1 = std::min(H - 1, static_cast<int>(std::floor(y1)));
+    if (ix0 > ix1 || iy0 > iy1) return;
+    const double span = y1 - y0;
+    for (int py = iy0; py <= iy1; ++py) {
+        const double f = (y1 - static_cast<double>(py)) / span;  // 顶=1 底=0
+        int bin = static_cast<int>(std::floor(f * static_cast<double>(bins)));
+        if (bin < 0) bin = 0;
+        if (bin > bins - 1) bin = bins - 1;
+        const double t = (bins <= 1) ? 0.5
+                                    : (static_cast<double>(bin) + 0.5) / static_cast<double>(bins);
+        const Rgb c = color::sample(kind, t);
+        for (int px = ix0; px <= ix1; ++px) {
+            bmp.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 0, c.r);
+            bmp.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 1, c.g);
+            bmp.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 2, c.b);
+            bmp.set(static_cast<std::uint32_t>(px), static_cast<std::uint32_t>(py), 3, 255);
+        }
+    }
+}
+
 image::Bitmap GeoMap::render_bitmap(std::uint32_t width, std::uint32_t height,
                                     const GeoBitmapOptions& opts) const {
     image::Bitmap bmp(width, height, 4);
@@ -713,7 +743,9 @@ image::Bitmap GeoMap::render_bitmap(std::uint32_t width, std::uint32_t height,
     if (!impl_->loaded || impl_->entries.empty()) return bmp;
 
     const double margin = std::max(0.0, opts.margin);
-    const double inner_w = static_cast<double>(width) - 2.0 * margin;
+    // 开启图例时右侧预留一条色标带，地图主体缩进，避免与色标重叠。
+    const double legend_w = opts.draw_legend ? 28.0 : 0.0;
+    const double inner_w = static_cast<double>(width) - 2.0 * margin - legend_w;
     const double inner_h = static_cast<double>(height) - 2.0 * margin;
     if (!(inner_w > 1.0) || !(inner_h > 1.0)) return bmp;
 
@@ -868,7 +900,58 @@ image::Bitmap GeoMap::render_bitmap(std::uint32_t width, std::uint32_t height,
             }
         }
     }
+
+    // 右侧分级色标：纵向，高值在上；与 legend_bins() 共用同一套 bins/色带。
+    if (opts.draw_legend && have && (vmax > vmin)) {
+        const double bx0 = static_cast<double>(width) - margin - 28.0;
+        const double bx1 = static_cast<double>(width) - margin;
+        draw_geo_colorbar(bmp, bx0, bx1, margin,
+                          static_cast<double>(height) - margin,
+                          std::min(8, std::max(1, static_cast<int>(options_.bins))),
+                          opts.colormap);
+    }
+
     return bmp;
+}
+
+std::vector<layout::LegendEntry> GeoMap::legend_bins(color::ColormapKind kind) const {
+    std::vector<layout::LegendEntry> out;
+    double vmin = 0.0, vmax = 0.0;
+    bool have = false;
+    for (const auto& kv : values_) {
+        if (!have) { vmin = vmax = kv.second; have = true; }
+        else { vmin = std::min(vmin, kv.second); vmax = std::max(vmax, kv.second); }
+    }
+    if (!have || !(vmax > vmin)) return out;  // 无值或值域退化 -> 空图例
+
+    const int bins = std::min(8, std::max(1, static_cast<int>(options_.bins)));
+    out.reserve(static_cast<std::size_t>(bins));
+    const double span = vmax - vmin;
+    for (int i = 0; i < bins; ++i) {
+        const double lo = vmin + span * static_cast<double>(i) / bins;
+        const double hi = vmin + span * static_cast<double>(i + 1) / bins;
+        const double t = (bins <= 1) ? 0.5
+                                    : (static_cast<double>(i) + 0.5) / static_cast<double>(bins);
+        const Rgb c = color::sample(kind, t);
+        layout::LegendEntry e;
+        e.name = std::string(layout::format_tick(lo)) + "\u2013" +
+                 std::string(layout::format_tick(hi));
+        e.color = Color::rgb(c.r, c.g, c.b);
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+CellBuffer GeoMap::render_legend(color::ColormapKind kind, std::uint32_t max_width_cells) const {
+    const auto entries = legend_bins(kind);
+    CellBuffer out;
+    if (entries.empty()) return out;
+    const std::uint32_t rows = static_cast<std::uint32_t>(entries.size()) + 2;
+    canvas::Canvas c(max_width_cells, rows);
+    const Rect rect{0.0, 0.0, static_cast<double>(max_width_cells),
+                    static_cast<double>(rows)};
+    layout::draw_legend(c, entries, rect, layout::HAlign::Left);
+    return c.to_buffer();
 }
 
 }  // namespace termchart::chart

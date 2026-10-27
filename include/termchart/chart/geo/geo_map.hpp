@@ -32,6 +32,7 @@
 #include "termchart/export.hpp"
 #include "termchart/image/bitmap.hpp"
 #include "termchart/util/geo/geojson.hpp"
+#include "termchart/layout/legend.hpp"
 
 namespace termchart::chart {
 
@@ -89,6 +90,8 @@ struct GeoBitmapOptions {
     // 纵向超采样（1 = 关）。水平方向本来就按精确重叠算覆盖率，纵向靠这个补。
     std::uint32_t supersample = 2;
     color::ColormapKind colormap = color::ColormapKind::Turbo;
+    // 在右侧留白带里画一条分级色标（纵向，高值在上）。关时地图占满整图。
+    bool draw_legend = false;
 };
 
 class GeoMap final : public Chart {
@@ -141,6 +144,19 @@ public:
     [[nodiscard]] TERMCHART_API image::Bitmap render_bitmap(std::uint32_t width,
                                                            std::uint32_t height,
                                                            const GeoBitmapOptions& opts = {}) const;
+
+    // ── 分级图例（色标）─────────────────────────────────────────────────────
+    // 按 options_.bins 与已加载值域生成分级图例，可直接喂给 layout::draw_legend。
+    // 每项 name 形如 "lo–hi"（区间端点），color 为对应级色。无值或值域退化时返回空。
+    // kind 指定色带（默认 Turbo，与默认导出一致）；终端渲染请用同一 kind。
+    [[nodiscard]] TERMCHART_API std::vector<layout::LegendEntry>
+    legend_bins(color::ColormapKind kind = color::ColormapKind::Turbo) const;
+
+    // 把图例渲染成字符格（复用 layout::draw_legend），便于终端直接拼在地图下方/右侧。
+    // 无值或值域退化时返回空 CellBuffer。
+    [[nodiscard]] TERMCHART_API CellBuffer
+    render_legend(color::ColormapKind kind = color::ColormapKind::Turbo,
+                  std::uint32_t max_width_cells = 40) const;
 
 private:
     struct Impl;

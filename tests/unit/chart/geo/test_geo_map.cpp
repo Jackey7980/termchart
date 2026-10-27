@@ -260,3 +260,72 @@ TEST_CASE("geo_map::rasterize bins=1 collapses every value to one colour") {
     const auto bottom = b.at(10, 16).style.fg();
     CHECK(top == bottom);     // 单级 -> 所有值同色
 }
+
+// #4 收尾：分级图例（色标）。legend_bins()/render_legend() 复用 layout::draw_legend，
+// render_bitmap 开启 draw_legend 时在右侧留白带画纵向色标。
+TEST_CASE("geo_map::legend_bins empty when no values") {
+    GeoMap m;
+    load_square_map(m);
+    CHECK(m.legend_bins().empty());
+}
+
+TEST_CASE("geo_map::legend_bins reflects bins and value range") {
+    GeoMap m;
+    load_square_map(m);
+    m.set_value("A", 100.0);
+    m.set_value("B", 0.0);
+
+    GeoMapOptions mo;
+    mo.bins = 4;
+    m.set_options(mo);
+
+    const auto entries = m.legend_bins();
+    CHECK(entries.size() == 4);
+    for (const auto& e : entries) CHECK_FALSE(e.name.empty());
+    // Turbo 在 [0,1] 上单调：最低级（蓝）与最高级（红）颜色不同。
+    CHECK(entries.front().color != entries.back().color);
+}
+
+TEST_CASE("geo_map::render_legend produces a labelled colorbar buffer") {
+    GeoMap m;
+    load_square_map(m);
+    m.set_value("A", 100.0);
+    m.set_value("B", 0.0);
+
+    const auto buf = m.render_legend();
+    CHECK(buf.width() > 0);
+    CHECK(buf.height() >= 2);
+    bool any_glyph = false;
+    for (std::uint32_t y = 0; y < buf.height() && !any_glyph; ++y)
+        for (std::uint32_t x = 0; x < buf.width(); ++x)
+            if (buf.at(x, y).cp != U' ') { any_glyph = true; break; }
+    CHECK(any_glyph);
+}
+
+TEST_CASE("geo_map::render_bitmap draws legend band when draw_legend set") {
+    GeoMap m;
+    load_square_map(m);
+    m.set_value("A", 100.0);
+    m.set_value("B", 0.0);
+
+    GeoBitmapOptions off; off.draw_legend = false;
+    const auto bmp_off = m.render_bitmap(120, 80, off);
+
+    GeoBitmapOptions on; on.draw_legend = true; on.margin = 8.0;
+    const auto bmp_on = m.render_bitmap(120, 80, on);
+
+    // 色标带位于 [width-margin-28, width-margin) = [84,112)，中心 x≈98。
+    const std::uint32_t col = 98;
+    // 开启图例后该列与关闭时不同（色标渐变 vs 地图着色）。
+    std::size_t diff = 0;
+    for (std::uint32_t y = 0; y < 80; ++y)
+        for (int c = 0; c < 3; ++c)
+            if (bmp_on.at(col, y, c) != bmp_off.at(col, y, c)) ++diff;
+    CHECK(diff > 0);
+
+    // 色标带本身应是纵向渐变：顶部色 ≠ 底部色。
+    const bool same = bmp_on.at(col, 10, 0) == bmp_on.at(col, 70, 0) &&
+                      bmp_on.at(col, 10, 1) == bmp_on.at(col, 70, 1) &&
+                      bmp_on.at(col, 10, 2) == bmp_on.at(col, 70, 2);
+    CHECK_FALSE(same);
+}
