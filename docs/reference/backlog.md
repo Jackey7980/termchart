@@ -13,6 +13,11 @@
 - [x] **graph 剩余布局算法**：`layout/kamada_kawai` 已落地（KK 能量布局 + 多分量并排 + 退化口径），测试 `test_graph_kamada_kawai.cpp` 全绿。
 - [x] **graph/route/obstacle 横挡绕障**：缺陷已修并加回归测试 `test_graph_route_obstacle_fix.cpp`（绕行段不穿障碍）。
 - [x] **导出格式补齐**（2026-10-13）：`latex_backend` + `png_screenshot` + `37_export_latex` 示例（片段/standalone 双模式）全部落地。
+- [x] **EPS 矢量导出后端**（2026-10-28 新增）：`backend/vector/eps_backend` 把 `Scene` 翻成 EPSF-1.2
+  （`%!PS-Adobe` 头 + `%%BoundingBox` + Helvetica 文本 + 真彩 RGB，弧以折线逼近），镜像
+  `pdf_backend` 的 `StatefulVisitor` 遍历（PostScript 与 PDF 内容流算子同源，去掉 xref/对象表即可）。
+  填补此前"仅 PNG/BMP 编码、无 EPS"的矢量导出缺口（PDF/SVG 已有）。4 个单测（`test_eps_backend.cpp`，
+  头/尾/路径算子/填充色）全过；全量 1327 用例 0 失败。
 - [x] **examples 补齐到规格**（2026-10-13）：规格表 01–54 全部落地并进 ctest（`ctest` 73/73），无缺口。
 - [x] **具名头缺口重数**（2026-10-13）：`capability_matrix` 第五节已按实测 **333 头 / 282 实现** 刷新，缺口改为"约 26–28 个"。
 - [x] **fuzz 目标**：`fuzz_mermaid` / `fuzz_dsl_lexer` 早已建好并进 ctest（backlog 该条基于过期快照）——实存 8 个 fuzz 目标全绿。

@@ -193,6 +193,7 @@ add_executable(termchart_tests
     unit/backend/test_backend_structured.cpp
     unit/backend/test_backend_extra.cpp
     unit/backend/test_pdf_backend.cpp
+    unit/backend/test_eps_backend.cpp
     unit/backend/test_backend_text_outline.cpp
 
     # ── dsl ──
