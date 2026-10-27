@@ -334,6 +334,9 @@ std::vector<std::string> GeoMap::feature_names() const {
     // 一个 MultiPolygon feature 会拆成多个 entry（群岛、北极群岛、带飞地的国家），
     // 而 set_value 的键是 **feature 名**。按 entry 逐个列出只会把 --list 淹成
     // "Tianjin / Tianjin / Hebei ×4"，所以按首次出现顺序去重。
+    // 注意：去重是**有损**的——同名的不同 feature（多份图层叠加）会被合并成一个名字，
+    // set_value 无法分别给它们赋值。当前三份数据无同名冲突，够用；但 feature_names()
+    // 仅用于展示/罗列，**不要当唯一键**使用。需要时请改用 polygon_count() 逐 entry 处理。
     std::vector<std::string> names;
     std::unordered_map<std::string, bool> seen;
     names.reserve(impl_->entries.size());

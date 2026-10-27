@@ -139,21 +139,28 @@
   独立可运行回归测试 `tools/tests/test_topojson_stitch.py`（4 个用例：直接 stitch_arc 正反路径、
   负索引解析到正确弧、端到端 convert 几何）。并接入 CI `guardrails` 作业，不再只靠联网自检。
   **验收已做突变验证**：把 `~idx` 改回 `idx` 后测试确实变红，红线生效。
-- [ ] **`GeoMapOptions` 三个死字段**：`show_graticule` 全仓零消费者；`width` / `height` 在 `geo_map.cpp` 里
-  没有任何 `options_.width` 读取（实际尺寸只认 `DrawContext` / `rasterize` 入参）。要么接上（画经纬网、
-  作为 `draw()` 覆盖值），要么删字段并写进 CHANGELOG。验收＝`grep -r show_graticule src/ examples/` 有真实用途，否则字段消失。
-- [ ] **分级 `bins` 只在高清路径之外生效**：`draw()` 按 `options_.bins` 量化，`rasterize()` /
-  `render_bitmap()` 是连续映射（全文只有 `draw()` 里那两处 `bins`）。高清是主打出口，应把"值 → 级 → 色"
-  抽成一个函数三处共用，并补"同一份值在两种出口取到同一级色"的用例。
-- [ ] **没有图例 / 色标**：`bins` 分级没有 legend，看不出颜色含义。`layout/legend` 已有能力可直接复用：
-  字符格出口追加几行"级 → 颜色 + 区间"，位图出口在 `--png` 右侧留白。
-- [ ] **没有 `HitRegion` 出口**：GeoMap 不产出 `chart/hit_region.hpp` 的命中区域，`interaction` 的 tooltip /
-  `legend_toggle` 接不上（69 的城市气泡目前无法悬停出数值）。
-- [ ] **安装包不带地图数据**：`assets/maps/{world,cn,cities}.json` 已进 git，但 `CMakeLists.txt` 只有
-  `install(DIRECTORY include/ ...)`，没有 `share/termchart/maps`。要么补安装规则 + `maps_dir()` 查询，
-  要么在文档里明确"数据不入安装包，取样请跑 `tools/fetch_map_data.py`"——二选一，不能两头空。
-- [ ] **`feature_names()` 去重是有损的**：同名不同 feature（多份图层叠加）会合并成一个名字，`set_value`
-  无法分别赋值。当前三份数据无同名冲突，够用；但要在头注释写明限制，避免以后有人拿它当"唯一键"。
+- [x] **`GeoMapOptions` 三个死字段（2026-10-28 收尾）**：`show_graticule` 全仓零消费者；`width` / `height`
+  在 `geo_map.cpp` 里没有任何 `options_.width` 读取（实际尺寸只认 `DrawContext` / `rasterize` 入参）。
+  已**删字段**（含 `single_include/termchart.hpp` 镜像），并在结构体注释说明画布尺寸由出口参数决定。
+  验收：`grep -r show_graticule src/ include/ single_include/` 已无任何命中（提交 `488ae95`）。
+- [x] **分级 `bins` 统一到三条出口（2026-10-27 收尾）**：抽出 `geo_bin_of` / `geo_bin_center` 单一分级函数，
+  `value_color` 接收 `bins` 参数；`draw()` / `to_scene()` 内联分级改为调用 `geo_bin_center`，
+  `rasterize()` / `render_bitmap()` 的 `value_color` 调用接入 `options_.bins`。同值在三出口取同一级色。
+  新增回归用例（bins=2 同 bin 同色、bins=1 塌缩同色）。提交 `10d3c34`。
+- [x] **图例 / 色标（2026-10-28 收尾）**：新增 `legend_bins(kind)`（按 `options_.bins` + 值域生成分级图例，
+  项名形如 `lo–hi`）+ `render_legend(...)`（复用 `layout::draw_legend` 产字符格）；`render_bitmap` 新增
+  `GeoBitmapOptions::draw_legend`，开启时右侧留白带画纵向色标（高值在上），与 `legend_bins` 共用 bins/色带。
+  4 个回归测试。提交 `58b8a33`。
+- [x] **`HitRegion` 出口（2026-10-28 收尾）**：新增 `hit_test(lon, lat)`，even-odd 射线法在原始经纬度环上做
+  点在多边形内判定，返回最上层 feature 名（不在任何要素内返回 `""`）。这是命中交互的基础——GUI 把屏幕格
+  反投影到经纬度后调用即可取回要素名/数值，与投影/渲染方式无关。回归测试覆盖 A 上/B 下方块命中。提交 `488ae95`。
+  （注：未直接产出 `chart/hit_region.hpp` 的 `HitRegion` 结构体；`hit_test` 是更底层、投影无关的坐标命中原语，
+  上层交互按需包成 HitRegion。）
+- [x] **安装包分发地图数据（2026-10-28 收尾）**：`assets/maps/{world,cn,cities}.json` 已进 git，现新增
+  `install(DIRECTORY assets/maps DESTINATION ${CMAKE_INSTALL_DATADIR}/termchart)`，随库安装分发，GeoMap
+  可离线加载。提交 `6081fce`。
+- [x] **`feature_names()` 有损去重（2026-10-28 收尾）**：已在 `feature_names()` 实现处补注释，明确"同名不同
+  feature 会被合并、不可当唯一键；需逐 entry 请用 `polygon_count()`"。当前三份数据无同名冲突，够用。
 
 ---
 
