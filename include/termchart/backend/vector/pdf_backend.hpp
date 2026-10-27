@@ -19,12 +19,18 @@
 #define TERMCHART_BACKEND_VECTOR_PDF_BACKEND_HPP
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "termchart/backend/backend.hpp"
 #include "termchart/backend/vector/backend.hpp"
 #include "termchart/export.hpp"
+
+namespace termchart::image {
+class TtfFont;  // 文字轮廓化字体（成员为 shared_ptr，仅需前向声明）
+}
 
 namespace termchart::backend::vector {
 
@@ -32,6 +38,10 @@ struct PdfOptions {
     double width_pt  = 612.0;   // US Letter 宽（pt）
     double height_pt = 792.0;   // US Letter 高（pt）
     bool   compress  = true;    // 内容流走 zlib /FlateDecode（需 TERMCHART_HAVE_ZLIB）
+    // 文字轮廓化（text-to-outline）：开启后文字以矢量字形路径输出（自包含），
+    // 而非 Helvetica Tj。需配合 outline_font 提供 TTF 字节；未提供字体时回退。
+    bool text_outline = false;
+    std::vector<std::uint8_t> outline_font;
 };
 
 class PdfBackend final : public VectorBackend {
@@ -49,6 +59,7 @@ public:
 private:
     PdfOptions opts_;
     std::string out_;
+    std::shared_ptr<image::TtfFont> outline_font_;  // 文字轮廓化字体缓存
 };
 
 // 便捷：begin + render + end，返回字节流拷贝。

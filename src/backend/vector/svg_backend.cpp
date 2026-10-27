@@ -11,10 +11,13 @@
 #include "termchart/backend/vector/svg_backend.hpp"
 
 #include <cmath>
+#include <memory>
 #include <string>
 
 #include "termchart/backend/vector/svg_entities.hpp"
+#include "termchart/image/ttf_font.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
+#include "termchart/util/utf8.hpp"
 
 namespace termchart::backend::vector {
 
@@ -30,8 +33,8 @@ std::string paint_of(const Color& color) {
 
 class SvgVisitor final : public scene::StatefulVisitor {
 public:
-    SvgVisitor(std::string& out, const VectorOptions& opts) noexcept
-        : out_(&out), opts_(&opts) {}
+    SvgVisitor(std::string& out, const VectorOptions& opts, const image::TtfFont* font) noexcept
+        : out_(&out), opts_(&opts), font_(font) {}
 
 protected:
     // ── 路径 hooks ──
@@ -139,6 +142,44 @@ protected:
     }
 
     void emit_text(const scene::TextOp& text) override {
+        // 文字轮廓化：把每个字形转成自包含矢量路径（不再依赖渲染端字体）。
+        if (font_ != nullptr) {
+            const double px = opts_->font_size > 0.0 ? opts_->font_size : opts_->scale;
+            const double baseline = text.at.y + font_->metrics(px).ascent;
+            const std::string fill = paint_of(text.style.fg());
+            double pen_x = text.at.x;
+            std::size_t pos = 0;
+            while (pos < text.text.size()) {
+                const auto dec = util::decode(text.text, pos);
+                pos = dec.consumed;
+                const auto go = font_->glyph_outline(dec.cp, px);
+                if (go && !go->contours.empty()) {
+                    for (const auto& contour : go->contours) {
+                        *out_ += "<path d=\"M ";
+                        bool first = true;
+                        for (const auto& p : contour) {
+                            if (!first) {
+                                *out_ += ' ';
+                            }
+                            *out_ += num(pen_x + p.x);
+                            *out_ += ' ';
+                            *out_ += num(baseline + p.y);
+                            first = false;
+                        }
+                        *out_ += " Z\" fill=\"";
+                        *out_ += fill;
+                        *out_ += "\" stroke=\"none\"/>";
+                    }
+                }
+                if (go) {
+                    pen_x += go->advance_x;
+                } else {
+                    pen_x += px * 0.5;  // 缺字形兜底步进
+                }
+            }
+            return;
+        }
+        // 旧行为：<text>
         *out_ += "<text x=\"";
         *out_ += num(text.at.x);
         *out_ += "\" y=\"";
@@ -169,6 +210,7 @@ protected:
 private:
     std::string* out_;
     const VectorOptions* opts_;
+    const image::TtfFont* font_;  // 文字轮廓化字体；nullptr = 旧 <text> 行为
     std::string d_;  // 待刷出的折线子路径（由 MoveTo/LineTo 累积）
 };
 
@@ -209,7 +251,16 @@ void SvgBackend::render(const scene::Scene& scene) {
         out_ += ")\">";
     }
 
-    SvgVisitor visitor{out_, opts_};
+    const image::TtfFont* font = nullptr;
+    std::shared_ptr<image::TtfFont> font_owned;
+    if (opts_.text_outline && !opts_.outline_font.empty()) {
+        if (auto r = image::TtfFont::load(opts_.outline_font)) {
+            font_owned = std::make_shared<image::TtfFont>(std::move(*r));
+            font = font_owned.get();
+        }
+    }
+
+    SvgVisitor visitor{out_, opts_, font};
     visitor.run(scene);
 
     if (use_transform) {

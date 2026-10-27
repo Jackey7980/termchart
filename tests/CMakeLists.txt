@@ -90,6 +90,7 @@ add_executable(termchart_tests
     unit/image/test_png_decode.cpp
     unit/image/test_image_convert.cpp
     unit/image/test_ttf_font.cpp
+    unit/image/test_ttf_font_outline.cpp
     unit/image/test_bmp.cpp
     unit/image/test_stb_image.cpp
     unit/math3d/test_math3d.cpp
@@ -192,6 +193,7 @@ add_executable(termchart_tests
     unit/backend/test_backend_structured.cpp
     unit/backend/test_backend_extra.cpp
     unit/backend/test_pdf_backend.cpp
+    unit/backend/test_backend_text_outline.cpp
 
     # ── dsl ──
     unit/dsl/test_dsl_mermaid.cpp

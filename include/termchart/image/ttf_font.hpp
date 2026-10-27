@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "termchart/core/expected.hpp"
+#include "termchart/core/point.hpp"
 #include "termchart/export.hpp"
 #include "termchart/image/bitmap.hpp"
 
@@ -51,6 +52,19 @@ struct TtfGlyph {
     std::int32_t left = 0;
     std::int32_t top = 0;
     double advance_x = 0.0;
+};
+
+// 字形矢量轮廓（文字轮廓化 / text-to-outline 用）。
+// contours：每个闭合轮廓的扁平化多边形点（像素空间，y 向下；原点 = 笔触基线原点，
+//   字形主体在基线上方 → y 为负）。已把 glyf 的二次贝塞尔展平成折线，可直接喂给
+//   SVG <path>/PDF 路径算子。
+// advance_x：排版步进宽度（像素）。left/top：轮廓外接框相对笔触原点的偏移
+//   （像素，top 通常为负，因字形位于基线上方），与 TtfGlyph 同义，便于定位。
+struct GlyphOutline {
+    std::vector<std::vector<Point>> contours;
+    double advance_x = 0.0;
+    std::int32_t left = 0;
+    std::int32_t top = 0;
 };
 
 // 已解析的 TrueType 字体。拷贝共享同一份解析结果（表目录 + cmap 映射 +
@@ -80,6 +94,12 @@ public:
 
     // 步进宽度（像素），不生成位图——文本测量/排版用。
     [[nodiscard]] double advance(char32_t codepoint, double pixel_size) const noexcept;
+
+    // 取字形矢量轮廓（带 cache；码点缺失回退 .notdef，再不行回退空轮廓）。
+    // 与 glyph() 同源：glyf 轮廓 → 像素空间（y 翻转）→ 二次贝塞尔展平成多边形。
+    // 用于把文字转成自包含矢量路径（SVG/PDF 文字轮廓化），不再依赖渲染端字体。
+    [[nodiscard]] Result<GlyphOutline> glyph_outline(char32_t codepoint,
+                                                     double pixel_size) const noexcept;
 
 private:
     struct Impl;

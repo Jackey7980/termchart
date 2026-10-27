@@ -662,6 +662,73 @@ double TtfFont::advance(char32_t codepoint, double pixel_size) const noexcept {
     return 0.0;
 }
 
+namespace {
+// 把 glyf 轮廓（on_off = [on, ctrl, on, ctrl, ...] 二次贝塞尔序列）展平成多边形，
+// 并转换到像素空间（y 向下）。与 glyph() 光栅化同款展平，保证轮廓与位图同形。
+void flatten_glyph_contour(const Contour& c, double s, std::vector<Point>& out) {
+    const std::size_t n = c.on_off.size();
+    if (n < 3) {
+        return;
+    }
+    const auto to_px = [s](const Vec2& v) { return Point{v.x * s, -v.y * s}; };
+    out.push_back(to_px(c.on_off.front()));
+    Vec2 cur = c.on_off.front();
+    for (std::size_t k = 1; k + 1 < n; k += 2) {
+        const Vec2 p0 = cur;
+        const Vec2 p1 = c.on_off[k];
+        const Vec2 p2 = c.on_off[k + 1];
+        const double diag2 = (p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y) +
+                             (p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y);
+        const int steps =
+            std::clamp<int>(static_cast<int>(std::sqrt(diag2) * s / 8.0) + 2, 2, 32);
+        for (int i = 1; i <= steps; ++i) {
+            const double t = static_cast<double>(i) / steps;
+            const Vec2 cp{math::quadratic_bezier(p0.x, p1.x, p2.x, t),
+                          math::quadratic_bezier(p0.y, p1.y, p2.y, t)};
+            out.push_back(to_px(cp));
+        }
+        cur = p2;
+    }
+}
+}  // namespace
+
+Result<GlyphOutline> TtfFont::glyph_outline(char32_t codepoint, double pixel_size) const noexcept {
+    if (!(pixel_size > 0.0)) {
+        return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
+    }
+    const std::uint16_t g = impl_->glyph_for(codepoint);
+    std::vector<Contour> contours;
+    const ErrorCode ec = impl_->outline(g, contours);
+    if (ec != ErrorCode::Ok) {
+        return Unexpected<ErrorCode>(ec);
+    }
+    GlyphOutline out;
+    const double s = impl_->scale(pixel_size);
+    if (g < impl_->advances.size()) {
+        out.advance_x = static_cast<double>(impl_->advances[g]) * s;
+    }
+    if (contours.empty()) {
+        return out;  // 空字形（空格等）：无轮廓，advance 仍有效
+    }
+    double min_x = std::numeric_limits<double>::max();
+    double min_y = std::numeric_limits<double>::max();
+    for (const Contour& c : contours) {
+        std::vector<Point> poly;
+        flatten_glyph_contour(c, s, poly);
+        if (poly.size() < 3) {
+            continue;
+        }
+        for (const Point& p : poly) {
+            min_x = std::min(min_x, p.x);
+            min_y = std::min(min_y, p.y);
+        }
+        out.contours.push_back(std::move(poly));
+    }
+    out.left = static_cast<std::int32_t>(std::floor(min_x)) - 1;
+    out.top = static_cast<std::int32_t>(std::floor(min_y)) - 1;
+    return out;
+}
+
 Result<TtfGlyph> TtfFont::glyph(char32_t codepoint, double pixel_size) noexcept {
     const std::uint64_t key = (static_cast<std::uint64_t>(codepoint) << 32) |
                               static_cast<std::uint64_t>(impl_->quantize(pixel_size));

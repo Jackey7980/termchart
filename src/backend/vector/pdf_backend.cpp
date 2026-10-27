@@ -25,13 +25,16 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "termchart/color/quantize.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/image/ttf_font.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
+#include "termchart/util/utf8.hpp"
 
 namespace termchart::backend::vector {
 
@@ -70,8 +73,8 @@ void emit_color(std::string& out, const Color& c, const char* op) {
 
 class PdfVisitor final : public scene::StatefulVisitor {
 public:
-    PdfVisitor(std::string& content, double h) noexcept
-        : content_(&content), height_pt_(h) {}
+    PdfVisitor(std::string& content, double h, const image::TtfFont* font, double font_px) noexcept
+        : content_(&content), height_pt_(h), font_(font), font_px_(font_px) {}
 
 protected:
     void begin_path(const Point& from) override {
@@ -128,7 +131,36 @@ protected:
         emit_color(*content_, stroke, "S");
     }
     void emit_text(const scene::TextOp& text) override {
-        // PDF 文本：BT /F1 12 Tf (escaped) Tj ET
+        // 文字轮廓化：把每个字形转成自包含矢量路径（不再依赖 Helvetica）。
+        if (font_ != nullptr) {
+            const double baseline = text.at.y + font_->metrics(font_px_).ascent;
+            const Color fill = text.style.fg();
+            double pen_x = text.at.x;
+            std::size_t pos = 0;
+            while (pos < text.text.size()) {
+                const auto dec = util::decode(text.text, pos);
+                pos = dec.consumed;
+                const auto go = font_->glyph_outline(dec.cp, font_px_);
+                if (go && !go->contours.empty()) {
+                    for (const auto& contour : go->contours) {
+                        *content_ += "M ";
+                        for (std::size_t i = 0; i < contour.size(); ++i) {
+                            const auto& p = contour[i];
+                            if (i) *content_ += ' ';
+                            *content_ += num(pen_x + p.x);
+                            *content_ += ' ';
+                            *content_ += num(height_pt_ - (baseline + p.y));
+                        }
+                        *content_ += " h\n";
+                    }
+                    emit_color(*content_, fill, "rg");  // 设置填充色
+                    *content_ += "f\n";                  // 填充闭合路径
+                }
+                pen_x += go ? go->advance_x : (font_px_ * 0.5);
+            }
+            return;
+        }
+        // 旧行为：Helvetica Tj
         *content_ += "BT\n/F1 12 Tf\n";
         *content_ += num(text.at.x); *content_ += " ";
         *content_ += num(height_pt_ - text.at.y); *content_ += " Td\n";
@@ -169,6 +201,8 @@ private:
 
     std::string* content_;
     double        height_pt_;
+    const image::TtfFont* font_;
+    double        font_px_;
     std::string   path_;
 };
 
@@ -227,7 +261,14 @@ void PdfBackend::end() {
 }
 
 void PdfBackend::render(const scene::Scene& scene) {
-    PdfVisitor visitor(out_, opts_.height_pt);
+    const image::TtfFont* font = nullptr;
+    if (opts_.text_outline && !opts_.outline_font.empty()) {
+        if (auto r = image::TtfFont::load(opts_.outline_font)) {
+            outline_font_ = std::make_shared<image::TtfFont>(std::move(*r));
+            font = outline_font_.get();
+        }
+    }
+    PdfVisitor visitor(out_, opts_.height_pt, font, 12.0);
     visitor.run(scene);
 }
 

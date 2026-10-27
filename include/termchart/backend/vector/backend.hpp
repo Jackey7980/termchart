@@ -6,8 +6,10 @@
 #ifndef TERMCHART_BACKEND_VECTOR_BACKEND_HPP
 #define TERMCHART_BACKEND_VECTOR_BACKEND_HPP
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "termchart/backend/backend.hpp"
 #include "termchart/export.hpp"
@@ -24,6 +26,11 @@ struct VectorOptions {
     // 恰好是 1px 字（历史金标如此）。以"格"为场景单位的图形（如 graph）要把
     // 它设成 1.0——字号是场景单位而不是输出单位，否则会放大 scale 倍。
     double font_size = 0.0;
+    // 文字轮廓化（text-to-outline）：开启后文字以矢量字形路径输出（自包含，不再
+    // 依赖渲染端字体），而非 <text>/Helvetica。需配合 outline_font 提供 TTF 字节；
+    // 未提供字体时自动回退到旧行为。
+    bool text_outline = false;
+    std::vector<std::uint8_t> outline_font;
 };
 
 class VectorBackend : public Backend {
