@@ -30,7 +30,7 @@
 
 ### 定位与规格层级
 
-termchart 是零强制依赖的 C++20 终端图表库。`结构.md` 定义 22 个模块、约 400 个头文件的目标形态；`ROADMAP.md` 定义 v0.1–v0.7 八个阶段的垂直切片与「出口条件」，并声明自己是**唯一进度口径**——判断「某功能是否该有」只以它的勾选清单为准（`ROADMAP.md` 的「修订记录」表最新行 > 「一、项目现状」小节，后者停留在 2026-10-11 口径、已过时）。当前代码已走完阶段 0–7 并开工阶段 8：`include/termchart/` 下 31 个模块目录全部有真实实现（2026-10-21 实测 **372 个头 / `src/` 309 个 `.cpp` / `examples/` 75 个源 / `tests/` 156 个源**），横切 `detail/`（9 个生成器产出头），顶层 `version.hpp / export.hpp / deprecate.hpp / fwd.hpp / termchart.hpp` 五个头；另有**并列顶层库** `include/termchart_gui/`（header-only `termchart_gui`，22 头，链接 `termchart`，不并入上述 372 头统计）。剩余缺口见 `docs/reference/backlog.md`，质量体检见 `docs/reference/quality_todo.md`。
+termchart 是零强制依赖的 C++20 终端图表库。`结构.md` 定义 22 个模块、约 400 个头文件的目标形态；`ROADMAP.md` 定义 v0.1–v0.7 八个阶段的垂直切片与「出口条件」，并声明自己是**唯一进度口径**——判断「某功能是否该有」只以它的勾选清单为准（`ROADMAP.md` 的「修订记录」表最新行 > 「一、项目现状」小节，后者停留在 2026-10-11 口径、已过时）。当前代码已走完阶段 0–7 并开工阶段 8：`include/termchart/` 下 31 个模块目录全部有真实实现（2026-10-21 实测 **399 个头 / `src/` 335 个 `.cpp` / `examples/` 81 个源 / `tests/` 173 个源**），横切 `detail/`（9 个生成器产出头），顶层 `version.hpp / export.hpp / deprecate.hpp / fwd.hpp / termchart.hpp` 五个头；另有**并列顶层库** `include/termchart_gui/`（header-only `termchart_gui`，35 头，链接 `termchart`，不并入上述 399 头统计）。剩余缺口见 `docs/reference/backlog.md`，质量体检见 `docs/reference/quality_todo.md`。
 
 ### 分层规则：机器强制，唯一真源
 
@@ -111,7 +111,7 @@ doctest 是 vendored 的唯一框架（`third_party/doctest/doctest.h`）。`tes
 24. **子目录 `detail/` 下的纯头文件不会自动豁免**：`tools/check_header_only.py::is_exempt_header()` 的判据是 `header.startswith("detail/") or "/" not in header` —— 即**只豁免顶层 `termchart/detail/` 与顶层头**（`core/point.hpp` 这种）。`interaction/detail/overlay_cells`、`graph/route/junction` 这类既不满足前缀也不满足无斜杠，**必须写进 `cmake/header_only.txt`**；而该清单是生成物 `结构.md` 附四的输入，所以**改完必须重跑 `generate_all`**，否则 `check_generated` 直接失败（只加清单不改生成物＝失败，手改生成物＝更失败）。两条路径都已按此登记。
 25. **并行会话会让"全量构建"随机变红，别据此下结论**：`src/**.cpp` 是 `GLOB_RECURSE CONFIGURE_DEPENDS`，任何人写了半截新文件，**别人的全量构建就跟着失败**（已发生：一方据此误判"仓库整体编不过"，其实是另一方的瞬时中间态，且归属还报错了）。对策：① 各自在隔离工程里把不相关子树标 `HEADER_FILE_ONLY` 再构建；② `check_all` 与全量 `ctest` 只在**所有并行方都报告完成**后跑一次；③ 看到别人文件的编译错误时先别改，等对方报完成再复核。
 
-> **进度口径说明（2026-10-21 刷新）**：以 `ROADMAP.md`「修订记录」最新行为准 —— 最新一轮为「数据帝国」三模块（math/io/data）+ dsl/json 收编 + CI 三平台 + 示例 75；其时点验证数字为 `ctest` **79/79**、doctest **1103 用例 / 194733 断言、0 失败**、`check_all` 全绿（生成物一致、header_only 自洽、每头独立编译通过）。文件普查（**2026-10-21 实测**）：`include/termchart/` **372 个头**（31 模块目录 + 横切 `detail/`）、`src/` **309 个 `.cpp`**、`examples/` **75 个源**、`tests/` **156 个源**、golden **14 份**；另有 `include/termchart_gui/` 22 头未计入。
+> **进度口径说明（2026-10-21 刷新）**：以 `ROADMAP.md`「修订记录」最新行为准 —— 最新一轮为「数据帝国」三模块（math/io/data）+ dsl/json 收编 + CI 三平台 + 示例 75；其时点验证数字为 `ctest` **79/79**、doctest **1103 用例 / 194733 断言、0 失败**、`check_all` 全绿（生成物一致、header_only 自洽、每头独立编译通过）。文件普查（**2026-10-28 复核**）：`include/termchart/` **399 个头**（31 模块目录 + 横切 `detail/`）、`src/` **335 个 `.cpp`**、`examples/` **81 个源**、`tests/` **173 个源**、golden **14 份**；另有 `include/termchart_gui/` 35 头未计入。
 >
 > **注意两点**：① 这些数字来自 ROADMAP 修订记录与本次文件普查，**本轮未重跑 `ctest` 确权**；要确权跑 `ctest --preset ninja`。② `ROADMAP.md`「一、项目现状」小节仍写着"L17–L20 是零代码空洞"，那是 2026-10-11 的陈旧口径，**已过时**（dsl/widget/plugin/app 已在阶段 5–7 落地），读进度请只看「修订记录」表与阶段勾选清单。
 >

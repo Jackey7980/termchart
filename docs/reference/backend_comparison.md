@@ -11,7 +11,7 @@
 | svg | vector | Scene | SVG | backend/vector/svg_backend.hpp |
 | html | structured | Document | 语义 HTML | backend/structured/html_backend.hpp |
 | markdown | structured | Document | Markdown | backend/structured/markdown_backend.hpp |
-| （TikZ） | vector | Scene | — | 规格有、未落地 |
+| TikZ（LaTeX 导出） | vector | Scene | TikZ `tikzpicture` 代码 | `backend/vector/latex_backend.hpp`（已落地，CellBuffer → LaTeX/TikZ） |
 
 ## 三物种说明
 

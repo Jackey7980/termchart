@@ -2657,10 +2657,9 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 > stream.hpp —— 流向图（ThemeRiver 语义）
 >
-> 规格里本文件是"转发 cartesian/streamgraph"的同层语义包装；但
-> cartesian/streamgraph 属另一工作包且尚未落地，为不让本包空转，
-> 这里先自给堆叠算法（各列按占比从基线向另一侧堆叠 █），待
-> cartesian/streamgraph 落地后可改回纯转发。布局不依赖 graph/。
+> 上层语义包装，转发 `chart/cartesian/streamgraph.hpp`（`StreamgraphChart` 已落地，
+> 属 cartesian 23/23 之一）。本文件在 streamgraph 落地前曾自给堆叠算法（各列按占比
+> 从基线向另一侧堆叠 █），现已改回纯转发。布局不依赖 graph/。
 
 - `struct StreamOptions`
 - `class StreamChart final : public Chart`

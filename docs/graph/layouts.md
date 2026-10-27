@@ -54,5 +54,5 @@
 
 ## 未做
 
-- Kamada-Kawai 布局（结构.md 提及，未落地）；
+- Kamada-Kawai 布局（弹簧模型，已落地：`graph/layout/kamada_kawai.hpp`）；
 - 障碍感知的全局样条路由（obstacle 目前服务正交路由）。

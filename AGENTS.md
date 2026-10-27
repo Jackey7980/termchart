@@ -61,12 +61,12 @@ python tools/gen_golden.py                             # 重生成 golden 快照
 5. **宽字符**：写 buffer 的生产者必须自己填续接格 `kContinuationCp`。
 6. GUI 复用边界是 L0–L2（scene 及以下）；不要把 cell/SGR/CellBuffer 带进 GUI。
 
-## 进度口径（2026-10-13 尾段快照，复核以 ROADMAP「修订记录」表为准）
+## 进度口径（2026-10-28 复核，以 ROADMAP「修订记录」表为准）
 
-最新一行：`ctest` **73/73 全绿**、doctest **848 用例 / 191580 断言、0 失败**、
-四护栏全绿（`check_header_only` **333 头 / 282 实现**）；**阶段 0–7 出口条件全部闭合**，
-阶段 8（GUI 平行栈）未开工。文件普查：`include/` 310 头、`src/` 267 `.cpp`、
-`examples/` 57 源、`tests/` 126 源、golden 9 份。
+最新一行（2026-10-28 复核）：`ctest` **86 项全绿**（5 套件 + 81 示例）、doctest **1053 用例 / 194246 断言、0 失败**、
+四护栏全绿（header_only 自洽 + 每头独立编译通过）；**阶段 0–8 出口条件全部闭合**（GUI 平行栈已落地）。
+文件普查：`include/termchart/` 399 头 + 并列 `termchart_gui` 35 头、`src/` 335 `.cpp`、
+`examples/` 81 源、`tests/` 173 源、golden 14 份。
 
 > 注意：`ROADMAP.md`「一、项目现状」小节仍是 2026-10-11 口径
 > （称 L17–L20 为零代码空洞），**已过时**；读进度只看「修订记录」表。
