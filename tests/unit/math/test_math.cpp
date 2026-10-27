@@ -112,6 +112,46 @@ TEST_CASE("math::interpolate::CubicSpline 对称性与坏输入 fail-loud") {
     CHECK_FALSE(nan_in.valid());
 }
 
+TEST_CASE("math::interpolate::PchipSpline 过点与线性精确") {
+    // 线性数据：切线退化为常数，PCHIP 必须逐点精确还原。
+    const std::vector<double> lx = {0.0, 1.0, 2.0, 3.0};
+    const std::vector<double> ly = {0.0, 2.0, 4.0, 6.0};
+    const PchipSpline lin(lx, ly);
+    REQUIRE(lin.valid());
+    CHECK(lin.at(0.0) == doctest::Approx(0.0));
+    CHECK(lin.at(1.5) == doctest::Approx(3.0));
+    CHECK(lin.at(3.0) == doctest::Approx(6.0));
+}
+
+TEST_CASE("math::interpolate::PchipSpline 保单调、不过冲") {
+    // 阶梯数据：自然样条会在拐点过冲（画出数据之外的峰/谷），PCHIP 守住边界。
+    const std::vector<double> xs = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0};
+    const std::vector<double> ys = {0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+    const PchipSpline p(xs, ys);
+    REQUIRE(p.valid());
+    const double ymin = 0.0, ymax = 1.0;
+    double prev = -1.0;
+    for (double t = 0.0; t <= 5.0; t += 0.05) {
+        const double v = p.at(t);
+        CHECK(v >= ymin - 1e-9);     // 不过冲下界
+        CHECK(v <= ymax + 1e-9);     // 不过冲上界
+        CHECK(v >= prev - 1e-9);     // 单调不减（无回落/过冲）
+        prev = v;
+    }
+    CHECK(p.at(0.0) == doctest::Approx(0.0));   // 过数据点
+    CHECK(p.at(3.0) == doctest::Approx(1.0));
+    CHECK(p.at(-1.0) == doctest::Approx(0.0));  // 端点夹紧
+    CHECK(p.at(9.0) == doctest::Approx(1.0));
+}
+
+TEST_CASE("math::interpolate::PchipSpline 坏输入 fail-loud") {
+    const PchipSpline dup(std::vector<double>{0.0, 0.0, 1.0}, std::vector<double>{0.0, 1.0, 2.0});
+    CHECK_FALSE(dup.valid());
+    CHECK(std::isnan(dup.at(0.5)));
+    const PchipSpline one(std::vector<double>{1.0}, std::vector<double>{1.0});
+    CHECK_FALSE(one.valid());
+}
+
 // ── fft ────────────────────────────────────────────────────────────────────
 
 TEST_CASE("math::fft::直流与单频") {

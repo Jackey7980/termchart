@@ -44,11 +44,21 @@
   结论：逐图种迁移 + 单测已由并行 Agent 实质完成，本回合只做**据实更正**（backlog 落后于真实代码，
   以代码为准）。`78_chart_scene` 的三条验证线（指令种类与分组 / render_scene 落格 / SVG 元素）仍可作
   后续抽查基线。
-- [ ] **已知遗留小项**（2026-10-21 登记）：① `data::rolling` 的纯 SMA 仍 O(N·window)，
-  滑动求和 O(N) 化属局部优化（EMA 已 O(N)）；② `math::interpolate` 的 monotone (PCHIP)
-  变体未做（自然样条在噪声数据上轻微过冲）；③ `io/csv` 与 `dsl/csv_sniff` 两份解析器
-  的合并需先把 csv_sniff 的 document::TableModel 组装层拆到 L8+（层号硬墙），记后续；
-  ④ `chart`(L12) 对 `data`(L4)/`io`(L2) 的消费尚未接线（"CSV→均线→出图"端到端示例）。
+- [x] **已知遗留小项**（2026-10-28 收尾核实）：
+  ① `data::rolling` O(N·window) → **已过时**：`rolling.cpp` 在 2026-10-22 已重写为 O(N)
+  滑动窗口家族（SlidingSum / SlidingWelford / MonotonicQueue / OrderedMedian），Mean/Sum/Stddev/
+  Min/Max/Median 全为 O(N) 或 O(N·logW)；本轮仅修正 `rolling.hpp` 头部过时注释（曾写"O(N·window)、
+  刻意不展开"）。
+  ② `math::interpolate` 的 monotone (PCHIP) 变体 → **本轮新增**：`interpolate.hpp` 加 `PchipSpline`
+  （Fritsch–Carlson 单调三次 Hermite，保单调不过冲，接口对齐 `CubicSpline`），3 个回归测试
+  （过点/线性精确、保单调不过冲、坏输入 fail-loud）全过。
+  ③ `io/csv` 与 `dsl/csv_sniff` 合并 → **刻意不合并，记为结构性延迟**：`io`(L2) 数值快路径与
+  `dsl`(L17) 方言分析+`document::TableModel`(L8) 组装是两份**有意为之**（L2 不能 include L8，
+  层号硬墙）；两文件头注释已互相交叉说明。真要合并需先把 csv_sniff 的 TableModel 组装层拆到 L8+，
+  属独立结构任务，未动。
+  ④ `chart` 对 `data`/`io` 的消费接线 → **已落地**：`examples/76_csv_to_chart.cpp` 已是完整
+  "CSV→fill_missing→EMA(5)→终端图"端到端示例（io/csv + data/fill_missing + data/rolling + math/stats
+  + layout/raster/canvas/render/api 全链路），确定性可被 ctest 跑。
 
 ## 二、工程 / CI 设施（ROADMAP 阶段 0 未勾选项）
 
@@ -127,9 +137,9 @@
   示例索引补 `67_world_map` / `68_cn_province` / `69_city_plot`；`ROADMAP` 修订记录加 2026-10-28 一行。
   `docs/charts/geo.md` 此前已同步更新（口径从"库不做投影/不带数据"改为现状）。
 
-## 五、GUI 平行项目（不阻塞库本体）
+## 五、GUI 平行项目（已完成，2026-10-28）
 
-- [ ] `termchart_gui`（`结构.md` 标为平行项目）：`include/termchart_gui/` + `src_gui/` 共 25 文件未开工（GUI 复用 `scene` 及以下 L0–L4，`widget`/`app`/`plugin` 在 GUI 下重写）。详见 `capability_matrix.md` 第六节。**进展（2026-10-14）**：渲染核心以 `include/termchart/gui/`（层 22）先期落地——`font` + `scene_renderer`（Scene→Bitmap，3× 超采样 AA）+ `hover_chart`（悬停出数据，`examples/58`）+ `examples/55`；widget_tree/native_loop/layout/backend_tk 的骨架已在平行栈 `include/termchart_gui/` 落地（真实 tk 后端未接）。
+- [x] `termchart_gui`：平行栈已落地（详见 `capability_matrix.md` 第六节与 `ROADMAP` 修订记录）。渲染核心 `include/termchart/gui/`（`font` / `scene_renderer` / `hover_chart`）+ 并列顶层库 `include/termchart_gui/`（35 头：layout / widget_tree / native_loop / backend_tk / render）；原生后端 `Win32Backend` / `QtBackend` / `TkBackend` 均为完整实现（默认 OFF，仅因依赖外部运行时），无头 `HeadlessBackend` / 终端 `TuiBackend` 零依赖可用。GUI 复用边界是 `scene`(L4) 及以下，不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
 
 ## 六、地理图（`chart/geo`）与地图数据链（2026-10-18 登记）
 

@@ -121,6 +121,80 @@ private:
     bool valid_ = false;
 };
 
+// 单调三次 Hermite（PCHIP，Fritsch–Carlson）：在 CubicSpline 的自然样条之外提供
+// 一个**保单调、不过冲**的变体。自然样条二阶导两端为 0，在噪声数据上会轻微过冲、画出
+// 数据之外的假峰/假谷；PCHIP 把"相邻割线异号或任一为零"处的切线压成 0，从而守住单调性。
+// 构造 O(N)、求值 O(log N)（二分定位区间），接口与 CubicSpline 对齐（valid() / size() / at()）。
+// 坏输入（点数 < 2、xs 非严格升序、含 NaN/Inf）不抛异常：valid() 为 false，at() 返回 NaN。
+class PchipSpline {
+public:
+    PchipSpline() noexcept = default;
+
+    PchipSpline(std::span<const double> xs, std::span<const double> ys) noexcept {
+        const std::size_t n = xs.size() < ys.size() ? xs.size() : ys.size();
+        if (n < 2) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!std::isfinite(xs[i]) || !std::isfinite(ys[i])) return;
+            if (i > 0 && !(xs[i] > xs[i - 1])) return;
+        }
+        x_.assign(xs.begin(), xs.begin() + static_cast<std::ptrdiff_t>(n));
+        y_.assign(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(n));
+        m_.assign(n, 0.0);
+
+        // 区间割线（>0，因为 xs 严格升序）。
+        std::vector<double> d(n - 1, 0.0);
+        for (std::size_t i = 0; i + 1 < n; ++i) {
+            d[i] = (y_[i + 1] - y_[i]) / (x_[i + 1] - x_[i]);
+        }
+
+        // 端点切线 = 相邻单侧割线。
+        m_[0] = d[0];
+        m_[n - 1] = d[n - 2];
+
+        // 内部点：割线加权调和平均（Fritsch–Carlson）。异号或任一为 0 → 切线压 0，守住单调。
+        for (std::size_t i = 1; i + 1 < n; ++i) {
+            if (d[i - 1] * d[i] <= 0.0) {
+                m_[i] = 0.0;
+            } else {
+                const double w1 = 2.0 * (x_[i + 1] - x_[i]);  // 邻区间长度加权
+                const double w2 = x_[i] - x_[i - 1];
+                m_[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+            }
+        }
+        valid_ = true;
+    }
+
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+    [[nodiscard]] std::size_t size() const noexcept { return x_.size(); }
+
+    // 求值：x 越界钳位到首/末；无效样条或 NaN 查询返回 NaN。
+    [[nodiscard]] double at(double x) const noexcept {
+        if (!valid_ || std::isnan(x)) return std::nan("");
+        const std::size_t n = x_.size();
+        if (x <= x_[0]) return y_[0];
+        if (x >= x_[n - 1]) return y_[n - 1];
+        const auto it = std::lower_bound(x_.begin(), x_.end(), x);
+        const std::size_t hi = static_cast<std::size_t>(it - x_.begin());
+        const std::size_t lo = hi - 1;
+        const double h = x_[hi] - x_[lo];
+        const double t = (x - x_[lo]) / h;
+        const double t2 = t * t;
+        const double t3 = t2 * t;
+        // Hermite 基函数（h00/h10/h01/h11）：保证经过端点且切线 m_。
+        const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        const double h10 = t3 - 2.0 * t2 + t;
+        const double h01 = -2.0 * t3 + 3.0 * t2;
+        const double h11 = t3 - t2;
+        return h00 * y_[lo] + h10 * h * m_[lo] + h01 * y_[hi] + h11 * h * m_[hi];
+    }
+
+private:
+    std::vector<double> x_;
+    std::vector<double> y_;
+    std::vector<double> m_;  // 各点切线斜率
+    bool valid_ = false;
+};
+
 // ── 平滑曲线（折线渲染 / 动画缓动） ──────────────────────────────────────────
 //
 // 与 CubicSpline（数据域插值、曲线不必过数据点）的定位不同：下面两个是"让已有

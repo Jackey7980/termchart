@@ -9,8 +9,14 @@
 //   * 不抛异常；空 vector 返回空 vector。
 //
 // 另提供 EMA（指数移动平均）：O(N) 单遍递推，alpha = 2/(window+1)。
-// rolling() 本身为 O(N·window)（窗口内每步重算）；纯 SMA 的 O(N) 滑动求和
-// 作为已知优化点记入 backlog，刻意不在本文件展开。
+//
+// 2026-10-22 重写后，rolling() 全体统计量均为 **O(N)** 滑动窗口（不再每步重算整个窗口）：
+//   * Mean / Sum  ：滑动和（SlidingSum，add/remove 各 O(1)）
+//   * Stddev      ：Welford 加/减（数值稳定，O(N)）
+//   * Min / Max   ：单调双端队列（O(N)）
+//   * Median      ：有序双 multiset（O(N log W)）
+// 此前"纯 SMA 的 O(N) 滑动求和作为已知优化点"的 backlog 描述已过时——本文件现已是 O(N) 家族，
+// 旧注释保留仅作历史对照。
 #ifndef TERMCHART_DATA_ROLLING_HPP
 #define TERMCHART_DATA_ROLLING_HPP
 
