@@ -47,6 +47,8 @@
    HalfBlock 1×2}`，逐格取"覆盖面积最大的区域"的颜色；
 3. `render_bitmap(w, h)`：真彩色位图（横向精确重叠 + 纵向超采样），GUI / PNG / sixel 的数据源。
 
+此外 GeoMap 作为 `chart::Chart` 也实现 `to_scene(Scene&, w, h)`（见 `chart/chart.hpp`）：与全库图表一致，同一份 Scene 既能被 `canvas/scene_renderer` 收口成终端字符图，又能被 `backend/vector` 收口成 SVG/PDF/TikZ——这是 GeoMap 接入统一渲染管线的首选路径。
+
 `examples/67_world_map`（四投影 + 三种 style + `--png`）、`68_cn_province`（省界分级着色）、
 `69_city_plot`（国家轮廓底图 + 城市点叠加）是这三条出口的活文档。
 

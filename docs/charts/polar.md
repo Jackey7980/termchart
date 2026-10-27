@@ -25,7 +25,9 @@ class PieChart final : public Chart {
 public:
     void set_values(std::vector<double> values, std::vector<std::string> labels = {});
     void set_options(const PieOptions& options);
-    void draw(DrawContext ctx) override;
+    void draw(DrawContext ctx) override;                 // Canvas 直绘回退
+    bool to_scene(scene::Scene& out, std::uint32_t width,
+                  std::uint32_t height) const override;  // 首选：产出矢量 IR
 };
 ```
 

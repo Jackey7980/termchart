@@ -32,8 +32,9 @@ backend(16) dsl(17) widget(18) plugin(19) app(20) api(21) gui(22)
 | vector 导出 | `scene::Scene` | → `backend/vector/*`（svg；规格还含 TikZ） |
 | structured 导出 | `document::Document` | → `backend/structured/*`（html / markdown） |
 
-矢量 IR 的上游：`Scene`（非完备图形 IR，scene/command.hpp 定义指令集）由
-`canvas/scene_renderer` 收口进 `Canvas`，再 `to_buffer()` 进 `CellBuffer`。
+矢量 IR 的上游：`Scene`（非完备图形 IR，scene/command.hpp 定义指令集）由图表经 `Chart::to_scene`
+产出（`draw(DrawContext)` 仍作为 Canvas 直绘回退并存），再由 `canvas/scene_renderer` 收口进 `Canvas`，
+再 `to_buffer()` 进 `CellBuffer`。
 
 ## 关键不变量
 
@@ -55,7 +56,7 @@ social_network / knowledge_graph / dependency / dag / syntax_tree）。
 
 ## GUI 复用边界
 
-GUI 栈只复用 L0–L2（`scene` 及以下）；`layout/widget/interaction/app` 由 GUI 自行重写。
+GUI 栈只复用 L0–L4（`scene` 及以下，含 `scene`/`style`/`dataset`/`color` 等语义类型）；`layout`/`widget`/`interaction`/`app` 由 GUI 自行重写（`include/termchart_gui/`）。
 语义类型（`Scene`/`Style`/`Dataset`/`color::resolve`）是两边共享面，字符格与 SGR 不进 GUI。
 详见 [design/gui_stack.md](design/gui_stack.md)。
 

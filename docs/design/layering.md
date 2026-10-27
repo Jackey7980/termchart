@@ -42,5 +42,5 @@
 - 在 `backend/*` 里 include `chart/*`——导出后端想读图表字段。
 - 在 `render/` 里 include `interaction/`——渲染器想处理输入。
 
-正确做法分别是：chart 画进 `canvas::Canvas`；chart 先落 `document::Document`；
+正确做法分别是：chart 产出 `scene::Scene`（to_scene），Scene→Canvas 由 `canvas/scene_renderer` 收口，图表不得直接 include `render`；chart 先落 `document::Document`；
 输入处理放 interaction 并依赖 render 的产物。

@@ -41,7 +41,9 @@
 （逐格算归一化半径 ≤ 1 才落笔），仪表盘的弧按角度采样落格（步长约每周
 `4·(rx+ry)` 格保证连续）。凡涉及形状落格的实现都遵循同一原则。
 
-## 图表不走 Scene 的部分
+## 图表与 Scene 的关系
 
-`chart`/`graph` 的示例多数直接用 `canvas.draw_line`/`draw_text` + 显式字符，
-不经 Scene——字符图表的本质输出是字符，先建矢量 IR 再收口是绕路。
+`chart` 现已统一经 `to_scene` 产出矢量 `scene::Scene`（与 `canvas/scene_renderer` 收口成盲文/半块
+字符图、与 `backend/vector` 收口成 SVG/PDF/TikZ 同源）；`draw(DrawContext)` 仍作为 Canvas 直绘回退保留。
+`graph/diagrams` 的端到端图（`render_xxx(Graph&, Canvas&, Options) → Rect`）仍直接吃 `canvas::Canvas`——
+图的字符化本质就是落格，不经 Scene。

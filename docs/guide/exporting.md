@@ -37,8 +37,10 @@ snapshot / structured 同构：`render_snapshot(backend, buffer)`、
 
 ## 完整链路
 
-- 图表 → 导出：chart 画进 `Canvas` → `to_buffer()` → snapshot 后端；
-  或 chart 场景走 `Scene` → vector 后端；
+- 图表 → 导出：chart 经 `to_scene` 产出 `Scene` IR，统一两条下游——
+  `canvas/scene_renderer` 收口进 `Canvas` → `to_buffer()` → snapshot 后端（ansi/text/html_pre/json）；
+  或 `Scene` 直接喂 `backend/vector`（svg / pdf / tikz）；
+- `draw(DrawContext)` 仍作为 Canvas 直绘回退，但 `to_scene` 是首选入口；
 - 文档 → 导出：`Document`（段落/表格/图表块）→ structured 后端；
 - 契约保证：后端只消费 IR，不认识图表类型（`backend > chart` 禁止边）——
   新图表类型零改动导出。
@@ -49,5 +51,5 @@ examples/34_export_svg、35_export_html、36_export_json。
 
 ## 未做
 
-- vector 物种的 TikZ（规格有，实现未见）；
-- LaTeX / PDF 类导出。
+- vector 物种已含 **SVG / PDF / TikZ**（`backend/vector/latex_backend.hpp` 输出 `tikzpicture`；PDF 线/填充/文本可用）；
+- PDF 的 `ArcOp` 仍以边界矩形近似、位图嵌入未做；`png_screenshot` 未做。

@@ -36,7 +36,9 @@ struct XxxOptions { /* 语义参数 */ };
 class XxxChart final : public termchart::chart::Chart {
 public:
     void set_xxx(...);                 // 数据与选项的 set_*
-    void draw(termchart::chart::DrawContext ctx) override;
+    void draw(termchart::chart::DrawContext ctx) override;   // Canvas 直绘回退（基类纯虚，必须实现）
+    bool to_scene(scene::Scene& out, std::uint32_t width,
+                  std::uint32_t height) const override;      // 首选：产出矢量 IR
 };
 ```
 

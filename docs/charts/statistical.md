@@ -26,7 +26,7 @@ ROC/PCA/生存分析这类有统计语义的归本族。
 ## API 形态
 
 与本库其他图表一致：`struct XxxOptions` + `class XxxChart final : public Chart`，
-数据经 `set_*` 传入（原始样本或统计量，按图而定），`draw(DrawContext)` 绘制。
+数据经 `set_*` 传入（原始样本或统计量，按图而定），`draw(DrawContext)` 绘制（Canvas 回退）；图种另实现 `to_scene(Scene&, w, h)` 产出矢量 IR，为首选渲染路径。
 字段语义以各头文件顶部注释为准。
 
 ## 置信区间的表达

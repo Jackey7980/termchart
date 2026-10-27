@@ -30,7 +30,7 @@ K 线用字符方向与密度编码涨跌（非仅靠颜色）：实心/空心�
 ## API 形态
 
 与本库其他图表一致：`struct XxxOptions` + `class XxxChart final : public Chart`，
-`set_*` 传数据、`draw(DrawContext)` 绘制。字段以头文件为准。
+`set_*` 传数据、`draw(DrawContext)` 绘制（Canvas 回退）；图种另实现 `to_scene(Scene&, w, h)` 产出矢量 IR，为首选渲染路径。字段以头文件为准。
 
 ## 未做
 

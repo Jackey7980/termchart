@@ -2,7 +2,7 @@
 
 ## 契约
 
-继承 `chart::Chart`（chart/chart.hpp），实现 `draw(DrawContext)`：
+继承 `chart::Chart`（chart/chart.hpp），实现 `draw(DrawContext)`（Canvas 直绘回退）与 `to_scene(scene::Scene&, width, height)`（**首选**，产出矢量 IR）：
 
 ```cpp
 #include "termchart/chart/chart.hpp"
@@ -45,6 +45,28 @@ void MyChart::draw(termchart::chart::DrawContext ctx) {
 - **系列可辨不靠颜色**：给每个系列/扇区专属填充字符（█▓▒░■●▲◆○ 循环），
   颜色是叠加信息；
 - 非有限输入不崩溃：如 Progress 对 fraction 收敛到 [0,1]、非有限按 0 处理。
+
+## to_scene：产出 Scene IR（首选路径）
+
+现代图种优先实现 `to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t height)`：
+把图表描述成矢量指令（MoveTo/LineTo/StrokeOp/TextOp/GroupOp），而不是往字符格落笔。
+同一份 Scene 会被 `canvas/scene_renderer` 收口成盲文/半块字符图、被 `backend/vector`
+（SVG/PDF/TikZ）收口成矢量文件——不再是「先画完字符再转录」。
+
+```cpp
+bool MyChart::to_scene(scene::Scene& out, std::uint32_t width,
+                       std::uint32_t height) const {
+    // 网格/轴/标题走 TextOp（与内置图种同构）；
+    // 数据几何用 out.begin_path()/move_to()/line_to()/stroke()，
+    //   用 begin_group(id) 包出动画组（组 id 须与 animation_groups() 对齐）。
+    return true;   // 返回 true = 已迁移；默认实现返回 false，调用方回退到 draw()
+}
+```
+
+- `to_scene` 与 `draw` 共用同一套布局（`make_area(width, height, …)` 尺寸版），两版不可能算出不同结果；
+- `draw(DrawContext)` 仍是基类纯虚、**必须实现**，作为 Canvas 直绘回退；
+- 渲染入口统一走 `api::print_chart` / `api::chart_to_scene` / `api::render_chart`（`api/chart.hpp`），
+  不要再自己拿 `Canvas` 往 stdout 写。
 
 ## 注册进注册表
 
