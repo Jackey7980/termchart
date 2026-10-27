@@ -32,6 +32,11 @@ option(TERMCHART_BUILD_GUI_QT "构建原生 Qt GUI 后端插件（可选，需 Q
 # 时**配置期报错**（fail-loud，不静默跳过）。
 option(TERMCHART_BUILD_GUI_TK "构建原生 Tk GUI 后端插件（可选，需 Tcl/Tk 开发库；默认关）" OFF)
 
+# Emscripten WASM 目标（可选，需 emsdk；默认关、不进 CI）。开启后，配合 Emscripten
+# 工具链会编出一个把 image::Bitmap 推到网页 <canvas> 的模块（src/wasm/termchart_wasm.cpp）。
+# 普通桌面/CI 构建里 EMSCRIPTEN 为假，此开关无效、不产生任何目标。
+option(TERMCHART_BUILD_WASM "构建 Emscripten WASM 目标（需 emsdk；默认关）" OFF)
+
 # ── 模块开关：关掉即裁掉对应 src 目录 ─────────────────────────────────────
 #   上层模块的缺失不影响下层编译（分层规则保证单向依赖）。
 set(TERMCHART_MODULES

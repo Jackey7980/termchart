@@ -27,6 +27,9 @@ endif()
 # ── 库目标 ────────────────────────────────────────────────────────────────
 file(GLOB_RECURSE TERMCHART_SOURCES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+# WASM 胶水（src/wasm/termchart_wasm.cpp）只在 Emscripten 工具链下编（见下方
+# termchart_wasm 目标），不能进桌面/CI 的库构建——它 #include <emscripten/...>。
+list(FILTER TERMCHART_SOURCES EXCLUDE REGEX "src/wasm/")
 
 add_library(termchart ${TERMCHART_SOURCES})
 add_library(termchart::termchart ALIAS termchart)
@@ -120,6 +123,17 @@ endif()
 # 原生 Tk GUI 后端（可选插件，默认关）：Tcl/Tk C API，找不到即配置期报错。
 if(TERMCHART_BUILD_GUI_TK)
     add_subdirectory(plugins/gui_tk)
+endif()
+
+# Emscripten WASM 目标（可选，需 emsdk；默认关、不进 CI）。把 image::Bitmap 推到网页
+# <canvas>，让库能在浏览器里出真彩图。仅当 Emscripten 工具链生效且显式开启时才编。
+if(EMSCRIPTEN AND TERMCHART_BUILD_WASM)
+    add_executable(termchart_wasm src/wasm/termchart_wasm.cpp)
+    target_link_libraries(termchart_wasm PRIVATE termchart)
+    target_link_options(termchart_wasm PRIVATE
+        "SHELL:-s EXPORTED_FUNCTIONS=['_termchart_blit_canvas','_termchart_render_demo']"
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
+        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/examples/wasm/shell.html")
 endif()
 
 # Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart；缺 pybind11 即报错。

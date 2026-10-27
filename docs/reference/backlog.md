@@ -85,12 +85,19 @@
   `-Werror`（`TERMCHART_WARNINGS_AS_ERRORS` 默认 OFF 且无调用方传 `WERROR`），clang 的
   `-Wconversion` 新告警不会炸构建；`TERMCHART_BUILD_PYTHON` 默认 OFF，CI 不依赖 pybind11。
   Linux 早在 2026-10-13 即在矩阵内，macOS 是此前的唯一缺口。
-- [ ] **WASM (Emscripten) 目标**（2026-10-21 登记，未开工）：`HeadlessBackend` 产出的
-  `image::Bitmap` 加 Emscripten 胶水（`encode_png` → `<canvas>` drawImage / WebGL 纹理）
-  即可刷网页，渲染核心（scene/gui/SceneRenderer，L4 及以下）无需改动；主要成本在
-  构建侧（`-s USE_PTHREADS`、文件系统虚拟化、`term/` 平台代码在无 tty 环境的退化已验证），
-  以及一个 `<canvas>` 示例与 `emcmake` preset。刻意不并入 CI（runner 生态差异大），
-  留作发布渠道工作。
+- [x] **WASM (Emscripten) 目标**（2026-10-28 落地脚手架）：此前"未开工"，现补齐最小可用骨架：
+  * `src/wasm/termchart_wasm.cpp`：Emscripten 胶水，**只在 Emscripten 工具链下编译**
+    （顶层 CMakeLists 用 `if(EMSCRIPTEN AND TERMCHART_BUILD_WASM)` 门控，桌面/CI 不碰）；
+    出口 `termchart_blit_canvas(rgba,w,h,channels)`（EM_ASM 调 `putImageData`，零 embind）
+    + `termchart_render_demo()`（渐变 + 正弦示例 Bitmap 推送）。
+  * `examples/wasm/shell.html`：Emscripten `--shell-file`，含 `<canvas id="canvas">` 与
+    "Render demo" 按钮（`Module.ccall('termchart_render_demo','void',[],[])`）。
+  * `cmake/TermchartOptions.cmake`：`TERMCHART_BUILD_WASM` 开关（默认 OFF）。
+  * `CMakePresets.json`：`wasm` 配置/构建预设（`-DCMAKE_TOOLCHAIN_FILE=$env{EMSDK}/...`、
+    `TERMCHART_BUILD_WASM=ON`、关测试/示例/bench 以省 Emscripten 链接成本）。
+  验证：本机无 emsdk，**未实际编译 WASM 目标**（仅确认普通 `cmake --preset ninja` 重配无错、
+  新 src/wasm 不被普通构建误编）；需在装有 emsdk 的环境跑 `cmake --preset wasm && cmake --build --preset wasm`
+  产出 `termchart_wasm.html` 后在浏览器打开。仍**刻意不并入 CI**（runner 生态差异大）。
 
 ## 三、质量与一致性（精简，逐条证据见 `quality_todo.md`）
 

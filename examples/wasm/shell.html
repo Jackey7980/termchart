@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- examples/wasm/shell.html —— termchart WASM 的 HTML shell（Emscripten --shell-file）。
+     必须保留 {{{ SCRIPT }}} 占位符，Emscripten 会在此注入 .js 加载逻辑。 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>termchart · WASM demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background: #11151c; color: #c8d2e0; }
+    canvas { background: #000; border: 1px solid #2a3340; image-rendering: pixelated; }
+    button { margin-top: 1rem; padding: .4rem .9rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>termchart WASM</h1>
+  <p>库把 image::Bitmap 推到下面的 <code>&lt;canvas&gt;</code>（id="canvas"）。</p>
+  <canvas id="canvas" width="480" height="240"></canvas>
+  <div>
+    <button onclick="Module.ccall('termchart_render_demo','void',[],[])">Render demo</button>
+  </div>
+  <p>JS 侧也可直接：<code>Module.ccall('termchart_blit_canvas','void',['number','number','number','number'],[ptr,w,h,c])</code></p>
+  {{{ SCRIPT }}}
+</body>
+</html>

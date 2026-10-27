@@ -98,6 +98,19 @@
         "CMAKE_BUILD_TYPE": "Release"
       }
     },
+    {
+      "name": "wasm",
+      "displayName": "WASM (Emscripten)",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "TERMCHART_BUILD_WASM": "ON",
+        "TERMCHART_BUILD_TESTS": "OFF",
+        "TERMCHART_BUILD_EXAMPLES": "OFF",
+        "TERMCHART_BUILD_BENCH": "OFF"
+      }
+    },
 
     {
       "name": "windows-base",
@@ -166,6 +179,10 @@
     {
       "name": "ninja-release",
       "configurePreset": "ninja-release"
+    },
+    {
+      "name": "wasm",
+      "configurePreset": "wasm"
     },
     {
       "name": "debug-windows",
