@@ -195,3 +195,68 @@ TEST_CASE("geo_map::rasterize on empty map is blank, not crash") {
     CHECK(b.height() == 5);
     CHECK(b.at(0, 0).cp == U' ');
 }
+
+// #3 收尾：bins 分级此前只在 draw()/to_scene() 生效，rasterize()/render_bitmap()
+// 走连续映射——同一份值在字符格与高清出口取到不同级色。现统一为「值→级→色」单一函数。
+// 注意 vmin/vmax 按数据驱动（取所有值的最小/最大），所以只有 ≥3 个 feature 时才能构造
+// 出"两个值同属一级"的情形：A=100、B=75、C=0 在 bins=2 时 A/B 都落入 bin1。
+TEST_CASE("geo_map::rasterize honours bins (two values in same bin share colour)") {
+    GeoMap m;
+    std::string err;
+    REQUIRE(m.load_geojson(R"({
+      "type":"FeatureCollection","features":[
+        {"type":"Feature","properties":{"name":"A"},
+         "geometry":{"type":"Polygon","coordinates":[[[0,0],[20,0],[20,20],[0,20],[0,0]]]}},
+        {"type":"Feature","properties":{"name":"B"},
+         "geometry":{"type":"Polygon","coordinates":[[[0,-20],[20,-20],[20,0],[0,0],[0,-20]]]}},
+        {"type":"Feature","properties":{"name":"C"},
+         "geometry":{"type":"Polygon","coordinates":[[[0,-40],[20,-40],[20,-20],[0,-20],[0,-40]]]}}
+      ]
+    })", err));
+    m.set_value("A", 100.0);
+    m.set_value("B", 75.0);    // 与 A 同属 bin1（bins=2 时 frac 1.0 / 0.75 -> 都 bin1）
+    m.set_value("C", 0.0);
+
+    GeoMapOptions mo;
+    mo.bins = 2;
+    m.set_options(mo);
+
+    GeoRasterOptions o;
+    o.style = GeoRasterStyle::Braille;
+    o.draw_borders = false;   // 免得边界压暗干扰比较
+    const termchart::CellBuffer b = m.rasterize(20, 30, o);
+
+    auto fg_in_third = [&](int third) -> termchart::Color {
+        const int r0 = third * 10;   // 30 行 -> 三段各 10 行
+        for (int y = r0; y < r0 + 10; ++y)
+            for (std::uint32_t x = 0; x < b.width(); ++x)
+                if (b.at(x, static_cast<std::uint32_t>(y)).cp != U' ')
+                    return b.at(x, static_cast<std::uint32_t>(y)).style.fg();
+        return termchart::Color{};   // 该段没上色（不应发生）
+    };
+    const auto top = fg_in_third(0);   // A
+    const auto mid = fg_in_third(1);   // B
+    const auto bot = fg_in_third(2);   // C
+    CHECK(top == mid);        // A、B 同 bin -> 同色；修复前连续映射会让二者不同色
+    CHECK_FALSE(top == bot);  // C 不同 bin -> 不同色
+}
+
+TEST_CASE("geo_map::rasterize bins=1 collapses every value to one colour") {
+    GeoMap m;
+    load_square_map(m);
+    m.set_value("A", 100.0);
+    m.set_value("B", 0.0);
+
+    GeoMapOptions mo;
+    mo.bins = 1;
+    m.set_options(mo);
+
+    GeoRasterOptions o;
+    o.style = GeoRasterStyle::Braille;
+    o.draw_borders = false;
+    const termchart::CellBuffer b = m.rasterize(40, 20, o);
+
+    const auto top = b.at(10, 3).style.fg();
+    const auto bottom = b.at(10, 16).style.fg();
+    CHECK(top == bottom);     // 单级 -> 所有值同色
+}

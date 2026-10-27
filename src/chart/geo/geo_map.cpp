@@ -158,12 +158,31 @@ void row_crossings(const std::vector<std::vector<Point>>& rings, double y,
     std::sort(out.begin(), out.end());
 }
 
-// 值 → 颜色。无值或值域退化（全相等）时用 no_data。
+// 值 → 分级索引（所有出口共用，保证 bins 在三条出口一致生效）。
+// frac = (v - vmin)/(vmax - vmin) ∈ [0,1]；返回 [0, bins-1]。bins<=1 时恒为 0 级。
+static int geo_bin_of(double frac, int bins) {
+    if (bins <= 1) return 0;
+    int b = static_cast<int>(std::floor(frac * static_cast<double>(bins)));
+    if (b < 0) b = 0;
+    if (b > bins - 1) b = bins - 1;
+    return b;
+}
+// 分级级中心 → [0,1] 采样坐标（与旧 draw/to_scene 内联公式保持一致）。
+static double geo_bin_center(double frac, int bins) {
+    if (bins <= 1) return 0.0;
+    const double t = static_cast<double>(geo_bin_of(frac, bins)) /
+                     static_cast<double>(bins - 1);
+    return std::min(1.0, std::max(0.0, t));
+}
+
+// 值 → 颜色（先按 bins 分级，再采样色带）。无值或值域退化（全相等）时用 no_data。
+// draw/to_scene 走灰度 ramp_color，rasterize/render_bitmap 走色带 sample——
+// 二者都先经过 geo_bin_center，于是同一份值在任一出口取到同一级色。
 Rgb value_color(const PolygonEntry& e, bool have, double vmin, double vmax,
-                color::ColormapKind kind, Rgb no_data) {
+                int bins, color::ColormapKind kind, Rgb no_data) {
     if (!e.has_value || !have || !(vmax > vmin)) return no_data;
-    const double t = (e.value - vmin) / (vmax - vmin);
-    return color::sample(kind, t);
+    const double frac = (e.value - vmin) / (vmax - vmin);
+    return color::sample(kind, geo_bin_center(frac, bins));
 }
 
 // 象限块 16 种组合：位 0=左上 1=右上 2=左下 3=右下。
@@ -364,11 +383,7 @@ void GeoMap::draw(DrawContext ctx) {
         Color256 rgb;
         if (e.has_value && have && vmax > vmin) {
             const double frac = (e.value - vmin) / (vmax - vmin);
-            const double quantized = std::clamp(
-                std::floor(frac * static_cast<double>(bins)) /
-                    std::max(1.0, static_cast<double>(bins) - 1.0),
-                0.0, 1.0);
-            rgb = ramp_color(quantized);
+            rgb = ramp_color(geo_bin_center(frac, bins));
         } else {
             rgb = kNoData;
         }
@@ -454,11 +469,7 @@ bool GeoMap::to_scene(scene::Scene& out, std::uint32_t width,
         Color256 rgb;
         if (e.has_value && have && vmax > vmin) {
             const double frac = (e.value - vmin) / (vmax - vmin);
-            const double quantized = std::clamp(
-                std::floor(frac * static_cast<double>(bins)) /
-                    std::max(1.0, static_cast<double>(bins) - 1.0),
-                0.0, 1.0);
-            rgb = ramp_color(quantized);
+            rgb = ramp_color(geo_bin_center(frac, bins));
         } else {
             rgb = kNoData;
         }
@@ -570,7 +581,8 @@ CellBuffer GeoMap::rasterize(std::uint32_t cols, std::uint32_t rows,
     colors.reserve(impl_->entries.size());
     lay.reserve(impl_->entries.size());
     for (const auto& e : impl_->entries) {
-        const Rgb c = value_color(e, have, vmin, vmax, opts.colormap, opts.no_data);
+        const Rgb c = value_color(e, have, vmin, vmax,
+                                  static_cast<int>(options_.bins), opts.colormap, opts.no_data);
         colors.push_back(Color::rgb(c.r, c.g, c.b));
         lay.push_back(e.layer);
 
@@ -752,7 +764,8 @@ image::Bitmap GeoMap::render_bitmap(std::uint32_t width, std::uint32_t height,
 
         for (const auto& e : impl_->entries) {
             if (e.layer != layer) continue;
-            const Rgb c = value_color(e, have, vmin, vmax, opts.colormap, opts.no_data);
+            const Rgb c = value_color(e, have, vmin, vmax,
+                                  static_cast<int>(options_.bins), opts.colormap, opts.no_data);
             const float fr = static_cast<float>(c.r) / 255.0f;
             const float fg = static_cast<float>(c.g) / 255.0f;
             const float fb = static_cast<float>(c.b) / 255.0f;
