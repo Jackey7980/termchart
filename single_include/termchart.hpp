@@ -12324,10 +12324,9 @@ enum class GeoProjection : std::uint8_t {
 
 struct GeoMapOptions {
     GeoProjection projection = GeoProjection::Equirectangular;
-    std::uint32_t width = 0;        // 0 = 自适应画布
-    std::uint32_t height = 0;       // 0 = 自适应画布
+    // 画布尺寸由各出口的 cols×rows / width×height 参数决定，无独立字段（旧的
+    // width/height/show_graticule 是死字段，已被移除）。
     std::uint32_t bins = 5;         // 分级数（[1,8]）
-    bool          show_graticule = false;   // 经纬网格
     std::int32_t  ortho_center_lat = 0;     // 正射投影中心纬度
     std::int32_t  ortho_center_lon = 0;     // 正射投影中心经度
     double        lambert_ref_lat = 0.0;    // 兰勃特参考纬度

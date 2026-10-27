@@ -329,3 +329,15 @@ TEST_CASE("geo_map::render_bitmap draws legend band when draw_legend set") {
                       bmp_on.at(col, 10, 2) == bmp_on.at(col, 70, 2);
     CHECK_FALSE(same);
 }
+
+// #5 收尾：命中测试（HitRegion 基础）。load_square_map 中 A 在上 (lat 0..20)、
+// B 在下 (lat -20..0)，经度都 0..20。点与多边形内测试应取回正确要素名。
+TEST_CASE("geo_map::hit_test returns the feature under a geo coordinate") {
+    GeoMap m;
+    load_square_map(m);
+
+    CHECK(m.hit_test(10.0, 10.0) == "A");    // A 内
+    CHECK(m.hit_test(10.0, -10.0) == "B");   // B 内
+    CHECK(m.hit_test(10.0, 30.0) == "");     // 超出所有要素
+    CHECK(m.hit_test(-10.0, 10.0) == "");    // 经度越界
+}

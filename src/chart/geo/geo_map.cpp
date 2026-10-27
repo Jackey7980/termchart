@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -952,6 +953,40 @@ CellBuffer GeoMap::render_legend(color::ColormapKind kind, std::uint32_t max_wid
                     static_cast<double>(rows)};
     layout::draw_legend(c, entries, rect, layout::HAlign::Left);
     return c.to_buffer();
+}
+
+// even-odd 射线法：点 (lon,lat) 是否在环集内（外环 + 洞一起算，holes 自动排除）。
+// 环点按 (x=lon, y=lat) 存储，与 draw/rasterize 投影前的原始坐标一致。
+static bool point_in_rings(double lon, double lat, const std::vector<std::vector<Point>>& rings) {
+    int crossings = 0;
+    for (const auto& ring : rings) {
+        const std::size_t n = ring.size();
+        if (n < 3) continue;
+        for (std::size_t i = 0; i < n; ++i) {
+            const Point a = ring[i];
+            const Point b = ring[(i + 1) % n];
+            if ((a.y > lat) != (b.y > lat)) {  // 边跨越水平线 lat
+                const double x = a.x + (b.x - a.x) * (lat - a.y) / (b.y - a.y);
+                if (x > lon) ++crossings;
+            }
+        }
+    }
+    return (crossings % 2) == 1;
+}
+
+std::string GeoMap::hit_test(double lon, double lat) const {
+    if (!impl_ || !impl_->loaded) return std::string{};
+    std::string best;
+    int best_layer = std::numeric_limits<int>::min();
+    for (const auto& e : impl_->entries) {
+        if (point_in_rings(lon, lat, e.rings)) {
+            if (e.layer >= best_layer) {  // 最上层优先；同层取最后命中者
+                best_layer = e.layer;
+                best = e.name;
+            }
+        }
+    }
+    return best;
 }
 
 }  // namespace termchart::chart

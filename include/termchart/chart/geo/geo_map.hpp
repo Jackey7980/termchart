@@ -44,10 +44,9 @@ enum class GeoProjection : std::uint8_t {
 
 struct GeoMapOptions {
     GeoProjection projection = GeoProjection::Equirectangular;
-    std::uint32_t width = 0;        // 0 = 自适应画布
-    std::uint32_t height = 0;       // 0 = 自适应画布
+    // 画布尺寸由各出口的 cols×rows / width×height 参数决定，无独立字段（旧的
+    // width/height/show_graticule 是死字段，已被移除）。
     std::uint32_t bins = 5;         // 分级数（[1,8]）
-    bool          show_graticule = false;   // 经纬网格
     std::int32_t  ortho_center_lat = 0;     // 正射投影中心纬度
     std::int32_t  ortho_center_lon = 0;     // 正射投影中心经度
     double        lambert_ref_lat = 0.0;    // 兰勃特参考纬度
@@ -157,6 +156,12 @@ public:
     [[nodiscard]] TERMCHART_API CellBuffer
     render_legend(color::ColormapKind kind = color::ColormapKind::Turbo,
                   std::uint32_t max_width_cells = 40) const;
+
+    // ── 命中测试（HitRegion 基础）─────────────────────────────────────────────
+    // 给定地理坐标 (lon, lat)，返回其所在（最上层）feature 的 name；不在任何要素内返回 ""。
+    // 用于点击交互：GUI 把屏幕格反投影到经纬度后调用即可取回要素名/数值。
+    // 与三条出口共用同一份原始经纬度环，故命中结果与投影/渲染方式无关。
+    [[nodiscard]] TERMCHART_API std::string hit_test(double lon, double lat) const;
 
 private:
     struct Impl;
