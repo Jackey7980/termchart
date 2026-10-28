@@ -110,6 +110,7 @@ add_executable(termchart_tests
     # ── layout ──
     unit/layout/test_layout_axis.cpp
     unit/layout/test_layout_extras.cpp
+    unit/layout/test_reference.cpp
 
     # ── chart ──
     unit/chart/test_chart_registry.cpp

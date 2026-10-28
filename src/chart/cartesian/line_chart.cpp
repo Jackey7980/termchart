@@ -9,6 +9,7 @@
 #include "termchart/chart/scene_sink.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
+#include "termchart/layout/reference.hpp"
 #include "termchart/layout/sink.hpp"
 #include "termchart/layout/title.hpp"
 #include "termchart/scale/ticks.hpp"
@@ -55,6 +56,13 @@ void LineChart::draw(DrawContext ctx) {
             layout::draw_axis_x(ctx.canvas, area_, xticks, "x", axis_style);
         }
         layout::draw_axis_y(ctx.canvas, area_, yticks, "y", axis_style);
+    }
+    if (emphasize_zero_) {
+        layout::draw_zero_line_y(ctx.canvas, area_, area_.y_scale(), axis_style);
+    }
+    if (shade_negative_) {
+        layout::shade_negative_y(ctx.canvas, area_, area_.y_scale(),
+                                 Style{}.set_bg(Color::rgb(35, 35, 55)));
     }
 
     for (const Series& s : series_) {
@@ -146,6 +154,9 @@ bool LineChart::to_scene(scene::Scene& out, std::uint32_t width, std::uint32_t h
         layout::draw_axis_x(sink, area_, xticks, "x", Style{});
     }
     layout::draw_axis_y(sink, area_, yticks, "y", Style{});
+    if (emphasize_zero_) {
+        layout::draw_zero_line_y(sink, area_, area_.y_scale(), Style{});
+    }
 
     scene::SceneBuilder& builder = sink.builder();
     std::uint32_t group = 0;

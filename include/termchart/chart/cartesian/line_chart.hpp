@@ -39,6 +39,10 @@ public:
     [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
     void set_show_legend(bool on) { show_legend_ = on; }
 
+    // y 轴零线强调 + 负区底色（SymLog 等跨零轴辅助）。默认关，不影响现有行为。
+    void set_emphasize_zero(bool on) { emphasize_zero_ = on; }
+    void set_shade_negative(bool on) { shade_negative_ = on; }
+
     // x 轴刻度标签格式化钩子：**只影响标签文本，不影响刻度位置**（位置仍由
     // scale::ticks_for 的 nice 值决定）。给时间轴用——x 是 epoch 秒这类连续
     // 数值、但人要看 "03-01" 而不是 "1772350000" 时，由调用方注入格式化，
@@ -78,6 +82,8 @@ private:
     bool auto_domain_ = true;
     bool include_zero_ = false;
     bool show_legend_ = true;
+    bool emphasize_zero_ = false;
+    bool shade_negative_ = false;
     std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
     std::vector<double> x_ticks_;
