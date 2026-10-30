@@ -3,6 +3,7 @@
 
 #include <array>
 
+#include "termchart/image/gif_encode.hpp"
 #include "termchart/image/jpeg_encode.hpp"
 #include "termchart/image/mp4.hpp"
 #include "termchart/image/png_encode.hpp"
@@ -25,7 +26,9 @@ std::string encode(std::span<const Bitmap> frames, ImageFormat format, const Enc
             return encode_jpeg(frames[0], opts.quality);
         case ImageFormat::Mp4:
             return encode_mp4(frames, opts);
-            // Webp / Gif / Avif 落地后在此追加 case
+        case ImageFormat::Gif:
+            return encode_gif(frames, opts);
+            // Webp / Avif 落地后在此追加 case
     }
     return std::string{};
 }
