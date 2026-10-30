@@ -192,12 +192,13 @@ std::string encode_jpeg(const Bitmap& bitmap, int quality) {
     }
     const int W = static_cast<int>(bitmap.width());
     const int H = static_cast<int>(bitmap.height());
-    const int ch = bitmap.channels();
     const int Wp = ((W + 7) / 8) * 8;
     const int Hp = ((H + 7) / 8) * 8;
 
     // RGB → YCbCr 平面（BT.601），补边用边缘像素。
-    std::vector<double> Y(Wp * Hp), Cb(Wp * Hp), Cr(Wp * Hp);
+    const size_t npix = static_cast<size_t>(Wp) * static_cast<size_t>(Hp);
+    std::vector<double> Y(npix), Cb(npix), Cr(npix);
+    
     for (int y = 0; y < Hp; ++y) {
         const int sy = y < H ? y : H - 1;
         for (int x = 0; x < Wp; ++x) {
@@ -209,9 +210,9 @@ std::string encode_jpeg(const Bitmap& bitmap, int quality) {
             const double b = bitmap.at(static_cast<std::uint32_t>(sx),
                                         static_cast<std::uint32_t>(sy), 2);
             const int idx = y * Wp + x;
-            Y[idx]  =  0.299 * r + 0.587 * g + 0.114 * b;
-            Cb[idx] = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0;
-            Cr[idx] =  0.5 * r - 0.418688 * g - 0.081312 * b + 128.0;
+            Y[static_cast<size_t>(idx)]  =  0.299 * r + 0.587 * g + 0.114 * b;
+            Cb[static_cast<size_t>(idx)] = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0;
+            Cr[static_cast<size_t>(idx)] =  0.5 * r - 0.418688 * g - 0.081312 * b + 128.0;
         }
     }
 

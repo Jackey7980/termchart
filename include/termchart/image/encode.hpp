@@ -5,10 +5,15 @@
 // （WebP / GIF / MP4 / AVIF）只需：① 在 ImageFormat 追加枚举值；② 实现对应的
 // encode_* 函数（返回字节流）；③ 在 encode() 里加一个 case。既有 encode_png /
 // encode_jpeg 保持不变，对外契约不动。
+//
+// 视频/动画格式（GIF / MP4 / AVIF）走多帧重载 encode(std::span<const Bitmap>)，单帧
+// 重载会退化成 1 帧调用，二者共用同一入口。
 #ifndef TERMCHART_IMAGE_ENCODE_HPP
 #define TERMCHART_IMAGE_ENCODE_HPP
 
+#include <span>
 #include <string>
+#include <vector>
 
 #include "termchart/export.hpp"
 #include "termchart/image/bitmap.hpp"
@@ -19,18 +24,33 @@ namespace termchart::image {
 enum class ImageFormat {
     Png,
     Jpeg,
-    // Webp / Gif / Mp4 / Avif 在各自编码器落地后追加
+    Mp4,  // 视频容器 ISO-BMFF；内部码流由 EncodeOptions::video_codec 选 H264/H265/AV1
+    // Webp / Gif / Avif 在各自编码器落地后追加
 };
 
-// 编码选项。目前只有 quality；后续有损/无损差异可在此扩展。
+// 视频/动画内部码流选择（自写编码器，零依赖）。
+enum class VideoCodec {
+    H264,  // 自写 baseline AVC（当前已实现 I_PCM 无损档，压缩档后续叠加）
+    H265,  // 自写 HEVC —— 后续阶段
+    AV1,   // 自写 AV1（AVIF 容器用）—— 后续阶段
+};
+
+// 编码选项。quality 用于有损格式；fps/loop/delay 用于动画；video_codec 用于视频容器。
 struct EncodeOptions {
-    int quality = 85;  // 有损格式（JPEG / WebP / MP4）质量 [1,100]；无损格式忽略。
+    int quality = 85;       // 有损格式（JPEG / WebP / MP4）质量 [1,100]；无损格式忽略。
+    int fps = 25;           // 动画/视频帧率。
+    int loop_count = 0;     // 0 = 无限循环（GIF）；单图忽略。
+    int delay_ms = 100;     // 每帧显示时长（GIF；覆盖 fps 推算）。
+    VideoCodec video_codec = VideoCodec::H264;  // MP4/AVIF 内部码流。
+    int gop = 0;            // 0 = 全 I 帧（baseline intra）；>0 时启用帧间（后续阶段）。
 };
 
-// 按 format 把位图编码成完整文件字节流。
-// 与 encode_png / encode_jpeg 保持一致：空位图返回空串；未知格式也返回空串
-// （调用方应先用 capability 判断，或依赖返回的空串判定失败）。
+// 单帧编码（PNG/JPEG/静态图）。
 TERMCHART_API std::string encode(const Bitmap& bitmap, ImageFormat format,
+                                const EncodeOptions& opts = {});
+
+// 多帧编码（动画 GIF / 视频 MP4 / AVIF）。单帧调用等价于把 frames 设为 1 张。
+TERMCHART_API std::string encode(std::span<const Bitmap> frames, ImageFormat format,
                                 const EncodeOptions& opts = {});
 
 }  // namespace termchart::image

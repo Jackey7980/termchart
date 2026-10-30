@@ -89,6 +89,7 @@ add_executable(termchart_tests
     unit/image/test_png_encode.cpp
     unit/image/test_jpeg_encode.cpp
     unit/image/test_image_export.cpp
+    unit/image/test_mp4_encode.cpp
     unit/image/test_png_decode.cpp
     unit/image/test_image_convert.cpp
     unit/image/test_ttf_font.cpp
