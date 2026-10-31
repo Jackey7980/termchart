@@ -124,7 +124,7 @@ void emit_tree(BitWriter& bw,
     const auto codes = canonical_codes(codelens);
     for (int L : codelens) {
         const int sym = clcc_symbol_for_length(L);
-        const auto& [c, ln] = clcc_codes[sym];
+        const auto& [c, ln] = clcc_codes[static_cast<std::size_t>(sym)];
         bw.put_bits(reverse_bits(c, ln), ln);
     }
 }
@@ -162,7 +162,7 @@ std::string encode_webp(std::span<const Bitmap> frames, const EncodeOptions&) {
     // R/B/A 字母表 256 全 8-bit；DIST 字母表 40，仅符号 0/1 各 1-bit。
     std::vector<int> green(280);
     for (int i = 0; i < 280; ++i) {
-        green[i] = (i < 232) ? 8 : 9;
+        green[static_cast<std::size_t>(i)] = (i < 232) ? 8 : 9;
     }
     std::vector<int> flat256(256, 8);
     std::vector<int> dist(40, 0);

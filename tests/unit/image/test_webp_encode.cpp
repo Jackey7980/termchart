@@ -82,7 +82,8 @@ Huffman build_huffman(const std::vector<int>& lengths) {
             continue;
         }
         const std::uint32_t rev = reverse_bits(codes[s].first, lengths[s]);
-        h.lut[((std::uint32_t)lengths[s] << 16) | rev] = static_cast<int>(s);
+        h.lut[(static_cast<std::uint32_t>(lengths[static_cast<std::size_t>(s)]) << 16) | rev] =
+            static_cast<int>(s);
     }
     return h;
 }
@@ -124,7 +125,7 @@ bool decode_symbol(const Huffman& h, BitReader& br, int& out_sym) {
     for (;;) {
         window |= static_cast<std::uint32_t>(br.read_bit()) << len;
         ++len;
-        auto it = h.lut.find(((std::uint32_t)len << 16) | window);
+        auto it = h.lut.find((static_cast<std::uint32_t>(len) << 16) | window);
         if (it != h.lut.end()) {
             out_sym = it->second;
             return true;
@@ -156,7 +157,7 @@ bool read_tree(BitReader& br, int alphabet_size, std::vector<int>& out_lengths) 
     }
     // 码长码本身：4 个符号（位置 0/1/8/9）长度 2。
     const Huffman clcc = build_huffman(std::vector<int>(clcc_len, clcc_len + 19));
-    out_lengths.assign(alphabet_size, 0);
+    out_lengths.assign(static_cast<std::size_t>(alphabet_size), 0);
     for (int i = 0; i < alphabet_size; ++i) {
         int sym;
         if (!decode_symbol(clcc, br, sym)) {
@@ -166,7 +167,7 @@ bool read_tree(BitReader& br, int alphabet_size, std::vector<int>& out_lengths) 
         if (sym != 0 && sym != 1 && sym != 8 && sym != 9) {
             return false;
         }
-        out_lengths[i] = sym;
+        out_lengths[static_cast<std::size_t>(i)] = sym;
     }
     return true;
 }
