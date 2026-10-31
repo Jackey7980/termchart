@@ -140,3 +140,36 @@ jobs:
             --exclude 'tests/.*' --exclude 'examples/.*' \
             --exclude 'bench/.*' --exclude 'third_party/.*' \
             --exclude 'single_include/.*' --print-summary
+
+  # 编码器认证：库内测试只过自家独立 VP8L 解码器；此作业用真实解码器（Pillow / ffprobe）
+  # 校验产出可被外部消费。webp 测试的「落盘」用例写出 tc_webp*.webp 供此处交叉校验。
+  encoder-cert:
+    name: encoder cert (PIL/ffmpeg 真实解码器)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 装真实解码器工具
+        run: |
+          pip install pillow
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: 配置
+        run: cmake --preset ninja
+      - name: 构建测试
+        run: cmake --build build/ninja --target termchart_tests -j 4
+      - name: 落盘 WebP 供外部校验
+        run: |
+          cd build/ninja/tests
+          ./termchart_tests -tc='*webp*'
+      - name: PIL / ffprobe 认证
+        run: |
+          cd build/ninja/tests
+          python -c "
+          from PIL import Image
+          for f in ['tc_webp.webp', 'tc_webp_gradient.webp', 'tc_webp_odd.webp']:
+              im = Image.open(f); im.load()
+              print('PIL OK', f, im.size, im.mode)
+          "
+          ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 tc_webp.webp
