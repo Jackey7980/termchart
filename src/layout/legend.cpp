@@ -1,6 +1,7 @@
 // legend.cpp —— 图例实现
 #include "termchart/layout/legend.hpp"
 
+#include <cmath>
 #include <cstddef>
 
 #include "internal.hpp"
@@ -103,7 +104,11 @@ void draw_legend(Sink& sink, std::span<const LegendEntry> entries, const Rect& r
             row_w += entry_width(entries[i]);
         }
         row_w = std::max(row_w - 2.0, 0.0);
-        const double start = align_start(rect.x, rect.right(), row_w, opts.halign);
+        // 行宽是字符格数（离散），先四舍五入到最近整数再传给 align_start，
+        // 避免直接截断 double 丢精度（row_w 由 entry_width 累加再减 2 得到，可能带小数）。
+        const double start = align_start(rect.x, rect.right(),
+                                         static_cast<std::size_t>(std::round(row_w)),
+                                         opts.halign);
         draw_legend_row(sink, entries, row, start, y, base);
         y += 1.0;  // 下一行向下堆叠
     }

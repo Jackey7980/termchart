@@ -125,14 +125,15 @@ std::vector<double> symlog_ticks(const SymLogScale& scale, int target) noexcept 
               out.end());
 
     // 极端跨数量级数据防爆：超量则等距抽稀到约 2×target。
-    const std::size_t cap = static_cast<std::size_t>(2 * target) + 8;
+    const std::size_t cap = static_cast<std::size_t>(target) * 2 + 8;
     if (out.size() > cap) {
         std::vector<double> thin;
         thin.reserve(cap);
         const double stride = static_cast<double>(out.size() - 1) /
                              static_cast<double>(cap - 1);
         for (std::size_t i = 0; i < cap; ++i) {
-            thin.push_back(out[static_cast<std::size_t>(std::round(i * stride))]);
+            const double pos = std::round(static_cast<double>(i) * stride);
+            thin.push_back(out[static_cast<std::size_t>(pos)]);
         }
         out = std::move(thin);
     }

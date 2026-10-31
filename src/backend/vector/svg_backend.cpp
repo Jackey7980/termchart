@@ -151,7 +151,7 @@ protected:
             std::size_t pos = 0;
             while (pos < text.text.size()) {
                 const auto dec = util::decode(text.text, pos);
-                pos = dec.consumed;
+                pos = static_cast<std::size_t>(dec.consumed);
                 const auto go = font_->glyph_outline(dec.cp, px);
                 if (go && !go->contours.empty()) {
                     for (const auto& contour : go->contours) {

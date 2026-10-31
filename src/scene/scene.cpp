@@ -64,10 +64,34 @@ Rect Scene::bounds() const noexcept {
                 add_rect(std::get<ImageOp>(command).rect);
                 break;
             }
+            case CommandKind::Curve: {
+                // 贝塞尔控制点可能落在端点之外，故连同端点一起纳入保守包围盒；
+                // 起点（from = 当前点）由前面的 MoveTo/LineTo 的 add_point 已捕获。
+                const CurveTo& c = std::get<CurveTo>(command);
+                add_point(c.ctrl1.x, c.ctrl1.y);
+                add_point(c.ctrl2.x, c.ctrl2.y);
+                add_point(c.end.x, c.end.y);
+                break;
+            }
+            // 以下指令不贡献几何（字体度量不在 IR 层算、分组/裁剪/样式/变换只改
+            // 绘制行为而非新增内容范围），故不影响包围盒。显式列出每个枚举值，
+            // 不用 default，确保扩编 CommandKind 时 -Wswitch 强制补到此处。
             case CommandKind::Text:
             case CommandKind::Fill:
             case CommandKind::Stroke:
-                // 无几何（Text 的宽度等字体度量，不在 IR 层算）。
+            case CommandKind::Group:
+            case CommandKind::PushTransform:
+            case CommandKind::PopTransform:
+            case CommandKind::Clip:
+            case CommandKind::BeginPath:
+            case CommandKind::ClosePath:
+            case CommandKind::LinearGradient:
+            case CommandKind::RadialGradient:
+            case CommandKind::GlobalAlpha:
+            case CommandKind::Dash:
+            case CommandKind::SetLineWidth:
+            case CommandKind::SetStrokeCap:
+            case CommandKind::BlendMode:
                 break;
         }
     }

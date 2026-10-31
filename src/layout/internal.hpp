@@ -23,6 +23,8 @@ inline constexpr char32_t kGridH = kDashedH;     // ┄
 inline constexpr char32_t kGridV = kDashedV;     // ┆
 
 // 把 text 按 halign 放到 [x0, x1] 区间内的起始列；超长则左对齐截断。
+// len 为字符数（离散）：调用方负责把小数宽度取整（见 legend.cpp 的 std::round），
+// 这里保持整数语义，避免把 -Wconversion 扩散到所有 .size() 调用点。
 inline double align_start(double x0, double x1, std::size_t len, HAlign align) noexcept {
     const double span = x1 - x0 + 1.0;
     if (static_cast<double>(len) >= span) {

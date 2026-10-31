@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -108,6 +109,8 @@ Census census(const scene::Scene& scene) {
             case scene::CommandKind::Stroke:
             case scene::CommandKind::Image:
                 break;
+            default: 
+                break;
         }
     }
     return c;
@@ -142,7 +145,7 @@ bool write_svg(const chart::Chart& chart, const std::string& path) {
     }
     std::ofstream out(path, std::ios::binary);
     if (!out) {
-        std::fprintf(stderr, "cannot open %s\n", path);
+        std::fprintf(stderr, "cannot open %s\n", path.c_str());
         return false;
     }
     out.write(svg->data(), static_cast<std::streamsize>(svg->size()));
@@ -180,7 +183,9 @@ bool run_timeline(ChartT& chart, int frames, double total_seconds, const std::st
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string path = "chart_scene.svg";
+    // 默认把终帧 SVG 写进系统临时目录（不污染工作树）：要落到固定位置就传
+    // `78_chart_scene out.svg`。多帧 SVG 用 `--svg-dir=DIR`。
+    std::string path = (std::filesystem::temp_directory_path() / "chart_scene.svg").string();
     std::string svg_dir;
     bool realtime = false;
     for (int i = 1; i < argc; ++i) {
