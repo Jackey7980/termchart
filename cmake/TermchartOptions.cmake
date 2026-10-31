@@ -37,6 +37,49 @@ option(TERMCHART_BUILD_GUI_TK "构建原生 Tk GUI 后端插件（可选，需 T
 # 普通桌面/CI 构建里 EMSCRIPTEN 为假，此开关无效、不产生任何目标。
 option(TERMCHART_BUILD_WASM "构建 Emscripten WASM 目标（需 emsdk；默认关）" OFF)
 
+# ── 静态分析（可选，默认关；开启后构建期自动对每个编译单元跑） ──────────
+#   工具需在 PATH（clang-tidy 随 LLVM 安装；cppcheck 独立安装）。
+#   缺工具时显式报错（fail-loud），符合项目「可选扩展缺失即报错」取向。
+option(TERMCHART_ENABLE_CLANG_TIDY "构建期用 clang-tidy 做静态分析（需 LLVM/clang-tidy）" OFF)
+option(TERMCHART_ENABLE_CPPCHECK "构建期用 cppcheck 做静态分析（需 cppcheck）" OFF)
+
+if(TERMCHART_ENABLE_CLANG_TIDY)
+    # scoop 装的 LLVM 在 <scoop>/apps/llvm/current/bin，而 current 是 junction。
+    # Windows 上 CMake 的 find_program 不跟随 junction，故先用 REAL_PATH 解析出
+    # 真实版本目录作 HINTS——无需在 PATH 硬编码具体版本号，scoop 升级（current
+    # 重指新版本）后依旧有效；若解析失败则退回普通 PATH 搜索（仍可用）。
+    set(_clang_tidy_hints "")
+    if(DEFINED ENV{USERPROFILE})
+        set(_scoop_llvm "$ENV{USERPROFILE}/scoop/apps/llvm/current/bin")
+        if(EXISTS "${_scoop_llvm}")
+            file(REAL_PATH "${_scoop_llvm}" _scoop_llvm_real)
+            list(APPEND _clang_tidy_hints "${_scoop_llvm_real}")
+        endif()
+    endif()
+    find_program(CLANG_TIDY_EXE NAMES clang-tidy clang-tidy.exe HINTS ${_clang_tidy_hints})
+    if(CLANG_TIDY_EXE)
+        message(STATUS "termchart: 启用 clang-tidy -> ${CLANG_TIDY_EXE}")
+        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+    else()
+        message(FATAL_ERROR "TERMCHART_ENABLE_CLANG_TIDY=ON 但找不到 clang-tidy，请先在 PATH 安装 LLVM")
+    endif()
+endif()
+
+if(TERMCHART_ENABLE_CPPCHECK)
+    find_program(CPPCHECK_EXE NAMES cppcheck cppcheck.exe)
+    if(CPPCHECK_EXE)
+        message(STATUS "termchart: 启用 cppcheck -> ${CPPCHECK_EXE}")
+        set(CMAKE_CXX_CPPCHECK "${CPPCHECK_EXE}"
+            --enable=warning,style,performance,portability
+            --inline-suppr
+            --suppress=missingIncludeSystem
+            --suppress=unmatchedSuppression
+            --error-exitcode=0)
+    else()
+        message(FATAL_ERROR "TERMCHART_ENABLE_CPPCHECK=ON 但找不到 cppcheck，请先在 PATH 安装 cppcheck")
+    endif()
+endif()
+
 # ── 模块开关：关掉即裁掉对应 src 目录 ─────────────────────────────────────
 #   上层模块的缺失不影响下层编译（分层规则保证单向依赖）。
 set(TERMCHART_MODULES
