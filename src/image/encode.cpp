@@ -7,6 +7,7 @@
 #include "termchart/image/jpeg_encode.hpp"
 #include "termchart/image/mp4.hpp"
 #include "termchart/image/png_encode.hpp"
+#include "termchart/image/webp_encode.hpp"
 
 namespace termchart::image {
 
@@ -28,7 +29,9 @@ std::string encode(std::span<const Bitmap> frames, ImageFormat format, const Enc
             return encode_mp4(frames, opts);
         case ImageFormat::Gif:
             return encode_gif(frames, opts);
-            // Webp / Avif 落地后在此追加 case
+        case ImageFormat::Webp:
+            return encode_webp(frames, opts);
+            // Avif 落地后在此追加 case
     }
     return std::string{};
 }

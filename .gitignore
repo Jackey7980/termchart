@@ -66,6 +66,24 @@ docs/_build/
 *.rej
 *.bak
 
+# 编码示例/测试的一次性产物：落盘供 ffmpeg / PIL 交叉校验，不入库
+# （WebP / GIF / MP4 / HEVC / H.264 等，由 tests / examples 写在工作目录）
+/tc_*.webp
+/tc_*.gif
+/tc_*.png
+/tc_*.mp4
+/tc_*.264
+/tc_*.265
+/tc_api_*.gif
+/tc_h264.*
+/tc_hevc.*
+/tc_mp4_ffprobe.mp4
+/ref.webp
+/out.webp
+/build_mp4.log
+# vendored libwebp 源码压缩包（自写 VP8L 编码器零依赖，不实际编译它）
+/libwebp-*.zip
+
 # 编辑器本地覆盖
 .clangd
 .clang-tidy-local

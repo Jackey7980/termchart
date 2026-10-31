@@ -26,7 +26,8 @@ enum class ImageFormat {
     Jpeg,
     Mp4,  // 视频容器 ISO-BMFF；内部码流由 EncodeOptions::video_codec 选 H264/H265/AV1
     Gif,  // 自写 GIF89a（median-cut 调色板 + LZW），支持多帧动画
-    // Webp / Avif 在各自编码器落地后追加
+    Webp, // 自写 VP8L lossless（零依赖），单帧无损；动画/有损后续增强
+    // Avif 在各自编码器落地后追加
 };
 
 // 视频/动画内部码流选择（自写编码器，零依赖）。
