@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **394 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **409 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -19,29 +19,29 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | io | L2 | 4 |
 | math3d | L3 | 3 |
 | math4d | L3 | 3 |
-| scale | L3 | 10 |
+| scale | L3 | 11 |
 | data | L4 | 9 |
 | scene | L4 | 6 |
-| image | L5 | 8 |
+| image | L5 | 15 |
 | raster | L6 | 9 |
 | network | L7 | 5 |
 | term | L7 | 13 |
 | document | L8 | 4 |
 | protocol | L9 | 7 |
 | canvas | L10 | 8 |
-| layout | L11 | 13 |
-| chart | L12 | 80 |
+| layout | L11 | 14 |
+| chart | L12 | 83 |
 | chart3d | L12 | 4 |
 | chart4d | L12 | 2 |
 | graph | L13 | 46 |
 | render | L14 | 5 |
-| interaction | L15 | 18 |
-| backend | L16 | 15 |
+| interaction | L15 | 19 |
+| backend | L16 | 16 |
 | dsl | L17 | 15 |
 | widget | L18 | 18 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
-| api | L21 | 5 |
+| api | L21 | 6 |
 | autoviz | L21 | 10 |
 | gui | L22 | 3 |
 
@@ -427,6 +427,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 这边是数据域的插值，互不相干。
 
 - `class CubicSpline`
+- `class PchipSpline`
 
 ### `math/linalg.hpp`
 
@@ -1087,6 +1088,20 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class Scale`
 
+### `scale/symlog.hpp`
+
+> symlog.hpp —— 对称对数比例尺（SymLog）
+>
+> 普通对数轴无法表达负数与零（它们在 log 域没有位置，只能丢弃整段数据）。
+> SymLog 在零附近保留一段「线性区」（阈值 C = linthresh），线性区之外再走对数，
+> 因此能在同一张轴上同时容纳大跨度的正负数据，且平滑穿过 0。变换：
+>
+> T(x) = sign(x) * log10(1 + |x| / C)
+>
+> 当 C → 0 时退化为纯对数；当 C → ∞ 时退化为纯线性。C 越大，零附近线性区越宽。
+
+- `class SymLogScale final : public Scale`
+
 ### `scale/ticks.hpp`
 
 > ticks.hpp —— 刻度生成
@@ -1098,6 +1113,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `TERMCHART_API std::vector<double> nice_ticks(double domain_min, double domain_max, int target = 5) noexcept`
 - `TERMCHART_API std::vector<double> ticks_for(const Scale& scale, int target = 5) noexcept`
+- `TERMCHART_API std::vector<double> symlog_ticks(const SymLogScale& scale, int target = 5) noexcept`
 
 ### `scale/time.hpp`
 
@@ -1247,8 +1263,14 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * 不抛异常；空 vector 返回空 vector。
 >
 > 另提供 EMA（指数移动平均）：O(N) 单遍递推，alpha = 2/(window+1)。
-> rolling() 本身为 O(N·window)（窗口内每步重算）；纯 SMA 的 O(N) 滑动求和
-> 作为已知优化点记入 backlog，刻意不在本文件展开。
+>
+> 2026-10-22 重写后，rolling() 全体统计量均为 **O(N)** 滑动窗口（不再每步重算整个窗口）：
+> * Mean / Sum  ：滑动和（SlidingSum，add/remove 各 O(1)）
+> * Stddev      ：Welford 加/减（数值稳定，O(N)）
+> * Min / Max   ：单调双端队列（O(N)）
+> * Median      ：有序双 multiset（O(N log W)）
+> 此前"纯 SMA 的 O(N) 滑动求和作为已知优化点"的 backlog 描述已过时——本文件现已是 O(N) 家族，
+> 旧注释保留仅作历史对照。
 
 - `enum class RollingStat : std::uint8_t`
 - `struct RollingOptions`
@@ -1291,14 +1313,19 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 > command.hpp —— Scene 的指令集（header-only）
 >
-> Scene 是**非完备图形 IR**：这里只放 vector 后端（SVG / LaTeX-TikZ）与
-> canvas 都能消费的那部分图元。**不要往里塞 canvas 才有的能力**
-> （例如渐变填充、裁剪路径、图层合成）——那些属于 canvas/（L10）。
+> Scene 是**通用 2D 矢量 IR**：收纳 SVG / LaTeX-TikZ / canvas / PDF / GUI
+> 都能消费的图元与状态指令（含路径、变换、裁剪、渐变、透明度、虚线、
+> 线宽/线帽、混合模式）。把"状态机"放进 IR，可避免在各后端重复实现。
 >
 > 指令一律用聚合体 + std::variant：
 > * variant 的 index() 就是指令类别，不需要额外的 kind 字段；
-> * 聚合体天然可 constexpr 构造、可 operator==，于是 Scene 可整体比较；
-> * 新增指令 = 往 variant 里加一个聚合体，访问者会**编译期**被逼着补全。
+> * 聚合体天然可 constexpr 构造、可 operator==，于是 Scene 可整体比较。
+>
+> 扩编约定（2026-10-26）：
+> * 新增指令一律**追加在 variant 末尾**；CommandKind 同步追加。kind_of()
+> 是 index 直映射，插在中间会把 0..8 的数值顶翻（那套值要进快照/序列化）。
+> * CommandVisitor / StatefulVisitor 对新指令提供**默认空 visit**，旧后端
+> 无需改动即可编译；要真实渲染的后端自行 override 对应 hook。
 >
 > 本文件是 header-only（见 cmake/header_only.txt），不得有同名 src 实现。
 
@@ -1311,6 +1338,23 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct TextOp`
 - `struct ImageOp`
 - `struct GroupOp`
+- `struct CurveTo`
+- `struct Transform`
+- `struct PushTransformOp`
+- `struct PopTransformOp`
+- `struct ClipOp`
+- `struct BeginPathOp`
+- `struct ClosePathOp`
+- `struct GradientStop`
+- `struct LinearGradientOp`
+- `struct RadialGradientOp`
+- `struct GlobalAlphaOp`
+- `struct DashOp`
+- `enum class StrokeCap : std::uint8_t`
+- `struct SetLineWidthOp`
+- `struct SetStrokeCapOp`
+- `enum class BlendMode : std::uint8_t`
+- `struct BlendModeOp`
 - `enum class CommandKind : std::uint8_t`
 
 ### `scene/scene.hpp`
@@ -1435,6 +1479,23 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class ImageFormat : std::uint8_t`
 
+### `image/encode.hpp`
+
+> encode.hpp —— 统一位图编码分发器（自包含编码器入口）
+>
+> 与现有 encode_png / encode_jpeg 同哲学：零外部依赖，每个编码器把 Bitmap 编码成
+> 完整文件字节流（std::string）。本文件只提供一个按格式分流的薄入口，新增格式
+> （WebP / GIF / MP4 / AVIF）只需：① 在 ImageFormat 追加枚举值；② 实现对应的
+> encode_* 函数（返回字节流）；③ 在 encode() 里加一个 case。既有 encode_png /
+> encode_jpeg 保持不变，对外契约不动。
+>
+> 视频/动画格式（GIF / MP4 / AVIF）走多帧重载 encode(std::span<const Bitmap>)，单帧
+> 重载会退化成 1 帧调用，二者共用同一入口。
+
+- `enum class ImageFormat`
+- `enum class VideoCodec`
+- `struct EncodeOptions`
+
 ### `image/field.hpp`
 
 > field.hpp —— 光栅器消费的标量强度场（FloatField）
@@ -1445,6 +1506,64 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 纯值类型（无虚函数、无堆外状态），列入 header_only。
 
 - `class FloatField`
+
+### `image/gif_encode.hpp`
+
+> gif_encode.hpp —— 最小 GIF89a 编码器（自包含 LZW，支持多帧动画）
+>
+> 零外部依赖：自带调色板量化（median-cut，≤256 色）+ GIF LZW 压缩，输出合规的
+> GIF89a 字节流，任何解码器（ffmpeg / ImageMagick / 浏览器）都能读。多帧 frames
+> 经 opts.loop_count / delay_ms 控制循环与帧间隔，单帧退化为静态图；透明通道当前
+> 忽略（输出不透明 GIF）。公开接口与 encode_png / encode_jpeg / encode_mp4 同形。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `image/h264_encode.hpp`
+
+> h264_encode.hpp —— 自写 H.264（baseline AVC）编码器
+>
+> 零依赖：自己写 NAL/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx264/ffmpeg。
+> 当前实现为 **I_PCM 档**：每个宏块直接输出原始采样（无损、无变换/量化/熵编码），
+> 用最少的码流语法把整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧内预测 +
+> 整数变换 + CAVLC 压缩档作为「高质量」第二阶段叠加，复用同一 NAL/容器骨架。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `image/hevc_encode.hpp`
+
+> hevc_encode.hpp —— 自写 HEVC（H.265, Main profile）编码器
+>
+> 零依赖：自己写 NAL/VPS/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx265/ffmpeg。
+> 当前实现与 h264_encode 同哲学的 **I_PCM 档**：每个 Coding Tree Unit 递归二分到 8x8
+> 叶，叶直接以 PCM 模式输出原始采样（无损、无变换/量化/熵编码），用最少的码流语法把
+> 整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧间预测 + 真正压缩作为第二阶段叠加，
+> 复用同一 NAL/容器骨架。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `image/jpeg_encode.hpp`
+
+> jpeg_encode.hpp —— 最小 baseline JPEG 编码器（8 位，3 通道 YCbCr 4:4:4，无隔行/无算术编码）
+>
+> 与 png_encode 同哲学：零外部依赖，自带 FDCT / 量化 / 霍夫曼，输出合规 JFIF 流，
+> 任何解码器（stb_image / Pillow / 浏览器）都能读。范围刻意最小：
+> * 顺序（sequential）baseline，非渐进（progressive）；
+> * 哈夫曼（Huffman）编码，非算术（arithmetic）编码；
+> * 3 个分量 Y/Cb/Cr，4:4:4 不子采样（最简单且不失色）；
+> * 标准量化表 + 标准 DC/AC 哈夫曼表（JPEG 规范 Annex K），按 quality 缩放。
+> 颜色：先 RGB → YCbCr（BT.601），每个 8×8 块独立编码；图像尺寸补到 8 的倍数。
+
+- `TERMCHART_API std::string encode_jpeg(const Bitmap& bitmap, int quality = 85)`
+
+### `image/mp4.hpp`
+
+> mp4.hpp —— MP4（ISO-BMFF）视频封装封装入口
+>
+> 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。把一串视频帧（Bitmap）按
+> EncodeOptions::video_codec 选内部码流编码器，再封装成可被标准播放器/ffprobe 读取的
+> MP4。当前 video_codec=H264 走自写 H.264 编码器；H265/AV1 尚未实现时返回空串。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `image/png.hpp`
 
@@ -1507,7 +1626,21 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct TtfMetrics`
 - `struct TtfGlyph`
+- `struct GlyphOutline`
 - `class TtfFont`
+
+### `image/webp_encode.hpp`
+
+> webp_encode.hpp —— 自包含 VP8L lossless WebP 编码器（零依赖）
+>
+> 与 png_encode / jpeg_encode / gif_encode 同哲学：把 Bitmap 编码成完整文件字节流，
+> 不引入任何外部依赖。当前实现 v1：
+> · 单帧无损（无变换 / 无色彩缓存 / 平铺 8-bit 霍夫曼码 + 字面量像素）；
+> · 编码后字节流逐字节可由 ffmpeg 解码（codec=webp, 子流 vp8l）。
+> 后续增强（独立任务，不阻塞 v1 正确性）：频率自适应霍夫曼、LZ77 反向引用、
+> VP8X/ANIM 多帧动画、有损 VP8。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ## raster（L6）
 
@@ -2264,6 +2397,22 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class Canvas`
 - `struct LegendEntry`
+- `struct LegendOptions`
+- `class Sink`
+
+### `layout/reference.hpp`
+
+> reference.hpp —— y 轴零线参考线 + 负区底色（SymLog 等跨零轴的视觉辅助）
+>
+> 设计：与 PlotArea 解耦——几何（inner 矩形）与映射（Scale）分开传，因此同一个
+> 实现既能服务 LinearScale，也能服务 SymLogScale（只要调用方把对应的 y_scale 传
+> 进来；PlotArea 当前只内置 LinearScale，SymLog 接线是另一件事）。
+>
+> 默认行为完全不变：这些函数只在「数据域确实含 0 / 含负数」时才落笔，且需调用方
+> 显式调用——不接就不画。零线是横向参考线（数据值 = 0 处），默认加粗（Attr::Bold）；
+> 负区底色给数据 < 0 的区域铺一层背景，便于在跨零轴上识别负数区。
+
+- `class Canvas`
 - `class Sink`
 
 ### `layout/sink.hpp`
@@ -2295,6 +2444,24 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `class Sink`
 
 ## chart（L12）
+
+### `chart/animation.hpp`
+
+> animation.hpp —— 动画的两块基本件：**配置**与**运行时状态**
+>
+> 为什么要把它们从 chart.hpp 里拆出来：
+> * `AnimationTrack` 只是"多久、多晚、怎么缓"三个数，与 Chart 无关；
+> * `AnimationState` 是这些数 + 一个累加的 elapsed，可以脱离 Chart 单独用
+> （GUI 帧循环、导出脚本里自己算进度都行）；
+> * Chart 只负责"按名字表持有这些状态"，不再自己拿着时钟做减法。
+>
+> 两套时钟口径并存且**共用同一份实现**：
+> * `Chart::tick(now)`  绝对时刻（首次 tick 即起点）——暂停/续播/跳转友好；
+> * `AnimationState::tick(dt)` 增量步进——帧循环天然拿到的是 dt。
+> Chart 内部把 `now` 差分成 dt 再喂给状态，于是两条路算出的进度逐位一致。
+
+- `struct AnimationTrack`
+- `class AnimationState`
 
 ### `chart/cartesian/area.hpp`
 
@@ -2538,7 +2705,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `layout::PlotArea make_area(std::uint32_t width, std::uint32_t height, const layout::Margin& margin, double xmin, double xmax, double ymin, double ymax, bool auto_domain, bool include_zero, std::optional<scale::Domain> y_override = std::nullopt)`
 - `void draw_legend_for(canvas::Canvas& canvas, const std::vector<Series>& series, const layout::PlotArea& area, bool show)`
 - `void draw_legend_for(layout::Sink& sink, const std::vector<Series>& series, const layout::PlotArea& area, bool show)`
-- `struct AnimationTrack`
+- `struct GroupProgress`
 - `class Chart`
 
 ### `chart/context.hpp`
@@ -2586,6 +2753,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct DrawdownOptions`
 - `class DrawdownChart final : public Chart`
+
+### `chart/financial/indicators.hpp`
+
+> indicators.hpp —— 金融技术指标（纯函数，与图表绘制解耦）
+>
+> 输入约定：收盘价序列按时间升序；所有函数输出长度与输入一致，头部不足窗口处
+> 及非有限输入处填 NaN。本模块只做数值计算，不画任何东西——叠加到 candlestick
+> 等图上的渲染由调用方负责。计算依赖 math::mean / math::stddev，未引入新依赖。
+
+- `struct BollingerBands`
+- `struct Macd`
 
 ### `chart/financial/kagi.hpp`
 
@@ -2657,9 +2835,10 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 > stream.hpp —— 流向图（ThemeRiver 语义）
 >
-> 上层语义包装，转发 `chart/cartesian/streamgraph.hpp`（`StreamgraphChart` 已落地，
-> 属 cartesian 23/23 之一）。本文件在 streamgraph 落地前曾自给堆叠算法（各列按占比
-> 从基线向另一侧堆叠 █），现已改回纯转发。布局不依赖 graph/。
+> 规格里本文件是"转发 cartesian/streamgraph"的同层语义包装；但
+> cartesian/streamgraph 属另一工作包且尚未落地，为不让本包空转，
+> 这里先自给堆叠算法（各列按占比从基线向另一侧堆叠 █），待
+> cartesian/streamgraph 落地后可改回纯转发。布局不依赖 graph/。
 
 - `struct StreamOptions`
 - `class StreamChart final : public Chart`
@@ -2999,6 +3178,27 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > AutoViz 路由、CLI --help、诊断都靠它，不许各表口径不一。
 
 - `class ChartRegistry`
+
+### `chart/scene_animation.hpp`
+
+> scene_animation.hpp —— 动画**后处理拦截器**：按进度改写一份已经生成的 Scene
+>
+> 两代做法，这一代是后者：
+> 1. 源端（第一代）：`LineChart::to_scene` 里读 `progress_of`，边生成边截断。
+> 缺点是"动画"散在每个图种的绘制代码里——加一个图种就要重写一遍，且
+> Scene 无法缓存（同一份数据每个进度都要重新生成整张图，轴/刻度/文本全重算）。
+> 2. 后处理（本文件）：`to_scene` 只出**完整几何**，进度由这里统一施加。
+> 一份基准 Scene 可以反复生成多帧，动画逻辑只有一个实现点。
+>
+> 纯几何改写，Scene 里没有数据语义，所以只认两条通用不变式：
+> * **组内才是数据**：轴/网格/标题/图例都在 GroupOp 之外，天然不动；
+> * **柱的基线是组内共享的那条边**：垂直柱从它长出去。
+>
+> 代价也要写明：截断发生在**屏幕空间**（Scene 只有格坐标），非线性比例尺下
+> "等比例揭开"与在数据坐标插值的结果会差一点点。视觉上是擦除，不是重投影，
+> 对入场动画足够；要严格的按数据插值，仍可用源端那条路（draw）。
+
+- `struct SceneAnimationOptions`
 
 ### `chart/scene_sink.hpp`
 
@@ -4064,6 +4264,28 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct CrosshairOptions`
 - `class Crosshair`
 
+### `interaction/data_zoom.hpp`
+
+> data_zoom.hpp —— 数据轴范围滑块（DataZoom，纯几何 1D 组件）
+>
+> 终端图里"缩略窗口滑块"的本质：在数据轴 [data_min, data_max] 上开一个可见窗口
+> [window_min, window_max]，并在一条屏幕"轨道"（Rect）上把它画成可拖拽的手柄盒。
+> 用户拖左/右端点改窗口宽度、拖窗体内平移窗口；本类只吃几何量，不碰终端、不碰
+> 渲染、不认识图表类型，依赖 L0 的 Point/Rect，与 zoom/pan/brush 同族——
+> 可在无终端的单测里完整驱动，GUI/TUI 共用。
+>
+> 谁把窗口接到图上：调用方拿到 window_min()/window_max() 后，去改对应比例尺的
+> domain（或 interaction::Viewport 的可见矩形）；本类不替你改任何下游状态。
+>
+> 不变量（构造后与每次状态变更后都维持）：
+> * 窗口始终完全落在数据界内：data_min <= window_min <= window_max <= data_max；
+> * 窗口跨度 >= min_window（数据量纲），且恒 <= 数据界跨度；
+> * 退化输入（数据界零跨度 / NaN·Inf / 轨道零长度）明确不改状态或取恒等值。
+
+- `enum class ZoomAxis : std::uint8_t`
+- `struct DataZoomOptions`
+- `class DataZoom`
+
 ### `interaction/detail/overlay_cells.hpp`
 
 > overlay_cells.hpp —— 覆盖层的"改写格簿记"共享实现（interaction 模块私有 detail）
@@ -4435,6 +4657,30 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct VectorOptions`
 - `class VectorBackend : public Backend`
 
+### `backend/vector/eps_backend.hpp`
+
+> backend/vector/eps_backend.hpp —— Scene → EPS（PostScript 子集，EPSF-1.2）
+>
+> 设计目标：与 svg_backend / pdf_backend 同款接口形态（Options + render + bytes()/str()）。
+> 范围：
+> * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
+> TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）/ ArcOp（以折线逼近）；
+> * 真彩 RGB（颜色类型 / PostScript rg/RG）；
+> * 单页（多页留给后续切片）。
+>
+> 故意不写 / 未做（与 pdf_backend 一致）：
+> * 圆弧（ArcOp 以折线逼近，非原生圆弧算子）；贝塞尔（未做）；
+> * 位图嵌入（ImageOp 落白占位矩形，未内嵌位图）；
+> * 透明度 / 混合模式；字体嵌入（用标准字体零成本，但 ASCII only）。
+>
+> 实现说明：EPS 是 PostScript 子集，而 PDF 的内容流算子（M/L/re/f/S/B/rg/RG/w/
+> BT/Tf/Td/Tj/ET/q/Q）在 PostScript 里同样有效。因此本后端几乎逐行镜像 pdf_backend，
+> 只是去掉 xref / 对象表、改为 %!PS-Adobe 头 + %%BoundingBox 包裹。坐标系同样
+> 翻转（Scene y 向下 → PostScript y 向上 = height_pt_ - y）。
+
+- `struct EpsOptions`
+- `class EpsBackend final : public VectorBackend`
+
 ### `backend/vector/latex_backend.hpp`
 
 > backend/vector/latex_backend.hpp —— CellBuffer → LaTeX（TikZ）
@@ -4466,17 +4712,18 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
 > TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）；
 > * 真彩 RGB（颜色类型 / PDF Color Operators rg/RG）；
-> * 内嵌 PNG（走 image::Bitmap → encode_png → /Filter /FlateDecode）；
 > * 单页（多页留给后续切片，初始只支持 1 页）；
 > * 文本流：仅 BaseFont / Helvetica（PDF 14 标准字体之一，零嵌入）。
 >
-> 故意不写：
-> * 圆弧 / 贝塞尔（PDF 支持但与 Scene 圆弧表示不一致，留 TODO）；
+> 故意不写 / 未做：
+> * 圆弧（ArcOp 以折线逼近，非原生圆弧算子）；贝塞尔（未做）；
+> * 位图嵌入（ImageOp 落 1×1 白占位 XObject，未内嵌 PNG）；
 > * 透明度 / 混合模式；
 > * 字体嵌入（用标准字体零成本，但 ASCII only）。
 >
 > 输出：完整 PDF 字节流（%PDF-1.4 + objects + xref + trailer），可在浏览器/Acrobat 打开。
 
+- `class TtfFont`
 - `struct PdfOptions`
 - `class PdfBackend final : public VectorBackend`
 
@@ -5249,6 +5496,16 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 自动探测会让同一段代码在 CI/headless 与真终端里产出不同尺寸，测试和文档都没法
 > 复现；要自适应请显式传 `opts.width(height_of_terminal)`（另见 CODEBUDDY.md 坑 11：
 > 画布大于可视区会折行 + 滚动，图像错位）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `api/export_image.hpp`
+
+> export_image.hpp —— 位图导出高层入口（chart → 文件）
+>
+> 这是「把一张图存成文件」的统一门面：编码（image::encode）+ 写盘（api::write_to）
+> 两步合一。chart / 应用层只调这一个函数即可，不必关心各编码器细节。所有格式经同一
+> ImageFormat 枚举选择，避免散落一堆 save_png / save_jpeg 游离函数。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
