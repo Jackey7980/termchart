@@ -18,6 +18,16 @@
   `pdf_backend` 的 `StatefulVisitor` 遍历（PostScript 与 PDF 内容流算子同源，去掉 xref/对象表即可）。
   填补此前"仅 PNG/BMP 编码、无 EPS"的矢量导出缺口（PDF/SVG 已有）。4 个单测（`test_eps_backend.cpp`，
   头/尾/路径算子/填充色）全过；全量 1327 用例 0 失败。
+- [x] **自包含 baseline JPEG 编码器**（2026-10-28）：`image/jpeg_encode` 零依赖实现
+  FDCT + 标准量化表(按 quality 缩放) + 标准 Huffman（亮度/色度各 DC/AC）+ 之字序 + 0xFF 填充，
+  输出合规 JFIF（SOI/APP0/DQT/SOF0/DHT/SOS/EOI）。`examples/83_encode_jpeg.cpp` 走真链路
+  SceneBuilder→SceneRenderer→Bitmap→encode_jpeg；`test_jpeg_encode.cpp` 校验标记结构 + 纯色 Q100
+  round-trip（(214,40,41) vs (214,39,40)）。修复 SOF0 段长少 2 字节、FDCT 的 DC 项 C(u) 重复归一化两处真 bug。
+- [x] **自包含 VP8L lossless WebP 编码器**（2026-10-28）：`image/webp_encode` 零依赖实现 RIFF/WEBP/VP8L
+  容器 + 5 棵 canonical Huffman（GREEN 280 / R·B·A 256 / DIST 40），码长经码长码发射、码字按位反转对齐
+  libwebp/ffmpeg/PIL 解码；逐像素 G,R,B,A 字面量（无变换/无色彩缓存/无 LZ77，v1 最稳形态）。接进统一分发器
+  `encode(ImageFormat::Webp)`；`examples/85_webp_lossless.cpp` + `test_webp_encode.cpp`（9 用例/91 断言，含
+  独立 VP8L 解码器逐字节回环 + ffmpeg/PIL 落盘校验）。修复 meta-Huffman 标志位、RIFF 奇长度 pad 两处真坑。
 - [x] **examples 补齐到规格**（2026-10-13）：规格表 01–54 全部落地并进 ctest（`ctest` 73/73），无缺口。
 - [x] **具名头缺口重数**（2026-10-13）：`capability_matrix` 第五节已按实测 **333 头 / 282 实现** 刷新，缺口改为"约 26–28 个"。
 - [x] **fuzz 目标**：`fuzz_mermaid` / `fuzz_dsl_lexer` 早已建好并进 ctest（backlog 该条基于过期快照）——实存 8 个 fuzz 目标全绿。
