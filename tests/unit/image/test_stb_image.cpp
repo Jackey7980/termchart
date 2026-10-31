@@ -33,8 +33,10 @@ using namespace termchart;
 using namespace termchart::image;
 
 #ifndef TERMCHART_HAVE_STB_IMAGE
-TEST_CASE("image/stb: 未启用 stb 时 JPG/GIF/WebP 如实 Unsupported") {
-    // 仅给魔数、不是合法图像：识别得出格式但无解码器 → Unsupported。
+TEST_CASE("image/stb: 未启用 stb 时 JPG/GIF 如实 Unsupported") {
+    // 仅给魔数、不是合法图像：识别得出格式但无解码器（JPEG/GIF 仍依赖可选 stb）
+    // → Unsupported。WebP 现已原生零依赖解码，不在此列（其损坏契约由
+    // test_webp_decode 覆盖）。
     const std::vector<std::uint8_t> jpeg = {0xFF, 0xD8, 0xFF, 0x00};
     const auto rj = decode_image(jpeg.data(), jpeg.size());
     CHECK_FALSE(rj.has_value());
@@ -44,12 +46,6 @@ TEST_CASE("image/stb: 未启用 stb 时 JPG/GIF/WebP 如实 Unsupported") {
     const auto rg = decode_image(gif.data(), gif.size());
     CHECK_FALSE(rg.has_value());
     CHECK(rg.error() == ErrorCode::Unsupported);
-
-    const std::vector<std::uint8_t> webp = {'R', 'I', 'F', 'F', 0, 0, 0, 0,
-                                            'W', 'E', 'B', 'P'};
-    const auto rw = decode_image(webp.data(), webp.size());
-    CHECK_FALSE(rw.has_value());
-    CHECK(rw.error() == ErrorCode::Unsupported);
 }
 #endif
 

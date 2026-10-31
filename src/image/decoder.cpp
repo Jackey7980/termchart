@@ -7,6 +7,7 @@
 
 #include "termchart/image/bmp.hpp"
 #include "termchart/image/png.hpp"
+#include "termchart/image/webp_decode.hpp"
 
 #ifdef TERMCHART_HAVE_STB_IMAGE
 // stb_image 是单头库：只在一个 TU 里定义 STB_IMAGE_IMPLEMENTATION 才生成实现。
@@ -44,42 +45,42 @@ Result<Bitmap> decode_stb(const std::uint8_t* data, std::size_t size) {
 
 }  // namespace
 
-ImageFormat sniff_image_format(const std::uint8_t* data, std::size_t size) noexcept {
+DetectedFormat sniff_image_format(const std::uint8_t* data, std::size_t size) noexcept {
     if (data == nullptr || size < 4) {
-        return ImageFormat::Unknown;
+        return DetectedFormat::Unknown;
     }
     if (matches(data, size, "\x89PNG\r\n\x1a\n", 8)) {
-        return ImageFormat::Png;
+        return DetectedFormat::Png;
     }
     if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
-        return ImageFormat::Jpeg;
+        return DetectedFormat::Jpeg;
     }
     if (matches(data, size, "GIF8", 4)) {
-        return ImageFormat::Gif;
+        return DetectedFormat::Gif;
     }
     if (matches(data, size, "BM", 2)) {
-        return ImageFormat::Bmp;
+        return DetectedFormat::Bmp;
     }
     if (matches(data, size, "RIFF", 4) && size >= 12 &&
         std::memcmp(data + 8, "WEBP", 4) == 0) {
-        return ImageFormat::WebP;
+        return DetectedFormat::WebP;
     }
-    return ImageFormat::Unknown;
+    return DetectedFormat::Unknown;
 }
 
-const char* image_format_name(ImageFormat format) noexcept {
+const char* image_format_name(DetectedFormat format) noexcept {
     switch (format) {
-        case ImageFormat::Unknown:
+        case DetectedFormat::Unknown:
             return "unknown";
-        case ImageFormat::Png:
+        case DetectedFormat::Png:
             return "png";
-        case ImageFormat::Jpeg:
+        case DetectedFormat::Jpeg:
             return "jpeg";
-        case ImageFormat::Gif:
+        case DetectedFormat::Gif:
             return "gif";
-        case ImageFormat::Bmp:
+        case DetectedFormat::Bmp:
             return "bmp";
-        case ImageFormat::WebP:
+        case DetectedFormat::WebP:
             return "webp";
     }
     return "unknown";
@@ -87,17 +88,30 @@ const char* image_format_name(ImageFormat format) noexcept {
 
 Result<Bitmap> decode_image(const std::uint8_t* data, std::size_t size) {
     switch (sniff_image_format(data, size)) {
-        case ImageFormat::Png:
+        case DetectedFormat::Png:
             return decode_png(data, size);
-        case ImageFormat::Bmp:
+        case DetectedFormat::Bmp:
             return decode_bmp(data, size);
+        case DetectedFormat::WebP: {
+            // 原生零依赖解码器优先（覆盖本库编码器产出的无损字面量流）；
+            // 含变换的外部 WebP 回落到 stb（若启用），否则如实 Unsupported。
+            auto r = decode_webp(data, size);
+            if (r.has_value()) {
+                return r;
+            }
 #ifdef TERMCHART_HAVE_STB_IMAGE
-        case ImageFormat::Jpeg:
-        case ImageFormat::Gif:
-        case ImageFormat::WebP:
+            if (r.error() == ErrorCode::Unsupported) {
+                return decode_stb(data, size);
+            }
+#endif
+            return r;
+        }
+#ifdef TERMCHART_HAVE_STB_IMAGE
+        case DetectedFormat::Jpeg:
+        case DetectedFormat::Gif:
             return decode_stb(data, size);
 #endif
-        case ImageFormat::Unknown:
+        case DetectedFormat::Unknown:
             return Unexpected<ErrorCode>(ErrorCode::ParseError);
         default:
             // 识别得出格式但没有解码器：如实说 Unsupported，不做"猜着解"。

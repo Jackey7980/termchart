@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **409 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **410 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -22,7 +22,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | scale | L3 | 11 |
 | data | L4 | 9 |
 | scene | L4 | 6 |
-| image | L5 | 15 |
+| image | L5 | 16 |
 | raster | L6 | 9 |
 | network | L7 | 5 |
 | term | L7 | 13 |
@@ -1477,7 +1477,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > `ErrorCode::Unsupported`，不做"猜着解"。解码器注册表等到第四种格式落地再引入
 > （与 raster/chart 同构），现在引入只会是空壳。
 
-- `enum class ImageFormat : std::uint8_t`
+- `enum class DetectedFormat : std::uint8_t`
 
 ### `image/encode.hpp`
 
@@ -1628,6 +1628,10 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct TtfGlyph`
 - `struct GlyphOutline`
 - `class TtfFont`
+
+### `image/webp_decode.hpp`
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `image/webp_encode.hpp`
 

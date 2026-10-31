@@ -21,7 +21,7 @@
 
 namespace termchart::image {
 
-enum class ImageFormat : std::uint8_t {
+enum class DetectedFormat : std::uint8_t {
     Unknown = 0,
     Png,
     Jpeg,
@@ -31,10 +31,10 @@ enum class ImageFormat : std::uint8_t {
 };
 
 // 只看魔数（不看扩展名）。数据不足或对不上任何魔数返回 Unknown。
-[[nodiscard]] TERMCHART_API ImageFormat sniff_image_format(const std::uint8_t* data,
+[[nodiscard]] TERMCHART_API DetectedFormat sniff_image_format(const std::uint8_t* data,
                                                            std::size_t size) noexcept;
 
-[[nodiscard]] TERMCHART_API const char* image_format_name(ImageFormat format) noexcept;
+[[nodiscard]] TERMCHART_API const char* image_format_name(DetectedFormat format) noexcept;
 
 // 识别 + 解码。识别不出返回 `ErrorCode::ParseError`；识别出但无解码器返回
 // `ErrorCode::Unsupported`。
