@@ -134,15 +134,15 @@ void write_amplitude(BitWriter& bw, int val, int cat) {
     }
 }
 
-// 浮点 FDCT（8×8，可分离的两重 1D DCT）。
+// 浮点 FDCT（8×8，可分离两重 1D DCT-II）。c[u][x] 只放 cos 核，归一化因子
+// C(u)=（u==0?1/√2:1）与 2/N=0.25 拆成每维 C(u)*0.5，避免 DC 项被重复归一化。
 void fdct_block(const double in[64], double out[64]) {
     static double c[8][8];
     static bool init = false;
     if (!init) {
         for (int u = 0; u < 8; ++u)
             for (int x = 0; x < 8; ++x)
-                c[u][x] = (u == 0 ? 0.7071067811865476 : 1.0) *
-                          std::cos((2 * x + 1) * u * 3.14159265358979323846 / 16.0);
+                c[u][x] = std::cos((2 * x + 1) * u * 3.14159265358979323846 / 16.0);
         init = true;
     }
     double tmp[64];
@@ -150,13 +150,15 @@ void fdct_block(const double in[64], double out[64]) {
         for (int u = 0; u < 8; ++u) {
             double s = 0;
             for (int x = 0; x < 8; ++x) s += in[y * 8 + x] * c[u][x];
-            tmp[y * 8 + u] = s * 0.5 * (u == 0 ? 0.7071067811865476 : 1.0);
+            const double cu = (u == 0) ? 0.7071067811865476 : 1.0;
+            tmp[y * 8 + u] = s * 0.5 * cu;
         }
     for (int u = 0; u < 8; ++u)
         for (int v = 0; v < 8; ++v) {
             double s = 0;
             for (int y = 0; y < 8; ++y) s += tmp[y * 8 + u] * c[v][y];
-            out[u * 8 + v] = s * 0.5 * (v == 0 ? 0.7071067811865476 : 1.0);
+            const double cv = (v == 0) ? 0.7071067811865476 : 1.0;
+            out[u * 8 + v] = s * 0.5 * cv;
         }
 }
 
@@ -244,8 +246,8 @@ std::string encode_jpeg(const Bitmap& bitmap, int quality) {
     };
     emit_dqt(qt.lum_z, 0);
     emit_dqt(qt.chrom_z, 1);
-    // SOF0
-    emit_marker(0xC0); emit_word(2 + 1 + 2 + 1 + 3 * 3);
+    // SOF0（Lp 含 2 字节长度域本身：payload 15 + 2 = 17）
+    emit_marker(0xC0); emit_word(2 + 1 + 2 + 1 + 3 * 3 + 2);
     emit_byte(8); emit_word(H); emit_word(W); emit_byte(3);
     emit_byte(1); emit_byte(0x11); emit_byte(0);  // Y: 4:4:4, qtbl 0
     emit_byte(2); emit_byte(0x11); emit_byte(1);  // Cb

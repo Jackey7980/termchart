@@ -81,7 +81,8 @@ foreach(example
         78_chart_scene
         82_autoviz_csv
         83_encode_jpeg
-        84_hevc_video)
+        84_hevc_video
+        85_webp_lossless)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE termchart)
     termchart_set_warnings(${example})
@@ -168,7 +169,8 @@ if(TERMCHART_BUILD_TESTS)
                     77_chart_animation
                     78_chart_scene
                     82_autoviz_csv
-                    84_hevc_video)
+                    84_hevc_video
+                    85_webp_lossless)
         add_test(NAME example_${example} COMMAND ${example})
     endforeach()
 endif()
