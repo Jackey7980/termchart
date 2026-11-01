@@ -74,6 +74,10 @@ docs/_build/
 /tc_*.mp4
 /tc_*.264
 /tc_*.265
+# 示例跑出来的位图产物（README 用的是 docs/images/ 下压缩过的副本）
+/sugiyama_*.png
+/city_plot.png
+/world_map.png
 /tc_api_*.gif
 /tc_h264.*
 /tc_hevc.*

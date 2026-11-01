@@ -11,16 +11,31 @@
 - **注册表式扩展点**：光栅器、图表类型、比例尺都可注册自定义实现。
 - **护栏齐全**：分层规则、头文件自洽性、生成物一致性、每头独立编译、golden 快照、fuzz 入口、性能基线。
 
+<p align="center">
+  <img src="docs/images/world_map.png" width="49%" alt="世界地图 choropleth（自带 colorbar）">
+  <img src="docs/images/sugiyama_dense.png" width="49%" alt="Sugiyama 分层布局，高亮最短路径">
+</p>
+<p align="center">
+  <img src="docs/images/city_plot.png" width="32%" alt="城市路网图">
+  <img src="docs/images/spatiotemporal.png" width="32%" alt="时空网络演化">
+</p>
+
+> 上面四张都是**本仓库示例的真实产出**（`examples/67_world_map`、`60_dense_sugiyama`、
+> `69_city_plot`、`81_spatiotemporal_network_demo`），位图由库自身的 PNG 编码器导出。
+
 ## 当前状态（诚实口径）
 
 | 项 | 数值 |
 | --- | --- |
 | 模块 | 规格定义 22 个（L0–L21）+ 阶段 8 **GUI 平行栈 `termchart_gui`**；**L0–L22 与 `api` 全部落地**，`dsl` / `widget` / `plugin` / `app` / `gui` 均已实现 |
-| 代码量 | `include/` 共 **434** 个头（`termchart` 399 + `termchart_gui` 35）、`src/**/*.cpp` **335** 个；生成代码 0 行混入源树 |
-| 测试 | doctest **1053 用例 / 194246 断言**全绿（见 `docs/reference/capability_matrix.md`）；`ctest` **5 套件 + 81 示例 + bench 冒烟**；golden 快照 **14** 份；另有 fuzz 目标的自检（`ctest --preset fuzz`） |
-| 护栏 | `check_all` 通过：分层规则 + include↔src 自洽 + 生成物无 diff + **每头独立编译**（434 头）；全量重编 **0 warning**（vendored `doctest` 按 SYSTEM include） |
+| 代码量 | `include/` 共 **450** 个头（`termchart` 415 + `termchart_gui` 35）、`src/**/*.cpp` **347** 个；生成代码 0 行混入源树 |
+| 测试 | doctest **1387 用例 / 233431 断言**全绿（见 `docs/reference/capability_matrix.md`）；`ctest` **88 套件**（含 84 个示例冒烟 + bench 冒烟）；golden 快照 **14** 份；另有 fuzz 目标的自检（`ctest --preset fuzz`） |
+| 护栏 | `check_all` 通过：分层规则 + include↔src 自洽 + 生成物无 diff + **每头独立编译**（450 头）；全量重编 **0 warning**（`-Wall -Wextra -Wshadow -Wconversion` + `-Werror`） |
+| 编码器 | 位图侧：PNG / JPEG / **WebP(VP8L 无损)** / GIF(多帧+循环) 全部**自包含零依赖**；视频侧：MP4 容器 + **H.264 / H.265**（I_PCM 无损档）自写编码器 |
+| 解析器 | Mermaid（flow/sequence/class/state）、Graphviz DOT、PlantUML、D2、CSV —— 统一收敛到 `AstGraph` / `AstSequence`，AST 查找 O(1) |
+| 主题 | 调色板下沉到 `color/`（L2），**图表与控件共用一份**；`chart::set_default_palette()` 装一张即全局换肤 |
 | 基准 | `bench/` 2 条：`layout_layered` ≈ 线性、`layout_force` ≈ 平方（已知边界，大图需 Barnes-Hut） |
-| 已知边界 | PNG 解码不支持 Adam7 隔行；16 位样本取高字节；图表统一经 `to_scene` 产出 `Scene` IR（`to_scene` 大迁移已覆盖主要图种） |
+| 已知边界 | PNG 解码不支持 Adam7 隔行；16 位样本取高字节；图表统一经 `to_scene` 产出 `Scene` IR（`to_scene` 大迁移已覆盖主要图种）；**GUI 栈（`termchart_gui/widget_tree/`）的渲染器仍有 ~80 处硬编码颜色**（`combo` / `hsi_kline` / `candlestick` / `polar` / `gauge` 等）——调色板已下沉到 `color/` 且 `chart` 侧已接上，GUI 侧改用调色板列入 v1.1（换肤在 GUI 里目前还做不到） |
 
 精确的能力矩阵、示例索引与规格差距见 [`docs/reference/capability_matrix.md`](docs/reference/capability_matrix.md)；
 进度与阶段出口条件见 [`ROADMAP.md`](ROADMAP.md)；规格（做成什么样）见 [`结构.md`](结构.md)。

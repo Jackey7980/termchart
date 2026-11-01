@@ -9,14 +9,67 @@
 > 为准；某个 tag 的具体内容也可直接 `git show <tag>` 查看（`v0.8.0` / `v0.8.1` 的
 > 说明写在 tag 上）。
 
-## [Unreleased]
+## [1.0.0] - 2026-11-01
+
+首个语义化稳定版：核心稳定、可用、值得信任。本版把"图像/视频编码、DSL 解析、Python 绑定、
+主题体系"四块补齐到可发布状态，并修掉若干真实缺陷（含 2 个会让产物静默降级/崩溃的 bug）。
+
+### Breaking
+
+- **`termchart::image::ImageFormat`（解码侧）更名为 `DetectedFormat`**：此前 `image` 命名空间下
+  同时存在两个 `ImageFormat`（编码侧的导出格式集 / 解码侧的嗅探格式集），底层类型还不一致。
+  普通构建没有 TU 同时 include 两者所以不报错，但**单头合并产物**会把两者拼进同一 TU，直接
+  "multiple definition" 编译失败。解码侧重命名为 `DetectedFormat`；编码侧 `ImageFormat`
+  （`encode()` / `save_image()` 的公共 API）**保持不变**。
 
 ### Added
 
 - **图表统一 `to_scene` 大迁移 + GeoMap 收尾**：`chart/` 各图种统一产出 `scene::Scene` IR（cartesian 核心 7 + 剩余 14、indicator 5、text 4、statistical 11、flow 2、polar 8、geo 5、hierarchical 6、financial 6 等，共 73 个图表头已接 `to_scene`）；`chart/geo`（GeoMap）补齐分级图例/色标、命中测试、离线地图数据分发、TopoJSON 缝合离线回归；`backend` 加 SVG/PDF 文字轮廓化 `text-to-outline`。
 
+- **自包含 VP8L 无损 WebP 编码器**（零外部依赖）：`image/webp_encode` 按 WebP Lossless
+  Bitstream 规范实现（RIFF/WEBP/VP8L 容器 + 5 棵 canonical Huffman），接进统一分发器
+  `encode(ImageFormat::Webp)`；示例 `85_webp_lossless` + 单测（9 用例 / 91 断言，含独立最小
+  VP8L 解码器逐字节回环）。
+- **自包含 VP8L WebP 解码器**：WebP 读取不再强制依赖可选的 stb_image。
+- **H.264 / H.265 自写编码器 + MP4 封装**：视频侧零外部依赖（不调 libavformat/ffmpeg）。
+- **GIF 多帧 + 循环**：NETSCAPE2.0 loop 扩展、逐帧延时、median-cut 调色板 + LZW。
+- **DSL 解析补齐**：Mermaid Sequence 的 `loop`/`alt`/`else` 等逻辑块（标签、嵌套深度、分支、
+  每条消息的归属全部进 AST）；Graphviz DOT 的 `node [...]` / `edge [...]` 全局默认属性
+  （对所有节点/边生效，显式属性优先）；D2 的 `style: {...}` / `vars:` / `classes:` 块
+  （不再整块丢弃，也不再造出名为 `classes` 的幽灵节点）；PlantUML 类成员的可见性 / 名称 /
+  参数表 / 返回类型结构化（原文字段保持原样原序）。
+- **AST 查找 O(1)**：`AstGraph` 增加 key→下标索引（`nodes` 仍是唯一真源，索引只是加速器，
+  外部直接改 `nodes` 时自动重建）。
+- **CSV 流式解析**：`parse_csv_stream(istream&, …, CsvRowSink&)` 内存 O(一行)；`sniff_columns`
+  改为只读样本行推断类型，不再为推断 100 行把整个文件读进内存。
+- **Python 绑定可装可导入**：`cmake.source-dir` 修正为仓库根、补 `install(TARGETS …)` 与
+  `.pyi` 存根安装（此前模块能编出来但进不了 wheel，`pip install` 后直接 ImportError）；
+  wheel 不再背上 200MB 的 C++ SDK；类型存根与模块实际导出完全一致。
+- **全局主题打通**：调色板下沉到 `color/`（L2）——此前它住在 `widget/`（L18），而分层规则
+  "只能 include 层号 ≤ 自己模块"使得 `chart`（L12）根本引用不到，"全局主题"实际分裂成两套
+  配色。现 `chart` 与 `widget` 共用一份色板，`chart::set_default_palette()` 装一张即全局换肤
+  （缺省仍走历史 ansi16 色号，图表金标输出零变化）。
+- **CI 认证**：新增 `encoder-cert` 作业，用真实解码器（Pillow / ffprobe）校验 WebP 产出，
+  不再只靠库内自测。
+
 ### Fixed
 
+- **`VideoCodec::AV1` 静默产出 H.264 的 MP4**（真 bug）：旧实现用 `is_hevc = (codec == H265)`
+  二分，AV1 落进 H.264 分支——调用方请求 AV1，拿到的是货真价实的 H.264 文件且不报错。
+  现在 `is_video_codec_supported()` 可预检，`encode_mp4` 对未实现码流显式失败，
+  `save_image` 返回可区分的 `ErrorCode::Unsupported`。
+- **CSV 流式解析的无限循环**（真 bug）：`read_field_stream` 读到分隔符只 peek 不消费，而
+  `read_row_stream` 未跳过它 → 下一轮又 peek 到同一分隔符 → 空字段 → 又是 Delimiter →
+  死循环，`fields` 无限增长直至 `std::bad_alloc`。任何含分隔符的输入都会触发。
+- **全量编译告警归零**：`-Wall -Wextra -Wshadow -Wconversion` 下 13 处 sign-conversion、
+  `-Wold-style-cast`、`-Woverloaded-virtual`（`BoundsVisitor`/`CountingVisitor` 只 override
+  部分 `visit`，隐藏了基类其余 14 个重载）、`-Wmissing-field-initializers`、
+  `-Wformat-nonliteral` 全部清零（clean 全量重编 0 warning / 0 error）。
+- **guardrails 两红**：`check_header_only` 的"缺失同名实现 + 孤儿实现"双重违规（`mp4_mux.cpp`
+  更名 `mp4.cpp` 与 `mp4.hpp` 配对）、WASM 入口 TU 走白名单豁免；`gen_single_header --check`
+  由不一致转一致（单头产物按全部头改动重生成）。
+- **PDF 后端**：未设色时原先写出非法的 `"rg g"`，改为落黑色；路径按描边色画线、不填充，与
+  SVG / `scene_renderer` 约定一致。
 - **GUI 渲染库 `ChartGeom` 不变式越界崩溃**：`termchart_gui` 的 `lerp_geom`→`recompute_tangents` 在动画收敛时对 `g.xs`/`g.ly` 越界下标（`vector<double>::operator[]` abort）。根因 `GaugeRenderer`/`PolarRenderer::compute_geom` 只设 `n=1` 却留空 `xs`/`ly`，破坏“长度 == n”不变式，且 `lerp_geom` 守卫漏校验 `ly.size()` 与 `xs.size()==n`；天气 demo 联网必崩。修复：`recompute_tangents` 按 `min(n, xs, ly)` 收敛、`lerp_geom` 强制不变式校验（不齐即吸附目标）、`gauge`/`polar` 的 `compute_geom` 补齐 `xs`/`ly` 到 `n`；新增 `--dump`/`--simulate`/`--feed` 诊断开关；gdb 复现并验证真实联网交互不崩。
 
 ## [0.9.0] - 2026-10-24
@@ -25,7 +78,6 @@
 「Fixed」第一条），不含新的图表类型。下列「阶段」条目是 v0.1–v0.8 的能力汇总——
 它们随首个 `v0.8.0` tag 已经发布，此处一并留档便于查阅。
 
-### Added
 
 - **AutoViz（L21）**（2026-10-16 → 10-24）：`api::auto_plot` 一行出图——列画像
   （数值 / 时间 / 类别 / 文本、量纲标记、桶宽推断）→ 候选管道（时间折线、类别折线、

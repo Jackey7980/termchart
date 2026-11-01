@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(termchart
-        VERSION 0.9.0
+        VERSION 1.0.0
         DESCRIPTION "Modern C++20 terminal charting library with zero mandatory dependencies"
         LANGUAGES CXX)
 
