@@ -120,7 +120,7 @@ TEST_CASE("dsl/plantuml: 关系标签与多重度") {
     CHECK(to_mult->value == "*");
 }
 
-TEST_CASE("dsl/plantuml: 类体成员原样保留、不解析语法") {
+TEST_CASE("dsl/plantuml: 类体成员原样保留，并补出结构化字段") {
     const std::string source = R"(@startuml
         class A {
             + int x
@@ -135,6 +135,49 @@ TEST_CASE("dsl/plantuml: 类体成员原样保留、不解析语法") {
     REQUIRE(count_attr(node->attributes, "member") == 2);
     CHECK(node->attributes[0].value == "+ int x");
     CHECK(node->attributes[1].value == "- void y()");
+    // 结构化字段追加在原文字段之后：可见性 / 名称 / 种类 / 类型
+    const AstAttribute* visibility = find_attr(node->attributes, "member_visibility");
+    REQUIRE(visibility != nullptr);
+    CHECK(visibility->value == "+");
+    const AstAttribute* name = find_attr(node->attributes, "member_name");
+    REQUIRE(name != nullptr);
+    CHECK(name->value == "x");
+    const AstAttribute* type = find_attr(node->attributes, "member_type");
+    REQUIRE(type != nullptr);
+    CHECK(type->value == "int");
+}
+
+// 标准 UML 写法（名称在前）：可见性 / 名称 / 参数表 / 返回类型都要拆出来。
+TEST_CASE("dsl/plantuml: 类成员解析出可见性、参数表与返回类型") {
+    const std::string source = R"(@startuml
+        class A {
+            + name(): void
+            - id: int
+            # calc(a: int, b: int): double
+        }
+        @enduml
+    )";
+    const Result<AstGraph> result = parse_plantuml(source);
+    REQUIRE(result.has_value());
+    const AstNode* node = result->find_node("A");
+    REQUIRE(node != nullptr);
+    REQUIRE(count_attr(node->attributes, "member") == 3);
+
+    const AstAttribute* visibility = find_attr(node->attributes, "member_visibility");
+    REQUIRE(visibility != nullptr);
+    CHECK(visibility->value == "+");
+    const AstAttribute* name = find_attr(node->attributes, "member_name");
+    REQUIRE(name != nullptr);
+    CHECK(name->value == "name");
+    const AstAttribute* kind = find_attr(node->attributes, "member_kind");
+    REQUIRE(kind != nullptr);
+    CHECK(kind->value == "method");
+    const AstAttribute* type = find_attr(node->attributes, "member_type");
+    REQUIRE(type != nullptr);
+    CHECK(type->value == "void");
+    const AstAttribute* params = find_attr(node->attributes, "member_params");
+    REQUIRE(params != nullptr);
+    CHECK(params->value == "a: int, b: int");
 }
 
 TEST_CASE("dsl/plantuml: class ... as 别名") {

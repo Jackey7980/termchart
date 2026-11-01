@@ -207,6 +207,9 @@ std::string build_hevc1(int cw, int ch, const Parsed& p) {
 }  // namespace
 
 std::string encode_mp4(std::span<const Bitmap> frames, const EncodeOptions& opts) {
+    // 未实现的码流（如 AV1）：显式失败。绝不能落到 H.264 分支静默降级——否则调用方
+    // 以为拿到的是 AV1 文件，实际却是 H.264 码流（旧实现正是如此，现已修掉）。
+    if (!is_video_codec_supported(opts.video_codec)) return std::string{};
     if (frames.empty()) return std::string{};
     const int W = static_cast<int>(frames[0].width());
     const int H = static_cast<int>(frames[0].height());

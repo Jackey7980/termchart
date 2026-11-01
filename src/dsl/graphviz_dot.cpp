@@ -118,6 +118,16 @@ std::vector<AstAttribute> parse_attribute_pairs(std::string_view raw) {
             if (ch == ',') {
                 break;
             }
+            if (ch == ' ' || ch == '\t') {
+                // 空白也可作属性分隔符（Graphviz 宽松接受 `node [shape=box color=red]`，
+                // 真实 .dot 文件常这么写）。但只在当前段已构成完整 key=value 时才切——
+                // 否则 `label = "x y"` 这类带空格的写法会被切坏。
+                if (equal_at != std::string_view::npos && i > equal_at + 1) {
+                    break;
+                }
+                ++i;
+                continue;
+            }
             if (ch == '=' && equal_at == std::string_view::npos) {
                 equal_at = i;
             }
@@ -161,6 +171,7 @@ public:
         if (failed()) {
             return Unexpected<ErrorCode>(diagnostic().code);
         }
+        apply_all_defaults();
         return ast_;
     }
 
@@ -247,14 +258,30 @@ private:
         if ((check_keyword("graph") || check_keyword("node") || check_keyword("edge")) &&
             peek(1).is_punct("[")) {
             const bool is_graph = check_keyword("graph");
+            const bool is_node = check_keyword("node");
+            const bool is_edge = check_keyword("edge");
             (void)advance();
             std::string raw;
             capture_attribute_list(raw);
             if (failed()) {
                 return;
             }
+            const std::vector<AstAttribute> pairs = parse_attribute_pairs(raw);
             if (is_graph) {
                 apply_rankdir(raw);
+            } else if (is_node) {
+                set_default_node_attrs(pairs);
+            } else if (is_edge) {
+                set_default_edge_attrs(pairs);
+            }
+            // 默认属性也记进图属性袋：ast.hpp 约定 AstAttribute 是开放键值袋，
+            // "不认识但已解析"的属性绝不静默丢弃。
+            for (const AstAttribute& attribute : pairs) {
+                const char* bag_key = is_graph ? "graph_attr"
+                                    : is_node  ? "default_node_attr"
+                                               : "default_edge_attr";
+                ast_.attributes.push_back(
+                    AstAttribute{bag_key, attribute.key + "=" + attribute.value});
             }
             skip_to_end_of_line();
             return;
@@ -476,6 +503,95 @@ private:
         }
     }
 
+    // ── 全局默认属性（`node [...]` / `edge [...]`）────────────────────────
+    // DOT 语义：默认属性对**所有**节点/边生效（不论声明先后），且**显式属性优先**。
+    // 故既回填已存在的节点/边，也记下来供后续新建者套用；写入时只碰"尚未显式设置"
+    // 的同名属性，避免默认值反向覆盖用户的显式写法。
+    void set_default_node_attrs(const std::vector<AstAttribute>& attrs) {
+        default_node_attrs_ = attrs;
+    }
+
+    void set_default_edge_attrs(const std::vector<AstAttribute>& attrs) {
+        default_edge_attrs_ = attrs;
+    }
+
+    // 默认属性在**解析收尾**统一套用：此时显式属性都已落位，默认只填"尚未显式设置"的
+    // 同名项——既不会在袋里留下"默认值 + 显式值"的过期副本，也不受声明先后影响
+    // （DOT 语义：node [...] 对所有节点生效，与它写在节点前还是后无关）。
+    void apply_all_defaults() {
+        if (default_node_attrs_.empty() && default_edge_attrs_.empty()) {
+            return;
+        }
+        for (AstNode& node : ast_.nodes) {
+            apply_node_defaults(node);
+        }
+        for (AstEdge& edge : ast_.edges) {
+            apply_edge_defaults(edge);
+        }
+    }
+
+    void apply_node_defaults(AstNode& node) {
+        for (const AstAttribute& attribute : default_node_attrs_) {
+            if (iequals(attribute.key, "label")) {
+                if (!attribute.value.empty() &&
+                    (node.label.empty() || node.label == node.key)) {
+                    node.label = attribute.value;
+                }
+                continue;
+            }
+            if (iequals(attribute.key, "shape") && is_supported_shape(attribute.value)) {
+                if (node.shape.empty()) {
+                    node.shape = attribute.value;
+                }
+                continue;
+            }
+            bool present = false;
+            for (const AstAttribute& existing : node.attributes) {
+                if (iequals(existing.key, attribute.key)) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) {
+                node.attributes.push_back(attribute);
+            }
+        }
+    }
+
+    void apply_edge_defaults(AstEdge& edge) {
+        for (const AstAttribute& attribute : default_edge_attrs_) {
+            if (iequals(attribute.key, "label")) {
+                if (edge.label.empty()) {
+                    edge.label = attribute.value;
+                }
+                continue;
+            }
+            if (iequals(attribute.key, "style")) {
+                if (edge.line_style.empty()) {
+                    if (iequals(attribute.value, "dashed") || iequals(attribute.value, "dotted")) {
+                        edge.line_style = "dashed";
+                    } else if (iequals(attribute.value, "bold")) {
+                        edge.line_style = "thick";
+                    }
+                }
+            } else if (iequals(attribute.key, "dir") && iequals(attribute.value, "both")) {
+                if (edge.arrow == ArrowKind::AtTarget) {
+                    edge.arrow = ArrowKind::Both;
+                }
+            }
+            bool present = false;
+            for (const AstAttribute& existing : edge.attributes) {
+                if (iequals(existing.key, attribute.key)) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) {
+                edge.attributes.push_back(attribute);
+            }
+        }
+    }
+
     AstNode* ensure_node(const std::string& key) {
         if (AstNode* existing = ast_.find_node(key)) {
             return existing;
@@ -494,6 +610,8 @@ private:
 
     DotParseOptions options_{};
     AstGraph ast_;
+    std::vector<AstAttribute> default_node_attrs_;  // `node [...]` 全局默认属性
+    std::vector<AstAttribute> default_edge_attrs_;  // `edge [...]` 全局默认属性
     bool closed_ = false;
     std::size_t subgraph_depth_ = 0;
 };

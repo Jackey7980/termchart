@@ -37,6 +37,10 @@ enum class VideoCodec {
     AV1,   // 自写 AV1（AVIF 容器用）—— 后续阶段
 };
 
+// 该视频码流是否已实现（encode_mp4 等能否真正产出该码流）。AV1 编码器尚未落地 → false。
+// 供调用方在编码前预检：宁可显式失败，也不要"请求 AV1 却拿到 H.264 文件"这类静默降级。
+[[nodiscard]] TERMCHART_API bool is_video_codec_supported(VideoCodec codec) noexcept;
+
 // 编码选项。quality 用于有损格式；fps/loop/delay 用于动画；video_codec 用于视频容器。
 struct EncodeOptions {
     int quality = 85;       // 有损格式（JPEG / WebP / MP4）质量 [1,100]；无损格式忽略。

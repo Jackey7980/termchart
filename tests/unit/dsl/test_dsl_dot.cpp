@@ -2,7 +2,8 @@
 //
 // 关注契约而非"能解析一句话"：
 //   * 引号里的 `->` 绝不能被当成箭头（DOT 属性值里出现箭头是最常见的坑）；
-//   * 认得出但不做的指令（graph/node/edge 默认属性行、subgraph）不产生节点、不报错；
+//   * `node [...]` / `edge [...]` 全局默认属性对所有节点/边生效，且显式属性优先；
+//   * 认得出但不做的指令（subgraph）不产生节点、不报错；
 //   * 错误路径（缺头部/缺闭合/超 max_nodes）给出错误码且不抛异常。
 #include <doctest.h>
 
@@ -26,6 +27,26 @@ const AstAttribute* find_attr(const std::vector<AstAttribute>& attrs, std::strin
         }
     }
     return nullptr;
+}
+
+// 自己扫 nodes 找节点：测试只依赖 nodes 这个唯一真源，不依赖 AstGraph 的查询重载。
+const AstNode* find_node_by_key(const AstGraph& ast, std::string_view key) {
+    for (const AstNode& node : ast.nodes) {
+        if (node.key == key) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+int count_attr(const std::vector<AstAttribute>& attrs, std::string_view key) {
+    int count = 0;
+    for (const AstAttribute& attribute : attrs) {
+        if (attribute.key == key) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 }  // namespace
@@ -182,4 +203,49 @@ TEST_CASE("dsl/dot: AST 落成 graph::Graph 且不丢信息") {
     REQUIRE(produced->edges().size() == 1);
     CHECK(produced->nodes()[0].label() == "读");
     CHECK(produced->edges()[0].label() == "ok");
+}
+
+// `node [...]` / `edge [...]` 是 DOT 的全局默认属性：对所有节点/边生效（不论声明
+// 先后），且**显式属性优先**。旧实现整行丢弃这些默认样式（只认 graph[rankdir]）。
+TEST_CASE("dsl/dot: node/edge 全局默认属性生效，且显式属性优先") {
+    const std::string source = R"(digraph G {
+        node [shape=box color=red];
+        edge [style=dashed];
+        a;
+        b [shape=diamond, color=blue];
+        a -> b;
+    })";
+    const Result<AstGraph> result = parse_dot(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+
+    // 默认属性不制造幽灵节点
+    CHECK(ast.nodes.size() == 2);
+
+    const AstNode* a = find_node_by_key(ast, "a");
+    const AstNode* b = find_node_by_key(ast, "b");
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+
+    // 未显式声明 shape 的节点套用默认 shape
+    CHECK(a->shape == "box");
+    // 显式属性优先，不被默认值反向覆盖
+    CHECK(b->shape == "diamond");
+
+    // 默认 color 只落到没显式写 color 的节点上；显式写了的不该再叠一份默认值
+    const AstAttribute* a_color = find_attr(a->attributes, "color");
+    REQUIRE(a_color != nullptr);
+    CHECK(a_color->value == "red");
+    const AstAttribute* b_color = find_attr(b->attributes, "color");
+    REQUIRE(b_color != nullptr);
+    CHECK(b_color->value == "blue");
+    CHECK(count_attr(b->attributes, "color") == 1);  // 没有"默认+显式"两份
+
+    // 边默认属性
+    REQUIRE(ast.edges.size() == 1);
+    CHECK(ast.edges[0].line_style == "dashed");
+
+    // 默认属性也记进图属性袋（ast.hpp 约定：绝不静默丢弃）
+    const AstAttribute* bagged = find_attr(ast.attributes, "default_node_attr");
+    REQUIRE(bagged != nullptr);
 }

@@ -56,6 +56,139 @@ std::string strip_quotes(std::string value) {
     return value;
 }
 
+// ── 类体成员的结构化拆解 ───────────────────────────────────────────────
+// UML 成员（PlantUML 风格类体里的一行）：
+//     [可见性][修饰符] 名称[(参数表)][: 类型]
+// 可见性：+ 公共 / - 私有 / # 受保护 / ~ 包内；缺省表示无标记。
+// 修饰符：static / abstract / {abstract} / {static} / constructor 等。
+// 类型：对属性是字段类型，对方法是返回类型。
+// 原先只把整行原文塞进属性袋，程序化取不到 +/- 与返回类型——这里补上结构化字段。
+struct ParsedMember {
+    std::string visibility;  // "+"/"-"/"#"/"~"，空 = 无标记
+    std::string name;        // 方法名或属性名
+    std::string params;      // 方法参数表（不含括号）
+    std::string type;        // 属性类型 / 方法返回类型
+    bool is_method = false;
+    bool has_colon_type = false;  // 类型来自 ':' 分隔（标准 UML 写法）
+};
+
+bool is_uml_space(char ch) noexcept {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}
+
+bool is_uml_ident_char(char ch) noexcept {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+           ch == '_';
+}
+
+bool is_uml_modifier(std::string_view word) noexcept {
+    return word == "static" || word == "abstract" || word == "constructor" || word == "const" ||
+           word == "override" || word == "virtual" || word == "inline" || word == "final";
+}
+
+ParsedMember parse_member_line(std::string_view text) {
+    ParsedMember member;
+    std::size_t i = 0;
+    while (i < text.size() && is_uml_space(text[i])) {
+        ++i;
+    }
+    if (i < text.size() && (text[i] == '+' || text[i] == '-' || text[i] == '#' || text[i] == '~')) {
+        member.visibility = std::string(1, text[i]);
+        ++i;
+    }
+    // 取下一个"有效词"：跳过 static/abstract 等修饰符与 {abstract} 之类花括号修饰。
+    const auto next_word = [&]() -> std::string_view {
+        while (i < text.size()) {
+            while (i < text.size() && is_uml_space(text[i])) {
+                ++i;
+            }
+            if (i >= text.size()) {
+                return {};
+            }
+            if (text[i] == '{') {
+                const std::size_t close = text.find('}', i);
+                if (close == std::string_view::npos) {
+                    return {};
+                }
+                i = close + 1;
+                continue;
+            }
+            const std::size_t begin = i;
+            while (i < text.size() && is_uml_ident_char(text[i])) {
+                ++i;
+            }
+            if (i == begin) {
+                return {};  // 非标识符字符
+            }
+            const std::string_view word = text.substr(begin, i - begin);
+            if (is_uml_modifier(word)) {
+                continue;  // 修饰符，继续往下找
+            }
+            return word;
+        }
+        return {};
+    };
+    const auto skip_spaces = [&]() {
+        while (i < text.size() && is_uml_space(text[i])) {
+            ++i;
+        }
+    };
+    // 已在 '(' 处：读形参表。
+    const auto read_params = [&]() {
+        member.is_method = true;
+        const std::size_t close = text.find(')', i);
+        if (close != std::string_view::npos) {
+            member.params = trim(text.substr(i + 1, close - i - 1));
+            i = close + 1;
+        } else {
+            member.params = trim(text.substr(i + 1));
+            i = text.size();
+        }
+    };
+    // 读 ':' 之后的类型。
+    const auto read_colon_type = [&]() {
+        skip_spaces();
+        if (i < text.size() && text[i] == ':') {
+            ++i;
+            member.type = trim(text.substr(i));
+            member.has_colon_type = true;
+        }
+    };
+
+    const std::string_view first = next_word();
+    if (first.empty()) {
+        return member;
+    }
+    skip_spaces();
+    if (i < text.size() && text[i] == '(') {
+        // 标准 UML（名称在前）：`+ name(params): ret`
+        member.name = std::string(first);
+        read_params();
+        read_colon_type();
+        return member;
+    }
+    if (i < text.size() && text[i] == ':') {
+        // 标准 UML 属性：`+ name: type`
+        member.name = std::string(first);
+        read_colon_type();
+        return member;
+    }
+    // 类型在前（仓库既有写法）：`+ int x` / `- void y()`
+    const std::string_view second = next_word();
+    if (second.empty()) {
+        member.name = std::string(first);
+        return member;
+    }
+    member.type = std::string(first);
+    member.name = std::string(second);
+    skip_spaces();
+    if (i < text.size() && text[i] == '(') {
+        read_params();  // 类型即返回类型
+        read_colon_type();
+    }
+    return member;
+}
+
 // 关系操作符的语义。swap=true 表示"标记在左端"（`<|--` 之类），需要交换 from/to。
 struct RelationInfo {
     bool matched = false;
@@ -250,6 +383,14 @@ private:
 
     void parse_class_body(AstNode& node) {
         std::size_t depth = 1;
+        // 结构化字段先攒着、最后统一追加：这样"原文字段按序在前"的既有次序不变
+        // （既有消费方按 attributes[0..n-1] 取原文），结构化字段排在其后。
+        std::vector<AstAttribute> structured;
+        const auto flush_structured = [&]() {
+            for (const AstAttribute& attribute : structured) {
+                node.attributes.push_back(attribute);
+            }
+        };
         while (!at_end()) {
             if (check_punct("{")) {
                 (void)advance();
@@ -260,6 +401,7 @@ private:
                 (void)advance();
                 --depth;
                 if (depth == 0) {
+                    flush_structured();
                     return;
                 }
                 continue;
@@ -279,6 +421,26 @@ private:
             const std::string member = trim(source().substr(start, end - start));
             if (!member.empty()) {
                 node.attributes.push_back(AstAttribute{"member", member});
+                // 结构化拆解：原先只有原文字符串，程序化取不到可见性(+/-)与返回类型。
+                // "member" 原文字段保留不变，既有消费方（graph 层渲染）不受影响。
+                const ParsedMember parsed = parse_member_line(member);
+                const bool looks_like_member =
+                    !parsed.name.empty() && (parsed.is_method || parsed.has_colon_type ||
+                                            !parsed.visibility.empty());
+                if (looks_like_member) {
+                    if (!parsed.visibility.empty()) {
+                        structured.push_back(AstAttribute{"member_visibility", parsed.visibility});
+                    }
+                    structured.push_back(AstAttribute{"member_name", parsed.name});
+                    structured.push_back(
+                        AstAttribute{"member_kind", parsed.is_method ? "method" : "property"});
+                    if (parsed.is_method && !parsed.params.empty()) {
+                        structured.push_back(AstAttribute{"member_params", parsed.params});
+                    }
+                    if (!parsed.type.empty()) {
+                        structured.push_back(AstAttribute{"member_type", parsed.type});
+                    }
+                }
             }
         }
         report(ErrorCode::ParseError, "类体未闭合");

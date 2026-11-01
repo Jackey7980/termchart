@@ -676,15 +676,17 @@ TEST_CASE("dsl/sequence: 参与者、消息种类与激活") {
     CHECK(sequence.notes[1].placement == SequenceNote::Placement::Over);
     CHECK(sequence.notes[1].participants.size() == 2);
 
-    SUBCASE("块语句与 autonumber 只登记不报错") {
-        bool saw_block = false;
+    SUBCASE("块语句进结构化块（标签不丢），autonumber 仍只登记") {
         bool saw_autonumber = false;
         for (const AstAttribute& attribute : sequence.attributes) {
-            saw_block = saw_block || attribute.key == "ignored_block";
             saw_autonumber = saw_autonumber || attribute.key == "autonumber";
         }
-        CHECK(saw_block);
         CHECK(saw_autonumber);
+        REQUIRE(sequence.blocks.size() == 1);
+        CHECK(sequence.blocks[0].keyword == "loop");
+        CHECK(sequence.blocks[0].label == "重试");
+        REQUIRE(sequence.blocks[0].branches.size() == 1);
+        CHECK(sequence.blocks[0].branches[0].message_count == 1);
     }
     SUBCASE("激活简写") {
         const Result<AstSequence> shorthand = parse_sequence(
@@ -729,4 +731,45 @@ TEST_CASE("dsl/registry: class/state 已登记，sequence 刻意不登记") {
     CHECK(registry.find("sequence") == nullptr);  // 产物不是 AstGraph，契约不兼容
     CHECK(registry.parse("class", "classDiagram\n A <|-- B").has_value());
     CHECK(registry.parse("state", "stateDiagram-v2\n [*] --> A").has_value());
+}
+
+// 块语句（loop/alt/opt/par…）原先整行跳过——连 `loop Every 10ms` 的标签文本都丢。
+// 现在：标签保留、分支可见、每条消息知道自己属于哪个块。
+TEST_CASE("dsl/mermaid/sequence: 块语句保留标签、分支与消息归属") {
+    const std::string source = R"(sequenceDiagram
+    participant A
+    participant B
+    loop Every 10ms
+        A->>B: ping
+    end
+    alt 是成功
+        A->>B: ok
+    else 是失败
+        A->>B: err
+    end
+)";
+    const Result<AstSequence> result = parse_sequence(source);
+    REQUIRE(result.has_value());
+    const AstSequence& ast = *result;
+    REQUIRE(ast.blocks.size() == 2);
+
+    // loop：块标签保留（原先整行被跳过）
+    CHECK(ast.blocks[0].keyword == "loop");
+    CHECK(ast.blocks[0].label == "Every 10ms");
+    CHECK(ast.blocks[0].depth == 0);
+    REQUIRE(ast.blocks[0].branches.size() == 1);
+    CHECK(ast.blocks[0].branches[0].message_count == 1);
+
+    // alt：主分支 + else 分支，条件原文都在
+    CHECK(ast.blocks[1].keyword == "alt");
+    REQUIRE(ast.blocks[1].branches.size() == 2);
+    CHECK(ast.blocks[1].branches[0].label == "是成功");
+    CHECK(ast.blocks[1].branches[1].keyword == "else");
+    CHECK(ast.blocks[1].branches[1].label == "是失败");
+
+    // 每条消息知道自己属于哪个块
+    REQUIRE(ast.messages.size() == 3);
+    CHECK(ast.messages[0].block == "loop");
+    CHECK(ast.messages[1].block == "alt");
+    CHECK(ast.messages[2].block == "alt/else");
 }

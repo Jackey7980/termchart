@@ -36,4 +36,16 @@ std::string encode(std::span<const Bitmap> frames, ImageFormat format, const Enc
     return std::string{};
 }
 
+bool is_video_codec_supported(VideoCodec codec) noexcept {
+    switch (codec) {
+        case VideoCodec::H264:
+            return true;
+        case VideoCodec::H265:
+            return true;
+        case VideoCodec::AV1:
+            return false;  // AV1 编码器尚未落地（AVIF 容器同理）
+    }
+    return false;
+}
+
 }  // namespace termchart::image

@@ -138,8 +138,16 @@ private:
                 continue;
             }
             if (current().kind == TokenKind::Keyword && is_block_keyword(current().text)) {
-                ast_.attributes.push_back(AstAttribute{"ignored_block", current().text});
-                skip_to_end_of_line();
+                const std::string keyword = current().text;
+                (void)advance();
+                const std::string rest = take_rest_of_line();  // 行内剩余：块标签 / 分支条件
+                if (keyword == "end") {
+                    close_block();
+                } else if (keyword == "else" || keyword == "and") {
+                    open_branch(keyword, rest);
+                } else {
+                    open_block(keyword, rest);
+                }
                 continue;
             }
             if (!parse_message()) {
@@ -287,6 +295,10 @@ private:
         message.order = ast_.messages.size();
         message.activate_target = activate_target;
         message.deactivate_source = deactivate_source;
+        message.block = current_block_path();  // 归属块（"loop" / "alt" / "alt/else"）
+        for (OpenBlock& open : block_stack_) {
+            ++open.branch_messages;
+        }
         ast_.messages.push_back(std::move(message));
         return true;
     }
@@ -319,8 +331,82 @@ private:
         return participant;
     }
 
+    // ── 块语句（loop / alt / opt / par / critical / rect / break）────────
+    // 原先整行跳过——连 `loop Every 10ms` 的标签文本都丢，画不出条件/循环框。
+    // 现在块结构完整进 AST：标签、嵌套深度、分支，以及每条消息的归属。
+    struct OpenBlock {
+        std::size_t index = 0;            // 在 ast_.blocks 里的下标
+        std::size_t branch_messages = 0;  // 当前分支已收消息数
+    };
+
+    void open_block(const std::string& keyword, const std::string& rest) {
+        SequenceBlock block;
+        block.keyword = keyword;
+        block.depth = block_stack_.size();
+        SequenceBranch branch;
+        branch.keyword = "";  // 主分支
+        branch.first_message = ast_.messages.size();
+        if (keyword == "alt" || keyword == "par") {
+            branch.label = rest;  // alt/par 的首个分支条件写在关键字之后
+        } else {
+            block.label = rest;  // loop/opt/rect… 的块标签
+        }
+        block.branches.push_back(std::move(branch));
+        ast_.blocks.push_back(std::move(block));
+        block_stack_.push_back(OpenBlock{ast_.blocks.size() - 1, 0});
+    }
+
+    void open_branch(const std::string& keyword, const std::string& rest) {
+        if (block_stack_.empty()) {
+            ast_.attributes.push_back(AstAttribute{"orphan_branch", keyword});
+            return;
+        }
+        OpenBlock& open = block_stack_.back();
+        close_current_branch(open);
+        SequenceBranch branch;
+        branch.keyword = keyword;  // else / and
+        branch.label = rest;
+        branch.first_message = ast_.messages.size();
+        ast_.blocks[open.index].branches.push_back(std::move(branch));
+        open.branch_messages = 0;
+    }
+
+    void close_block() {
+        if (block_stack_.empty()) {
+            return;  // 多余的 end：忽略（真实语料里常见），不报错
+        }
+        const OpenBlock open = block_stack_.back();
+        block_stack_.pop_back();
+        close_current_branch(open);
+    }
+
+    void close_current_branch(const OpenBlock& open) {
+        SequenceBlock& block = ast_.blocks[open.index];
+        if (!block.branches.empty()) {
+            block.branches.back().message_count = open.branch_messages;
+        }
+    }
+
+    // 当前所在块的路径（"loop" / "alt" / "alt/else"）；不在块里则为空。
+    std::string current_block_path() const {
+        std::string path;
+        for (const OpenBlock& open : block_stack_) {
+            const SequenceBlock& block = ast_.blocks[open.index];
+            if (!path.empty()) {
+                path += '/';
+            }
+            path += block.keyword;
+            if (!block.branches.empty() && !block.branches.back().keyword.empty()) {
+                path += '/';
+                path += block.branches.back().keyword;
+            }
+        }
+        return path;
+    }
+
     SequenceParseOptions options_{};
     AstSequence ast_;
+    std::vector<OpenBlock> block_stack_;  // 开启中的块（内层在后）
     // 超限后的返回值落点：不属于 ast_.participants，仅供解析继续走完（结果会被丢弃）。
     SequenceParticipant overflow_{};
 };

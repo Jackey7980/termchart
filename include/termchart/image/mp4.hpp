@@ -2,7 +2,8 @@
 //
 // 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。把一串视频帧（Bitmap）按
 // EncodeOptions::video_codec 选内部码流编码器，再封装成可被标准播放器/ffprobe 读取的
-// MP4。当前 video_codec=H264 走自写 H.264 编码器；H265/AV1 尚未实现时返回空串。
+// MP4。video_codec=H264 / H265 走自写编码器；AV1 尚未实现——此时**显式返回空串**
+// （绝不静默降级成 H.264），可用 is_video_codec_supported() 预检。
 #ifndef TERMCHART_IMAGE_MP4_HPP
 #define TERMCHART_IMAGE_MP4_HPP
 
