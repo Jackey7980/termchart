@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 399 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 410 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -3374,6 +3374,80 @@ private:
     std::vector<double> x_;
     std::vector<double> y_;
     std::vector<double> m2_;  // 各点二阶导
+    bool valid_ = false;
+};
+
+// 单调三次 Hermite（PCHIP，Fritsch–Carlson）：在 CubicSpline 的自然样条之外提供
+// 一个**保单调、不过冲**的变体。自然样条二阶导两端为 0，在噪声数据上会轻微过冲、画出
+// 数据之外的假峰/假谷；PCHIP 把"相邻割线异号或任一为零"处的切线压成 0，从而守住单调性。
+// 构造 O(N)、求值 O(log N)（二分定位区间），接口与 CubicSpline 对齐（valid() / size() / at()）。
+// 坏输入（点数 < 2、xs 非严格升序、含 NaN/Inf）不抛异常：valid() 为 false，at() 返回 NaN。
+class PchipSpline {
+public:
+    PchipSpline() noexcept = default;
+
+    PchipSpline(std::span<const double> xs, std::span<const double> ys) noexcept {
+        const std::size_t n = xs.size() < ys.size() ? xs.size() : ys.size();
+        if (n < 2) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!std::isfinite(xs[i]) || !std::isfinite(ys[i])) return;
+            if (i > 0 && !(xs[i] > xs[i - 1])) return;
+        }
+        x_.assign(xs.begin(), xs.begin() + static_cast<std::ptrdiff_t>(n));
+        y_.assign(ys.begin(), ys.begin() + static_cast<std::ptrdiff_t>(n));
+        m_.assign(n, 0.0);
+
+        // 区间割线（>0，因为 xs 严格升序）。
+        std::vector<double> d(n - 1, 0.0);
+        for (std::size_t i = 0; i + 1 < n; ++i) {
+            d[i] = (y_[i + 1] - y_[i]) / (x_[i + 1] - x_[i]);
+        }
+
+        // 端点切线 = 相邻单侧割线。
+        m_[0] = d[0];
+        m_[n - 1] = d[n - 2];
+
+        // 内部点：割线加权调和平均（Fritsch–Carlson）。异号或任一为 0 → 切线压 0，守住单调。
+        for (std::size_t i = 1; i + 1 < n; ++i) {
+            if (d[i - 1] * d[i] <= 0.0) {
+                m_[i] = 0.0;
+            } else {
+                const double w1 = 2.0 * (x_[i + 1] - x_[i]);  // 邻区间长度加权
+                const double w2 = x_[i] - x_[i - 1];
+                m_[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+            }
+        }
+        valid_ = true;
+    }
+
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+    [[nodiscard]] std::size_t size() const noexcept { return x_.size(); }
+
+    // 求值：x 越界钳位到首/末；无效样条或 NaN 查询返回 NaN。
+    [[nodiscard]] double at(double x) const noexcept {
+        if (!valid_ || std::isnan(x)) return std::nan("");
+        const std::size_t n = x_.size();
+        if (x <= x_[0]) return y_[0];
+        if (x >= x_[n - 1]) return y_[n - 1];
+        const auto it = std::lower_bound(x_.begin(), x_.end(), x);
+        const std::size_t hi = static_cast<std::size_t>(it - x_.begin());
+        const std::size_t lo = hi - 1;
+        const double h = x_[hi] - x_[lo];
+        const double t = (x - x_[lo]) / h;
+        const double t2 = t * t;
+        const double t3 = t2 * t;
+        // Hermite 基函数（h00/h10/h01/h11）：保证经过端点且切线 m_。
+        const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        const double h10 = t3 - 2.0 * t2 + t;
+        const double h01 = -2.0 * t3 + 3.0 * t2;
+        const double h11 = t3 - t2;
+        return h00 * y_[lo] + h10 * h * m_[lo] + h01 * y_[hi] + h11 * h * m_[hi];
+    }
+
+private:
+    std::vector<double> x_;
+    std::vector<double> y_;
+    std::vector<double> m_;  // 各点切线斜率
     bool valid_ = false;
 };
 
@@ -6823,6 +6897,11 @@ TERMCHART_API std::vector<double> nice_ticks(double domain_min, double domain_ma
 // 再 inverse 回数据坐标。要求 scale.valid()。
 TERMCHART_API std::vector<double> ticks_for(const Scale& scale, int target = 5) noexcept;
 
+// 对称对数轴专用刻度：线性区（[-C,C] 插 nice 细分 + 0 + ±C）与对数区
+// （±C·10^k 及 2C/5C 中间档）拼接，保证跨零点刻度与网格对齐。仅对 SymLogScale 调用——
+// 普通的「数据域等差采样 + inverse」会让 symlog 的刻度在屏幕上间距极不均匀。
+TERMCHART_API std::vector<double> symlog_ticks(const SymLogScale& scale, int target = 5) noexcept;
+
 }  // namespace termchart::scale
 
 // ===== include/termchart/scale/time.hpp =====
@@ -7093,8 +7172,14 @@ resample(const std::vector<double>& values, const std::vector<double>& edges,
 //   * 不抛异常；空 vector 返回空 vector。
 //
 // 另提供 EMA（指数移动平均）：O(N) 单遍递推，alpha = 2/(window+1)。
-// rolling() 本身为 O(N·window)（窗口内每步重算）；纯 SMA 的 O(N) 滑动求和
-// 作为已知优化点记入 backlog，刻意不在本文件展开。
+//
+// 2026-10-22 重写后，rolling() 全体统计量均为 **O(N)** 滑动窗口（不再每步重算整个窗口）：
+//   * Mean / Sum  ：滑动和（SlidingSum，add/remove 各 O(1)）
+//   * Stddev      ：Welford 加/减（数值稳定，O(N)）
+//   * Min / Max   ：单调双端队列（O(N)）
+//   * Median      ：有序双 multiset（O(N log W)）
+// 此前"纯 SMA 的 O(N) 滑动求和作为已知优化点"的 backlog 描述已过时——本文件现已是 O(N) 家族，
+// 旧注释保留仅作历史对照。
 
 
 
@@ -8297,7 +8382,7 @@ namespace termchart::image {
 
 namespace termchart::image {
 
-enum class ImageFormat : std::uint8_t {
+enum class DetectedFormat : std::uint8_t {
     Unknown = 0,
     Png,
     Jpeg,
@@ -8307,10 +8392,10 @@ enum class ImageFormat : std::uint8_t {
 };
 
 // 只看魔数（不看扩展名）。数据不足或对不上任何魔数返回 Unknown。
-[[nodiscard]] TERMCHART_API ImageFormat sniff_image_format(const std::uint8_t* data,
+[[nodiscard]] TERMCHART_API DetectedFormat sniff_image_format(const std::uint8_t* data,
                                                            std::size_t size) noexcept;
 
-[[nodiscard]] TERMCHART_API const char* image_format_name(ImageFormat format) noexcept;
+[[nodiscard]] TERMCHART_API const char* image_format_name(DetectedFormat format) noexcept;
 
 // 识别 + 解码。识别不出返回 `ErrorCode::ParseError`；识别出但无解码器返回
 // `ErrorCode::Unsupported`。
@@ -8320,6 +8405,59 @@ enum class ImageFormat : std::uint8_t {
 [[nodiscard]] inline Result<Bitmap> decode_image(std::string_view bytes) {
     return decode_image(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/encode.hpp =====
+// encode.hpp —— 统一位图编码分发器（自包含编码器入口）
+//
+// 与现有 encode_png / encode_jpeg 同哲学：零外部依赖，每个编码器把 Bitmap 编码成
+// 完整文件字节流（std::string）。本文件只提供一个按格式分流的薄入口，新增格式
+// （WebP / GIF / MP4 / AVIF）只需：① 在 ImageFormat 追加枚举值；② 实现对应的
+// encode_* 函数（返回字节流）；③ 在 encode() 里加一个 case。既有 encode_png /
+// encode_jpeg 保持不变，对外契约不动。
+//
+// 视频/动画格式（GIF / MP4 / AVIF）走多帧重载 encode(std::span<const Bitmap>)，单帧
+// 重载会退化成 1 帧调用，二者共用同一入口。
+
+
+
+namespace termchart::image {
+
+// 支持的位图导出格式。顺序无关；新增格式追加到末尾即可。
+enum class ImageFormat {
+    Png,
+    Jpeg,
+    Mp4,  // 视频容器 ISO-BMFF；内部码流由 EncodeOptions::video_codec 选 H264/H265/AV1
+    Gif,  // 自写 GIF89a（median-cut 调色板 + LZW），支持多帧动画
+    Webp, // 自写 VP8L lossless（零依赖），单帧无损；动画/有损后续增强
+    // Avif 在各自编码器落地后追加
+};
+
+// 视频/动画内部码流选择（自写编码器，零依赖）。
+enum class VideoCodec {
+    H264,  // 自写 baseline AVC（当前已实现 I_PCM 无损档，压缩档后续叠加）
+    H265,  // 自写 HEVC —— 后续阶段
+    AV1,   // 自写 AV1（AVIF 容器用）—— 后续阶段
+};
+
+// 编码选项。quality 用于有损格式；fps/loop/delay 用于动画；video_codec 用于视频容器。
+struct EncodeOptions {
+    int quality = 85;       // 有损格式（JPEG / WebP / MP4）质量 [1,100]；无损格式忽略。
+    int fps = 25;           // 动画/视频帧率。
+    int loop_count = 0;     // 0 = 无限循环（GIF）；单图忽略。
+    int delay_ms = 100;     // 每帧显示时长（GIF；覆盖 fps 推算）。
+    VideoCodec video_codec = VideoCodec::H264;  // MP4/AVIF 内部码流。
+    int gop = 0;            // 0 = 全 I 帧（baseline intra）；>0 时启用帧间（后续阶段）。
+};
+
+// 单帧编码（PNG/JPEG/静态图）。
+TERMCHART_API std::string encode(const Bitmap& bitmap, ImageFormat format,
+                                const EncodeOptions& opts = {});
+
+// 多帧编码（动画 GIF / 视频 MP4 / AVIF）。单帧调用等价于把 frames 设为 1 张。
+TERMCHART_API std::string encode(std::span<const Bitmap> frames, ImageFormat format,
+                                const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
 
@@ -8459,6 +8597,96 @@ inline constexpr float kLumaB = 0.114f;
     }
     return out;
 }
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/gif_encode.hpp =====
+// gif_encode.hpp —— 最小 GIF89a 编码器（自包含 LZW，支持多帧动画）
+//
+// 零外部依赖：自带调色板量化（median-cut，≤256 色）+ GIF LZW 压缩，输出合规的
+// GIF89a 字节流，任何解码器（ffmpeg / ImageMagick / 浏览器）都能读。多帧 frames
+// 经 opts.loop_count / delay_ms 控制循环与帧间隔，单帧退化为静态图；透明通道当前
+// 忽略（输出不透明 GIF）。公开接口与 encode_png / encode_jpeg / encode_mp4 同形。
+
+
+
+namespace termchart::image {
+
+// 编码为完整 GIF89a 字节流。多帧 → 动画；单帧 → 静态图。空输入或帧尺寸不一致返回空串。
+TERMCHART_API std::string encode_gif(std::span<const Bitmap> frames,
+                                     const EncodeOptions& opts = {});
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/h264_encode.hpp =====
+// h264_encode.hpp —— 自写 H.264（baseline AVC）编码器
+//
+// 零依赖：自己写 NAL/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx264/ffmpeg。
+// 当前实现为 **I_PCM 档**：每个宏块直接输出原始采样（无损、无变换/量化/熵编码），
+// 用最少的码流语法把整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧内预测 +
+// 整数变换 + CAVLC 压缩档作为「高质量」第二阶段叠加，复用同一 NAL/容器骨架。
+
+
+
+namespace termchart::image {
+
+// 输出 Annex-B 字节流：SPS + PPS + 每帧一个 IDR slice（I_PCM 宏块）。空输入返回空串。
+TERMCHART_API std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/hevc_encode.hpp =====
+// hevc_encode.hpp —— 自写 HEVC（H.265, Main profile）编码器
+//
+// 零依赖：自己写 NAL/VPS/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx265/ffmpeg。
+// 当前实现与 h264_encode 同哲学的 **I_PCM 档**：每个 Coding Tree Unit 递归二分到 8x8
+// 叶，叶直接以 PCM 模式输出原始采样（无损、无变换/量化/熵编码），用最少的码流语法把
+// 整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧间预测 + 真正压缩作为第二阶段叠加，
+// 复用同一 NAL/容器骨架。
+
+
+
+namespace termchart::image {
+
+// 输出 Annex-B 字节流：VPS + SPS + PPS + 每帧一个 IDR slice（I_PCM CTU）。空输入返回空串。
+TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/jpeg_encode.hpp =====
+// jpeg_encode.hpp —— 最小 baseline JPEG 编码器（8 位，3 通道 YCbCr 4:4:4，无隔行/无算术编码）
+//
+// 与 png_encode 同哲学：零外部依赖，自带 FDCT / 量化 / 霍夫曼，输出合规 JFIF 流，
+// 任何解码器（stb_image / Pillow / 浏览器）都能读。范围刻意最小：
+//   * 顺序（sequential）baseline，非渐进（progressive）；
+//   * 哈夫曼（Huffman）编码，非算术（arithmetic）编码；
+//   * 3 个分量 Y/Cb/Cr，4:4:4 不子采样（最简单且不失色）；
+//   * 标准量化表 + 标准 DC/AC 哈夫曼表（JPEG 规范 Annex K），按 quality 缩放。
+// 颜色：先 RGB → YCbCr（BT.601），每个 8×8 块独立编码；图像尺寸补到 8 的倍数。
+
+
+
+namespace termchart::image {
+
+// 编码为完整 JPEG 字节流。quality ∈ [1,100]（默认 85）；越高质量越好、体积越大。
+// 空位图（宽或高为 0）返回空串；不产出非法文件。
+TERMCHART_API std::string encode_jpeg(const Bitmap& bitmap, int quality = 85);
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/mp4.hpp =====
+// mp4.hpp —— MP4（ISO-BMFF）视频封装封装入口
+//
+// 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。把一串视频帧（Bitmap）按
+// EncodeOptions::video_codec 选内部码流编码器，再封装成可被标准播放器/ffprobe 读取的
+// MP4。当前 video_codec=H264 走自写 H.264 编码器；H265/AV1 尚未实现时返回空串。
+
+
+
+namespace termchart::image {
+
+// 把 frames 编码并封装为 MP4 字节流。返回空串表示不支持/失败（如 video_codec 未实现）。
+TERMCHART_API std::string encode_mp4(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
 
@@ -8624,6 +8852,46 @@ private:
     std::shared_ptr<Impl> impl_;
     explicit TtfFont(std::shared_ptr<Impl> impl) noexcept;
 };
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/webp_decode.hpp =====
+
+
+
+namespace termchart::image {
+
+// 原生零依赖 VP8L lossless WebP 解码。
+//
+// 仅支持本库编码器（encode_webp）产出的无损字面量流：无 Predictor /
+// ColorTransform / SubtractGreen / ColorIndex 变换、无色彩缓存、单一 htree
+// group。这些约束与 encode_webp 的 v1 输出一一对应，故可做到像素级精确回环。
+//
+// 遇到带变换的外部 WebP 文件会返回 ErrorCode::Unsupported —— 调用方
+// （decode_image）据此回落到 stb（若构建时启用了 TERMCHART_HAVE_STB_IMAGE）。
+// 结构化损坏（容器/签名/尺寸越界）返回 ErrorCode::ParseError。
+[[nodiscard]] Result<Bitmap> decode_webp(const std::uint8_t* data,
+                                        std::size_t size) noexcept;
+
+}  // namespace termchart::image
+
+// ===== include/termchart/image/webp_encode.hpp =====
+// webp_encode.hpp —— 自包含 VP8L lossless WebP 编码器（零依赖）
+//
+// 与 png_encode / jpeg_encode / gif_encode 同哲学：把 Bitmap 编码成完整文件字节流，
+// 不引入任何外部依赖。当前实现 v1：
+//   · 单帧无损（无变换 / 无色彩缓存 / 平铺 8-bit 霍夫曼码 + 字面量像素）；
+//   · 编码后字节流逐字节可由 ffmpeg 解码（codec=webp, 子流 vp8l）。
+// 后续增强（独立任务，不阻塞 v1 正确性）：频率自适应霍夫曼、LZ77 反向引用、
+// VP8X/ANIM 多帧动画、有损 VP8。
+
+
+
+namespace termchart::image {
+
+// 编码一帧（或多帧取首帧）为 WebP。frames 为空 / 首帧尺寸为 0 / 超出 14-bit
+// 尺寸上限（16383）时返回空串（调用方据 encode() 返回空判定 Unsupported）。
+TERMCHART_API std::string encode_webp(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
 
@@ -10834,6 +11102,49 @@ TERMCHART_API void draw_legend(canvas::Canvas& canvas, std::span<const LegendEnt
 
 }  // namespace termchart::layout
 
+// ===== include/termchart/layout/reference.hpp =====
+// reference.hpp —— y 轴零线参考线 + 负区底色（SymLog 等跨零轴的视觉辅助）
+//
+// 设计：与 PlotArea 解耦——几何（inner 矩形）与映射（Scale）分开传，因此同一个
+// 实现既能服务 LinearScale，也能服务 SymLogScale（只要调用方把对应的 y_scale 传
+// 进来；PlotArea 当前只内置 LinearScale，SymLog 接线是另一件事）。
+//
+// 默认行为完全不变：这些函数只在「数据域确实含 0 / 含负数」时才落笔，且需调用方
+// 显式调用——不接就不画。零线是横向参考线（数据值 = 0 处），默认加粗（Attr::Bold）；
+// 负区底色给数据 < 0 的区域铺一层背景，便于在跨零轴上识别负数区。
+
+
+namespace termchart::canvas {
+class Canvas;
+}
+namespace termchart::layout {
+class Sink;
+}  // namespace termchart::layout
+
+namespace termchart::layout {
+
+// 在 y 方向画一条横向「零线」参考线（数据值 = 0 处）。
+// 仅当 0 落在 scale 的数据域内才绘制；线默认加粗（Attr::Bold）以突出。
+// 几何范围由 inner 决定（通常传 area.inner_rect()）。
+TERMCHART_API void draw_zero_line_y(Sink& sink, const Rect& inner, const scale::Scale& y_scale,
+                                    const Style& style = Style{});
+TERMCHART_API void draw_zero_line_y(canvas::Canvas& canvas, const Rect& inner,
+                                    const scale::Scale& y_scale, const Style& style = Style{});
+TERMCHART_API void draw_zero_line_y(Sink& sink, const PlotArea& area, const scale::Scale& y_scale,
+                                    const Style& style = Style{});
+TERMCHART_API void draw_zero_line_y(canvas::Canvas& canvas, const PlotArea& area,
+                                    const scale::Scale& y_scale, const Style& style = Style{});
+
+// 给 y 轴负区（数据值 < 0 的区域）铺一层底色，便于在跨零轴上识别负数区。
+// 仅当数据域含负数（domain_min < 0）才绘制。Canvas 专用——Sink 无填充原语，
+// 矢量路径（Scene）由调用方用其自身填充能力处理。
+TERMCHART_API void shade_negative_y(canvas::Canvas& canvas, const Rect& inner,
+                                    const scale::Scale& y_scale, const Style& style = Style{});
+TERMCHART_API void shade_negative_y(canvas::Canvas& canvas, const PlotArea& area,
+                                    const scale::Scale& y_scale, const Style& style = Style{});
+
+}  // namespace termchart::layout
+
 // ===== include/termchart/layout/sink.hpp =====
 // sink.hpp —— 布局落笔的抽象出口
 //
@@ -11079,7 +11390,7 @@ struct HierNode {
     std::string name;
     double value = 0.0;
     Color color = Color::none();  // none → 按第一层分支自动配色
-    std::vector<HierNode> children;
+    std::vector<HierNode> children{};
 
     [[nodiscard]] bool is_leaf() const noexcept { return children.empty(); }
 };
@@ -11490,7 +11801,7 @@ public:
         double med = 0.0;
         double q3 = 0.0;
         double hi = 0.0;   // 须上端
-        std::vector<double> outliers;  // 须外单点
+        std::vector<double> outliers{};  // 须外单点（缺省空）
     };
     struct Options {
         Color color = default_color(DefaultColor::Neutral);
@@ -11970,6 +12281,10 @@ public:
     [[nodiscard]] bool has_y_domain() const noexcept { return y_domain_.has_value(); }
     void set_show_legend(bool on) { show_legend_ = on; }
 
+    // y 轴零线强调 + 负区底色（SymLog 等跨零轴辅助）。默认关，不影响现有行为。
+    void set_emphasize_zero(bool on) { emphasize_zero_ = on; }
+    void set_shade_negative(bool on) { shade_negative_ = on; }
+
     // x 轴刻度标签格式化钩子：**只影响标签文本，不影响刻度位置**（位置仍由
     // scale::ticks_for 的 nice 值决定）。给时间轴用——x 是 epoch 秒这类连续
     // 数值、但人要看 "03-01" 而不是 "1772350000" 时，由调用方注入格式化，
@@ -12009,6 +12324,8 @@ private:
     bool auto_domain_ = true;
     bool include_zero_ = false;
     bool show_legend_ = true;
+    bool emphasize_zero_ = false;
+    bool shade_negative_ = false;
     std::optional<scale::Domain> y_domain_;
     std::function<std::string(double)> x_tick_formatter_;
     std::vector<double> x_ticks_;
@@ -18399,7 +18716,7 @@ struct VectorOptions {
     // 依赖渲染端字体），而非 <text>/Helvetica。需配合 outline_font 提供 TTF 字节；
     // 未提供字体时自动回退到旧行为。
     bool text_outline = false;
-    std::vector<std::uint8_t> outline_font;
+    std::vector<std::uint8_t> outline_font{};  // 缺省无轮廓字体（回退旧行为）
 };
 
 class VectorBackend : public Backend {
@@ -18424,6 +18741,59 @@ protected:
 
 [[nodiscard]] TERMCHART_API std::string render_vector(VectorBackend& backend,
                                                       const scene::Scene& scene);
+
+}  // namespace termchart::backend::vector
+
+// ===== include/termchart/backend/vector/eps_backend.hpp =====
+// backend/vector/eps_backend.hpp —— Scene → EPS（PostScript 子集，EPSF-1.2）
+//
+// 设计目标：与 svg_backend / pdf_backend 同款接口形态（Options + render + bytes()/str()）。
+// 范围：
+//   * Scene 的子集：MoveTo / LineTo / RectOp (fill+stroke) / FillOp / StrokeOp /
+//     TextOp（仅 ASCII / Helvetica 字族，不嵌入字体）/ ArcOp（以折线逼近）；
+//   * 真彩 RGB（颜色类型 / PostScript rg/RG）；
+//   * 单页（多页留给后续切片）。
+//
+// 故意不写 / 未做（与 pdf_backend 一致）：
+//   * 圆弧（ArcOp 以折线逼近，非原生圆弧算子）；贝塞尔（未做）；
+//   * 位图嵌入（ImageOp 落白占位矩形，未内嵌位图）；
+//   * 透明度 / 混合模式；字体嵌入（用标准字体零成本，但 ASCII only）。
+//
+// 实现说明：EPS 是 PostScript 子集，而 PDF 的内容流算子（M/L/re/f/S/B/rg/RG/w/
+// BT/Tf/Td/Tj/ET/q/Q）在 PostScript 里同样有效。因此本后端几乎逐行镜像 pdf_backend，
+// 只是去掉 xref / 对象表、改为 %!PS-Adobe 头 + %%BoundingBox 包裹。坐标系同样
+// 翻转（Scene y 向下 → PostScript y 向上 = height_pt_ - y）。
+
+
+
+namespace termchart::backend::vector {
+
+struct EpsOptions {
+    double width_pt  = 612.0;   // US Letter 宽（pt）
+    double height_pt = 792.0;   // US Letter 高（pt）
+    bool   showpage  = true;    // 末尾 emit showpage（独立查看用；严格 EPSF 可关）
+};
+
+class EpsBackend final : public VectorBackend {
+public:
+    void set_options(const EpsOptions& options) noexcept { opts_ = options; }
+    [[nodiscard]] const EpsOptions& options() const noexcept { return opts_; }
+
+    void begin() override { out_.clear(); }
+    void end() override;
+    [[nodiscard]] std::string_view bytes() const override { return out_; }
+    [[nodiscard]] const std::string& str() const noexcept { return out_; }
+
+    void render(const scene::Scene& scene) override;
+
+private:
+    EpsOptions opts_;
+    std::string out_;
+};
+
+// 便捷：begin + render + end，返回字节流拷贝。
+[[nodiscard]] TERMCHART_API std::string render_eps(EpsBackend& backend,
+                                                  const scene::Scene& scene);
 
 }  // namespace termchart::backend::vector
 
@@ -21031,6 +21401,33 @@ private:
 };
 
 }  // namespace termchart::app
+
+// ===== include/termchart/api/export_image.hpp =====
+// export_image.hpp —— 位图导出高层入口（chart → 文件）
+//
+// 这是「把一张图存成文件」的统一门面：编码（image::encode）+ 写盘（api::write_to）
+// 两步合一。chart / 应用层只调这一个函数即可，不必关心各编码器细节。所有格式经同一
+// ImageFormat 枚举选择，避免散落一堆 save_png / save_jpeg 游离函数。
+
+
+
+namespace termchart::api {
+
+// 编码位图并写入 path（二进制）。返回 Status（= ErrorCode）：
+//   Ok            成功写盘；
+//   InvalidArgument  位图为空或对应格式未实现（encode 返回空串）；
+//   IoError       文件打不开或写失败。
+TERMCHART_API Status save_image(const image::Bitmap& bitmap, std::string_view path,
+                               image::ImageFormat format,
+                               const image::EncodeOptions& opts = {});
+
+// 多帧重载（动画 GIF / 视频 MP4 / AVIF）：把一串 Bitmap 编码并写入 path。
+// 单帧调用等价于把 frames 设为 1 张；视频容器经 opts.video_codec 选 H264/H265。
+TERMCHART_API Status save_image(std::span<const image::Bitmap> frames, std::string_view path,
+                               image::ImageFormat format,
+                               const image::EncodeOptions& opts = {});
+
+}  // namespace termchart::api
 
 // ===== include/termchart/api/opts.hpp =====
 // opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）

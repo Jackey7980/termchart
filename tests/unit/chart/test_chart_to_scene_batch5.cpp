@@ -58,12 +58,12 @@ hier::HierNode sample_tree() {
     hier::HierNode root;
     root.name = "root";
     root.children = {
-        hier::HierNode{.name = "a", .value = 3.0},
+        hier::HierNode{.name = "a", .value = 3.0, .children = {}},
         hier::HierNode{.name = "b",
                        .value = 5.0,
-                       .children = {hier::HierNode{.name = "b1", .value = 2.0},
-                                    hier::HierNode{.name = "b2", .value = 3.0}}},
-        hier::HierNode{.name = "c", .value = 4.0},
+                       .children = {hier::HierNode{.name = "b1", .value = 2.0, .children = {}},
+                                    hier::HierNode{.name = "b2", .value = 3.0, .children = {}}}},
+        hier::HierNode{.name = "c", .value = 4.0, .children = {}},
     };
     return root;
 }

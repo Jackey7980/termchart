@@ -261,22 +261,22 @@ TEST_CASE("image/png 解码: 宽高撒谎的 IHDR 被尺寸守卫拒绝，而不
 }
 
 TEST_CASE("image/decoder: 按魔数识别格式并分发") {
-    CHECK(sniff_image_format(kSubPng, sizeof(kSubPng)) == ImageFormat::Png);
+    CHECK(sniff_image_format(kSubPng, sizeof(kSubPng)) == DetectedFormat::Png);
     const unsigned char jpeg[] = {0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10};
-    CHECK(sniff_image_format(jpeg, sizeof(jpeg)) == ImageFormat::Jpeg);
+    CHECK(sniff_image_format(jpeg, sizeof(jpeg)) == DetectedFormat::Jpeg);
     const unsigned char gif[] = {'G', 'I', 'F', '8', '9', 'a'};
-    CHECK(sniff_image_format(gif, sizeof(gif)) == ImageFormat::Gif);
+    CHECK(sniff_image_format(gif, sizeof(gif)) == DetectedFormat::Gif);
     const unsigned char bmp[] = {'B', 'M', 0x36, 0x00};
-    CHECK(sniff_image_format(bmp, sizeof(bmp)) == ImageFormat::Bmp);
+    CHECK(sniff_image_format(bmp, sizeof(bmp)) == DetectedFormat::Bmp);
     const unsigned char webp[] = {'R', 'I', 'F', 'F', 0x24, 0x00, 0x00, 0x00,
                                   'W', 'E', 'B', 'P'};
-    CHECK(sniff_image_format(webp, sizeof(webp)) == ImageFormat::WebP);
+    CHECK(sniff_image_format(webp, sizeof(webp)) == DetectedFormat::WebP);
     const unsigned char junk[] = {1, 2, 3, 4};
-    CHECK(sniff_image_format(junk, sizeof(junk)) == ImageFormat::Unknown);
-    CHECK(sniff_image_format(nullptr, 0) == ImageFormat::Unknown);
+    CHECK(sniff_image_format(junk, sizeof(junk)) == DetectedFormat::Unknown);
+    CHECK(sniff_image_format(nullptr, 0) == DetectedFormat::Unknown);
 
-    CHECK(std::string(image_format_name(ImageFormat::Png)) == "png");
-    CHECK(std::string(image_format_name(ImageFormat::WebP)) == "webp");
+    CHECK(std::string(image_format_name(DetectedFormat::Png)) == "png");
+    CHECK(std::string(image_format_name(DetectedFormat::WebP)) == "webp");
 
     // PNG 有解码器：直接解
     const Result<Bitmap> png = decode_image(kPalette8Png, sizeof(kPalette8Png));

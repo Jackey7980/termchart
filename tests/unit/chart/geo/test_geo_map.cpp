@@ -320,7 +320,8 @@ TEST_CASE("geo_map::render_bitmap draws legend band when draw_legend set") {
     std::size_t diff = 0;
     for (std::uint32_t y = 0; y < 80; ++y)
         for (int c = 0; c < 3; ++c)
-            if (bmp_on.at(col, y, c) != bmp_off.at(col, y, c)) ++diff;
+            if (bmp_on.at(col, y, static_cast<std::uint8_t>(c)) !=
+                bmp_off.at(col, y, static_cast<std::uint8_t>(c))) ++diff;
     CHECK(diff > 0);
 
     // 色标带本身应是纵向渐变：顶部色 ≠ 底部色。

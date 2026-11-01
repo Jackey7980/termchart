@@ -43,6 +43,10 @@ SRC_INTERNAL_CXX = (
     "network/proxy_tunnel",
     "network/proxy_sys_win32",
     "network/proxy_sys_posix",
+    # Emscripten 专用入口 TU：仅 __EMSCRIPTEN__ 下编译（顶层 CMakeLists 用
+    # if(EMSCRIPTEN AND TERMCHART_BUILD_WASM) 门控），桌面/CI 构建不碰；无公开头文件，
+    # 仅为 WASM 运行时暴露 C 出口（termchart_blit_canvas / termchart_render_demo）。
+    "wasm/termchart_wasm",
 )
 
 

@@ -37,7 +37,7 @@ TEST_CASE("backend/vector: Scene 折线 → SVG path，autofit viewBox") {
     scene.push(LineTo{Point{10, 5}});
 
     SvgBackend backend;
-    backend.set_options(VectorOptions{.scale = 4.0, .autofit = true});
+    backend.set_options(VectorOptions{.scale = 4.0, .autofit = true, .outline_font = {}});
     const std::string svg = render_vector(backend, scene);
 
     CHECK(svg.rfind("<svg", 0) == 0);

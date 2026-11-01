@@ -308,7 +308,7 @@ void register_systems_impl(std::vector<Demo>& d) {
         tc::image::Bitmap bmp(4, 4, 4);
         bmp.fill(1, 2, 3, 255);
         const std::string png = tc::image::encode_png(bmp);
-        const tc::image::ImageFormat f = tc::image::sniff_image_format(
+        const tc::image::DetectedFormat f = tc::image::sniff_image_format(
             reinterpret_cast<const std::uint8_t*>(png.data()), png.size());
         put_lines(o, {std::string("format=") + tc::image::image_format_name(f)});
     });

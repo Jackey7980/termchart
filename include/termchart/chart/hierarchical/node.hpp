@@ -21,7 +21,7 @@ struct HierNode {
     std::string name;
     double value = 0.0;
     Color color = Color::none();  // none → 按第一层分支自动配色
-    std::vector<HierNode> children;
+    std::vector<HierNode> children{};
 
     [[nodiscard]] bool is_leaf() const noexcept { return children.empty(); }
 };

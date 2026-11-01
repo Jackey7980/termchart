@@ -126,8 +126,8 @@ inline ChartGeom lerp_geom(const ChartGeom& a, const ChartGeom& b, double e) {
     g.ytop = termchart::util::lerp(a.ytop, b.ytop, e);
     g.step = b.step;
     g.intervals = b.intervals;
-    g.xs.resize(a.n);  // 按 n 定长，保证 xs/ly 长度 == n（供 smooth_y_at 安全下标）
-    g.ly.resize(a.n);
+    g.xs.resize(static_cast<std::size_t>(a.n));  // 按 n 定长，保证 xs/ly 长度 == n（供 smooth_y_at 安全下标）
+    g.ly.resize(static_cast<std::size_t>(a.n));
     for (int i = 0; i < a.n; ++i) {
         g.xs[static_cast<std::size_t>(i)] =
             termchart::util::lerp(a.xs[static_cast<std::size_t>(i)],

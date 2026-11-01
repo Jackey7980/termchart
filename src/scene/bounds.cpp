@@ -12,6 +12,7 @@ namespace {
 
 class BoundsVisitor final : public CommandVisitor {
 public:
+    using CommandVisitor::visit;  // 仅 override 部分指令；引入基类其余 visit 重载，避免 -Woverloaded-virtual
     [[nodiscard]] Rect result() const noexcept {
         if (!any_) {
             return Rect{};

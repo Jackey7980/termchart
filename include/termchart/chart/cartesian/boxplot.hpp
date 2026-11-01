@@ -24,7 +24,7 @@ public:
         double med = 0.0;
         double q3 = 0.0;
         double hi = 0.0;   // 须上端
-        std::vector<double> outliers;  // 须外单点
+        std::vector<double> outliers{};  // 须外单点（缺省空）
     };
     struct Options {
         Color color = default_color(DefaultColor::Neutral);

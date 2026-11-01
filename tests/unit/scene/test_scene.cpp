@@ -21,6 +21,7 @@ using namespace termchart::scene;
 
 class CountingVisitor final : public CommandVisitor {
 public:
+    using CommandVisitor::visit;  // 仅 override 部分指令；引入基类其余 visit 重载，避免 -Woverloaded-virtual
     void visit(const MoveTo&) override { ++counts_[CommandKind::MoveTo]; }
     void visit(const LineTo&) override { ++counts_[CommandKind::LineTo]; }
     void visit(const RectOp&) override { ++counts_[CommandKind::Rect]; }

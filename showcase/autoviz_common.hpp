@@ -48,17 +48,16 @@ inline std::string autoviz_csv(const Panorama& p) {
         s += in.tag;
     }
     s += ",指数\n";
-    const std::string fmt = "%.6g";
     char buf[64];
     for (std::size_t i = 0; i < p.M; ++i) {
         s += iso_date(i);
         for (const Instrument& in : p.inst) {
             s += ',';
-            std::snprintf(buf, sizeof(buf), fmt.c_str(), in.price[i]);
+            std::snprintf(buf, sizeof(buf), "%.6g", in.price[i]);
             s += buf;
         }
         s += ',';
-        std::snprintf(buf, sizeof(buf), fmt.c_str(), p.market[i]);
+        std::snprintf(buf, sizeof(buf), "%.6g", p.market[i]);
         s += buf;
         s += '\n';
     }

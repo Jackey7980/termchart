@@ -30,7 +30,7 @@ struct VectorOptions {
     // 依赖渲染端字体），而非 <text>/Helvetica。需配合 outline_font 提供 TTF 字节；
     // 未提供字体时自动回退到旧行为。
     bool text_outline = false;
-    std::vector<std::uint8_t> outline_font;
+    std::vector<std::uint8_t> outline_font{};  // 缺省无轮廓字体（回退旧行为）
 };
 
 class VectorBackend : public Backend {

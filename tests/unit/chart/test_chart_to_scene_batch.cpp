@@ -87,7 +87,7 @@ TEST_CASE("to_scene: K 线图产出真实矢量 Scene（实体/影线被 GroupOp
 TEST_CASE("to_scene: 箱线图产出真实矢量 Scene（箱体/须/中位被 GroupOp 包住）") {
     BoxPlotChart chart;
     chart.set_data({
-        BoxPlotChart::BoxStats{.lo = 1.0, .q1 = 2.0, .med = 3.0, .q3 = 4.0, .hi = 5.0},
+        BoxPlotChart::BoxStats{.lo = 1.0, .q1 = 2.0, .med = 3.0, .q3 = 4.0, .hi = 5.0, .outliers = {}},
         BoxPlotChart::BoxStats{.lo = 2.0, .q1 = 3.0, .med = 3.5, .q3 = 4.5, .hi = 6.0,
                                .outliers = std::vector<double>{7.5}},
     });

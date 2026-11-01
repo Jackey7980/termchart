@@ -58,10 +58,10 @@ Palette build_palette(std::span<const Bitmap> frames, int max_colors) {
         double best_ext = -1.0;
         int best_ch = 0;
         for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
-            if (boxes[i].items.empty()) continue;
+            if (boxes[static_cast<std::size_t>(i)].items.empty()) continue;
             for (int ch = 0; ch < 3; ++ch) {
                 int mn = 255, mx = 0;
-                for (const auto& it : boxes[i].items) {
+                for (const auto& it : boxes[static_cast<std::size_t>(i)].items) {
                     const int v = ch == 0 ? it.first.r : ch == 1 ? it.first.g : it.first.b;
                     if (v < mn) mn = v;
                     if (v > mx) mx = v;
@@ -75,7 +75,7 @@ Palette build_palette(std::span<const Bitmap> frames, int max_colors) {
             }
         }
         if (best < 0 || best_ext <= 0.0) break;
-        auto& b = boxes[best];
+        auto& b = boxes[static_cast<std::size_t>(best)];
         std::sort(b.items.begin(), b.items.end(), [&](const std::pair<RGB, int>& a,
                                                       const std::pair<RGB, int>& c) {
             const int va = best_ch == 0 ? a.first.r : best_ch == 1 ? a.first.g : a.first.b;
@@ -87,7 +87,7 @@ Palette build_palette(std::span<const Bitmap> frames, int max_colors) {
         long half = 0;
         int split = 1;
         for (int i = 0; i < static_cast<int>(b.items.size()); ++i) {
-            half += b.items[i].second;
+            half += b.items[static_cast<std::size_t>(i)].second;
             if (half >= total / 2) {
                 split = i + 1;
                 break;
@@ -96,7 +96,7 @@ Palette build_palette(std::span<const Bitmap> frames, int max_colors) {
         if (split <= 0 || split >= static_cast<int>(b.items.size())) break;
         Box nb;
         nb.items.assign(b.items.begin() + split, b.items.end());
-        b.items.resize(split);
+        b.items.resize(static_cast<std::size_t>(split));
         boxes.push_back(std::move(nb));
     }
     Palette p;
@@ -182,8 +182,8 @@ void lzw_compress(const std::vector<std::uint8_t>& in, int mcs, std::string& out
     int code_size = mcs + 1;
     int next_code = endc + 1;
     std::unordered_map<std::string, int> dict;
-    std::vector<std::string> code_str(clear);
-    for (int i = 0; i < clear; ++i) code_str[i] = std::string(1, static_cast<char>(i));
+    std::vector<std::string> code_str(static_cast<std::size_t>(clear));
+    for (int i = 0; i < clear; ++i) code_str[static_cast<std::size_t>(i)] = std::string(1, static_cast<char>(i));
     auto reset = [&]() {
         dict.clear();
         next_code = endc + 1;
@@ -199,15 +199,15 @@ void lzw_compress(const std::vector<std::uint8_t>& in, int mcs, std::string& out
     int prefix = in[0];
     for (size_t i = 1; i < in.size(); ++i) {
         const int k = in[i];
-        const std::string key = code_str[prefix] + static_cast<char>(k);
+        const std::string key = code_str[static_cast<std::size_t>(prefix)] + static_cast<char>(k);
         const auto it = dict.find(key);
         if (it != dict.end()) {
             prefix = it->second;
         } else {
             bw.put(prefix, code_size);
             dict[key] = next_code;
-            if (code_str.size() <= static_cast<size_t>(next_code)) code_str.resize(next_code + 1);
-            code_str[next_code] = key;
+            if (code_str.size() <= static_cast<size_t>(next_code)) code_str.resize(static_cast<std::size_t>(next_code) + 1);
+            code_str[static_cast<std::size_t>(next_code)] = key;
             ++next_code;
             if (next_code == (1 << code_size) && code_size < 12) ++code_size;
             if (next_code == 4096) {
@@ -271,9 +271,9 @@ std::string encode_gif(std::span<const Bitmap> frames, const EncodeOptions& opts
     // 全局调色板（补齐到 gct_size 项）
     for (int i = 0; i < gct_size; ++i) {
         if (i < ncolors) {
-            out.push_back(static_cast<char>(pal.colors[i].r));
-            out.push_back(static_cast<char>(pal.colors[i].g));
-            out.push_back(static_cast<char>(pal.colors[i].b));
+            out.push_back(static_cast<char>(pal.colors[static_cast<std::size_t>(i)].r));
+            out.push_back(static_cast<char>(pal.colors[static_cast<std::size_t>(i)].g));
+            out.push_back(static_cast<char>(pal.colors[static_cast<std::size_t>(i)].b));
         } else {
             out.append(3, static_cast<char>(0));
         }
