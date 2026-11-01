@@ -12,16 +12,22 @@
 - **护栏齐全**：分层规则、头文件自洽性、生成物一致性、每头独立编译、golden 快照、fuzz 入口、性能基线。
 
 <p align="center">
-  <img src="docs/images/world_map.png" width="49%" alt="世界地图 choropleth（自带 colorbar）">
-  <img src="docs/images/sugiyama_dense.png" width="49%" alt="Sugiyama 分层布局，高亮最短路径">
+  <img src="docs/images/term_dashboard.png" width="49%" alt="仪表盘：折线 + 柱状 + 热力">
+  <img src="docs/images/term_contour.png" width="49%" alt="等高线图">
 </p>
 <p align="center">
-  <img src="docs/images/city_plot.png" width="32%" alt="城市路网图">
-  <img src="docs/images/spatiotemporal.png" width="32%" alt="时空网络演化">
+  <img src="docs/images/term_showcase.png" width="49%" alt="showcase：盲文 + 半块双栅格">
+  <img src="docs/images/term_metro_map.png" width="49%" alt="城市轨道交通示意图">
+</p>
+<p align="center">
+  <img src="docs/images/sugiyama_dense.png" width="72%" alt="Sugiyama 分层布局，高亮最短路径">
 </p>
 
-> 上面四张都是**本仓库示例的真实产出**（`examples/67_world_map`、`60_dense_sugiyama`、
-> `69_city_plot`、`81_spatiotemporal_network_demo`），位图由库自身的 PNG 编码器导出。
+> 上面五张都是**本仓库示例的真实产出**，没有一张是外部素材：
+> 前四张是终端渲染的原始输出——`docs/gallery/` 里由 `tools/gen_gallery.py` 生成并校验过
+> 的标准快照，再用 `tools/render_gallery_png.py` 转成终端截图（盲文按 Unicode 的 2×4 点阵
+> 直接画点，不依赖字体是否带盲文字形）；最后一张是 `60_dense_sugiyama` 示例经**本库自己的
+> PNG 编码器**导出的位图。
 
 ## 当前状态（诚实口径）
 
