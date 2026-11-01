@@ -6,8 +6,27 @@
 
 #include <doctest.h>
 
+#include "termchart/core/point.hpp"
+#include "termchart/scene/command.hpp"
+
 using namespace termchart::backend::vector;
+using namespace termchart;
+using namespace termchart::scene;
 using termchart::scene::Scene;
+
+TEST_CASE("pdf::stroked path emits stroke color and is not filled") {
+    // 回归：路径按约定只描边（与 SVG/scene_renderer 一致），必须发射 RG 描边色，
+    // 且不得出现 fill+stroke 的 B 操作符（旧实现把折线用残留 fill 填成色块）。
+    PdfBackend backend;
+    Scene s;
+    s.push(StrokeOp{Color::rgb(20, 20, 20), 1.5});
+    s.push(MoveTo{Point{10.0, 10.0}});
+    s.push(LineTo{Point{100.0, 80.0}});
+    auto bytes = render_pdf(backend, s);
+    CHECK(bytes.find("RG") != std::string::npos);   // 描边色已发射
+    CHECK(bytes.find("S\n") != std::string::npos);  // 画线
+    CHECK(bytes.find("\nB\n") == std::string::npos); // 路径不得被填充
+}
 
 TEST_CASE("pdf::PdfBackend basic empty scene") {
     PdfBackend backend;

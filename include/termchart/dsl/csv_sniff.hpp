@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -61,14 +62,41 @@ struct CsvOptions {
 
 // 解析 CSV 为 document::TableModel：has_header 时首行作表头，其余为数据行。
 // 失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument。
+//
+// ⚠️ 内存口径：本函数**整表物化**（输入 + TableModel 同时在内存里），
+// 适合"整表都要"的场景；只想抽样看类型请用 sniff_columns，
+// 数据大到放不下时请用 parse_csv_stream（内存 O(一行)）。
 [[nodiscard]] TERMCHART_API Result<document::TableModel> parse_csv(
     std::string_view source, const CsvOptions& options = {},
     ParseDiagnostic* out_diagnostic = nullptr);
 
 // 逐列推断类型，返回每列的 ColumnProfile（name/type/filled/empty）。
-// 列数：has_header 时取表头列数，否则取所有行的最大列数。
+// 列数：has_header 时取表头列数，否则取**样本行**的最大列数。
+//
+// 内存口径：只读前 sniff_rows 个数据行做推断（sniff_rows==0 才读全部），
+// 不会为了推断 100 行把整个文件读进来。
 [[nodiscard]] TERMCHART_API Result<std::vector<ColumnProfile>> sniff_columns(
     std::string_view source, const CsvOptions& options = {},
+    ParseDiagnostic* out_diagnostic = nullptr);
+
+// 流式 CSV 的行接收器。
+//
+// 语义：每读到一行回调一次；fields 是该行按 CSV 规则解析出的字段。
+// has_header=true 时**第一次回调拿到的是表头**（字段即列名），其后是数据行。
+// 返回 false 表示"够了，别再读了"——解析随即正常结束（不是错误）。
+class TERMCHART_API CsvRowSink {
+public:
+    virtual ~CsvRowSink() = default;
+    virtual bool on_row(std::vector<std::string>& fields) = 0;
+};
+
+// 流式解析 CSV：逐行喂给 sink，内存占用 **O(一行)**，与文件大小无关。
+//
+// 适用场景：GB 级 CSV 直接喂给图表管线，不落中间表。
+// 失败返回 ParseError（引号未闭合）/ OutOfRange（超过 max_rows）/ InvalidArgument（非法分隔符）。
+// 行号列号在流式下是增量统计的，与整表解析口径一致。
+[[nodiscard]] TERMCHART_API Status parse_csv_stream(
+    std::istream& input, const CsvOptions& options, CsvRowSink& sink,
     ParseDiagnostic* out_diagnostic = nullptr);
 
 }  // namespace termchart::dsl

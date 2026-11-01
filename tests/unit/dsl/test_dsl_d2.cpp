@@ -170,4 +170,142 @@ TEST_CASE("dsl/registry: d2 已登记（规格 14 个方言文件就此齐备）
     CHECK(registry.parse("d2", "a -> b").has_value());
 }
 
+// ── 块级声明（style / vars / classes）────────────────────────────────────
+//
+// 回归：这三块历史上被"整块跳过"或"误当容器块造幽灵节点"。这里把正确语义钉死。
+
+TEST_CASE("dsl/d2: style 块内容不再丢失，对所有节点生效") {
+    const std::string source = R"(a: circle
+style: {
+  fill: "#f00"
+  stroke: black
+}
+b
+)";
+    const Result<AstGraph> result = parse_d2(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+
+    // 仍然不造节点
+    CHECK(ast.nodes.size() == 2);
+    CHECK(ast.find_node("style") == nullptr);
+
+    const AstNode* node_a = ast.find_node("a");
+    const AstNode* node_b = ast.find_node("b");
+    REQUIRE(node_a != nullptr);
+    REQUIRE(node_b != nullptr);
+
+    // 块内属性逐条落到节点上（引号已剥）
+    bool a_fill = false;
+    bool a_stroke = false;
+    for (const AstAttribute& attribute : node_a->attributes) {
+        a_fill = a_fill || (attribute.key == "style.fill" && attribute.value == "#f00");
+        a_stroke = a_stroke || (attribute.key == "style.stroke" && attribute.value == "black");
+    }
+    CHECK(a_fill);
+    CHECK(a_stroke);
+
+    // 顶层 style 与声明顺序无关：b 在 style 之后声明，同样拿到样式
+    bool b_fill = false;
+    for (const AstAttribute& attribute : node_b->attributes) {
+        b_fill = b_fill || (attribute.key == "style.fill" && attribute.value == "#f00");
+    }
+    CHECK(b_fill);
+
+    // 图级属性袋里也留一份（AST → Graph 时会被搬进 Graph 的图级属性）
+    bool graph_fill = false;
+    for (const AstAttribute& attribute : ast.attributes) {
+        graph_fill = graph_fill || (attribute.key == "style.fill" && attribute.value == "#f00");
+    }
+    CHECK(graph_fill);
+}
+
+TEST_CASE("dsl/d2: vars / classes 块不再造幽灵节点") {
+    const std::string source = R"(vars: {
+  x: 5
+}
+classes: {
+  warn: {
+    fill: yellow
+  }
+}
+a
+)";
+    const Result<AstGraph> result = parse_d2(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+
+    // 关键回归：以前这里会造出名为 vars / classes 的容器节点，
+    // 甚至把 vars 块里的 x 解析成节点。
+    CHECK(ast.nodes.size() == 1);
+    CHECK(ast.find_node("vars") == nullptr);
+    CHECK(ast.find_node("classes") == nullptr);
+    CHECK(ast.find_node("x") == nullptr);
+    CHECK(ast.find_node("warn") == nullptr);
+    CHECK(ast.find_node("a") != nullptr);
+
+    bool has_var = false;
+    bool has_class = false;
+    for (const AstAttribute& attribute : ast.attributes) {
+        has_var = has_var || (attribute.key == "var.x" && attribute.value == "5");
+        has_class = has_class || (attribute.key == "class.warn.fill" && attribute.value == "yellow");
+    }
+    CHECK(has_var);
+    CHECK(has_class);
+}
+
+TEST_CASE("dsl/d2: 类样式套用到引用它的节点，节点自有样式优先") {
+    const std::string source = R"(classes: {
+  warn: {
+    fill: yellow
+    stroke: red
+  }
+}
+a.classes: warn
+b.classes: warn
+b.style: {
+  fill: green
+}
+)";
+    const Result<AstGraph> result = parse_d2(source);
+    REQUIRE(result.has_value());
+    const AstGraph& ast = *result;
+    REQUIRE(ast.nodes.size() == 2);
+
+    const AstNode* a = ast.find_node("a");
+    const AstNode* b = ast.find_node("b");
+    REQUIRE(a != nullptr);
+    REQUIRE(b != nullptr);
+
+    bool a_fill_yellow = false;
+    bool a_stroke_red = false;
+    for (const AstAttribute& attribute : a->attributes) {
+        a_fill_yellow = a_fill_yellow || (attribute.key == "style.fill" && attribute.value == "yellow");
+        a_stroke_red = a_stroke_red || (attribute.key == "style.stroke" && attribute.value == "red");
+    }
+    CHECK(a_fill_yellow);
+    CHECK(a_stroke_red);
+
+    // b 自己写了 fill: green —— 节点自有样式压过类样式
+    bool b_fill_green = false;
+    bool b_fill_yellow = false;
+    bool b_stroke_red = false;
+    for (const AstAttribute& attribute : b->attributes) {
+        b_fill_green = b_fill_green || (attribute.key == "style.fill" && attribute.value == "green");
+        b_fill_yellow = b_fill_yellow || (attribute.key == "style.fill" && attribute.value == "yellow");
+        b_stroke_red = b_stroke_red || (attribute.key == "style.stroke" && attribute.value == "red");
+    }
+    CHECK(b_fill_green);
+    CHECK_FALSE(b_fill_yellow);
+    CHECK(b_stroke_red);
+}
+
+TEST_CASE("dsl/d2: 块级声明缺 '{' 时报错而不是静默吞掉") {
+    // fail-loud：style 是 D2 保留字，写成 `style: circle` 是笔误，
+    // 以前整行被静默跳过，现在必须报错。
+    const Result<AstGraph> bad = parse_d2("style: circle\n");
+    REQUIRE_FALSE(bad.has_value());
+    CHECK(bad.error() == ErrorCode::ParseError);
+}
+
 }  // namespace

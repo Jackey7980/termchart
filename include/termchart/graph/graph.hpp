@@ -15,6 +15,7 @@
 
 #include "termchart/core/rect.hpp"
 #include "termchart/export.hpp"
+#include "termchart/graph/attributes.hpp"
 #include "termchart/graph/edge.hpp"
 #include "termchart/graph/node.hpp"
 
@@ -59,12 +60,20 @@ public:
     // 所有节点外框的并集；无节点返回默认空矩形。布局之后才有意义。
     [[nodiscard]] TERMCHART_API Rect bounds() const noexcept;
 
+    // 图级元数据存取口（袋子本体在 private 里）。
+    [[nodiscard]] Attributes& attributes() noexcept { return attributes_; }
+    [[nodiscard]] const Attributes& attributes() const noexcept { return attributes_; }
+
     void clear();
 
 private:
     std::vector<Node> nodes_;
     std::vector<Edge> edges_;
     NodeId next_id_ = 1;
+    // 图级元数据（不属于任何节点/边）：D2 的全局 style / vars、DOT 的 graph 级
+    // 属性、DSL 解析出的图级标注。以前图级属性在 AST → Graph 的转换里无处安放，
+    // 只能整段丢弃；给 Graph 一个袋子把它们带过去，渲染侧才能拿到"整图"的语义。
+    Attributes attributes_;
 };
 
 }  // namespace termchart::graph

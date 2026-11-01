@@ -128,6 +128,7 @@ Rect Graph::bounds() const noexcept {
 void Graph::clear() {
     nodes_.clear();
     edges_.clear();
+    attributes_.clear();
     next_id_ = 1;
 }
 

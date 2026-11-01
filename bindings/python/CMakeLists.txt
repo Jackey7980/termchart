@@ -7,6 +7,12 @@
 #   * 产出 Python 模块 `termchart`：目标名用 termchart_pybind（避免与核心库目标
 #     termchart 冲突），但 OUTPUT_NAME 强制为 termchart，使 `import termchart` 命中文件
 #   * 链接 termchart::termchart；Windows 下静态链接 MinGW 运行时，使 .pyd 自包含
+#
+# 安装规则（pip 可用的关键）：
+#   scikit-build-core 把 CMake 的 install 产物打进 wheel，因此**必须**在这里
+#   显式 install(TARGETS ...)。少了这一行，模块能编出来但进不了 wheel，
+#   `pip install` 之后 `import termchart` 直接 ImportError。
+#   DESTINATION "." = wheel 根目录 → site-packages/termchart.<abi>.pyd。
 
 if(NOT TERMCHART_BUILD_PYTHON)
     return()
@@ -27,4 +33,12 @@ if(WIN32)
     target_link_options(termchart_pybind PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
-# Python 用户从 site-packages 拿到 termchart.pyd 后可 `import termchart`
+# ── 打包进 wheel ─────────────────────────────────────────────────────────
+# 模块落在 wheel 根目录（site-packages/termchart.cpython-XXX.pyd）。
+install(TARGETS termchart_pybind
+        LIBRARY DESTINATION .
+        RUNTIME DESTINATION .
+        ARCHIVE DESTINATION .)
+
+# 类型存根：让 IDE / mypy 知道 Python 侧的函数签名。
+install(FILES "${CMAKE_CURRENT_LIST_DIR}/termchart.pyi" DESTINATION .)

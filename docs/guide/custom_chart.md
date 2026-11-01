@@ -84,6 +84,30 @@ termchart::chart::ChartRegistry::instance().register_chart(
 想被悬停/点击命中：登记 `chart::HitRegion`（rect/circle/polygon + payload id）。
 interaction 层只按形状判定，不认识你的图表类型。
 
+## 让图表可动画（可选）
+
+`api::chart_to_scene` 在 `to_scene` 之后会自动跑 `apply_animation`：它按进度改写**组内**几何
+（折线从左向右截断、柱状从基线长高），轴/网格/标题/图例在组外，逐位不动。
+
+要让你的图种被动画，只需补一个 override，把「组 id → 当前进度」填出来：
+
+```cpp
+void MyChart::animation_groups(std::vector<chart::GroupProgress>& out) const override {
+    // 组号必须与 to_scene 里 begin_group(id) 的编号**逐条对齐**：
+    // 空系列要跳过（不占号），否则第二个系列会拿到组 0 的进度，串台。
+    std::uint32_t g = 0;
+    for (const auto& s : series_) {
+        if (s.points.empty()) continue;
+        out.push_back(chart::GroupProgress{g, progress_of(s.name)});
+        ++g;
+    }
+}
+```
+
+- 不 override（默认空实现）→ `apply_animation` 拿到空表，原样返回，**零开销、零差异**；
+- 进度来源是基类 `progress_of(name)`（由 `add_animation(name, …)` + `tick(now)` 驱动）；
+- 折线/柱状已内置这套映射，自定义图种照此对齐即可复用通用拦截器，不必再抄一遍截断代码。
+
 ## 验证
 
 - 新头文件要同步：`src/` 同名 cpp（虚表锚点）、单元测试、（如 header-only）

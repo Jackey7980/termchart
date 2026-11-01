@@ -6,6 +6,7 @@
 //   * 类型推断遵循 Boolean → Integer → Real → Date → Text 的优先级。
 #include <doctest.h>
 
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,16 @@ namespace {
 
 using namespace termchart;
 using namespace termchart::dsl;
+
+// 把流式解析的结果收集起来（用于与整表路径做差分比对）。
+class CollectingSink final : public CsvRowSink {
+public:
+    bool on_row(std::vector<std::string>& fields) override {
+        rows.push_back(fields);
+        return true;
+    }
+    std::vector<std::vector<std::string>> rows;
+};
 
 TEST_CASE("dsl/markdown: 基本管道表格与对齐") {
     const std::string source =
@@ -386,6 +397,139 @@ TEST_CASE("dsl/csv: 空白行被跳过") {
     REQUIRE(result->row_count() == 2);
     CHECK(result->rows()[0][0] == "1");
     CHECK(result->rows()[1][0] == "3");
+}
+
+// ── 流式解析 ──────────────────────────────────────────────────────────────
+//
+// 契约：parse_csv_stream 与 parse_csv（整表）必须给出**逐字段相同**的结果。
+// 两条路径是两份独立实现（一个是内存游标，一个是带缓冲的流），所以用差分测试
+// 把它们钉在一起：任何一边改了 CSV 语义，另一边没跟上，这个测试就会红。
+
+namespace {
+
+// 把整表路径的结果摊平成"行 → 字段"的形状，便于与流式结果比对。
+std::vector<std::vector<std::string>> flatten(const document::TableModel& model, bool has_header) {
+    std::vector<std::vector<std::string>> rows;
+    // 表头为空 = 这份输入根本没有表头行（空输入 / 全是空行）：此时不能凭空造出一行，
+    // 否则与流式路径对不上（那边"没有行就没有回调"）。
+    if (has_header && !model.header().empty()) {
+        rows.push_back(model.header());
+    }
+    for (const std::vector<std::string>& row : model.rows()) {
+        rows.push_back(row);
+    }
+    return rows;
+}
+
+void check_stream_matches_buffer(const std::string& source, const CsvOptions& options) {
+    const Result<document::TableModel> buffered = parse_csv(source, options);
+    REQUIRE(buffered.has_value());
+
+    std::istringstream input(source);
+    CollectingSink sink;
+    const Status status = parse_csv_stream(input, options, sink);
+    REQUIRE(status == ErrorCode::Ok);
+
+    const std::vector<std::vector<std::string>> expected = flatten(*buffered, options.has_header);
+    REQUIRE(sink.rows.size() == expected.size());
+    for (std::size_t r = 0; r < expected.size(); ++r) {
+        REQUIRE(sink.rows[r].size() == expected[r].size());
+        for (std::size_t c = 0; c < expected[r].size(); ++c) {
+            CHECK(sink.rows[r][c] == expected[r][c]);
+        }
+    }
+}
+
+}  // namespace
+
+TEST_CASE("dsl/csv: 流式解析与整表解析逐字段一致") {
+    const std::vector<std::string> sources = {
+        "a,b\n1,2\n",
+        "a,b\n1,2\n3,4\n",
+        "a,b\n\n1,2\n\n\n3,4\n",                             // 空行
+        "a,b\r\n1,2\r\n",                                   // CRLF
+        "a,b\n\"x,y\",2\n",                                 // 引号内含分隔符
+        "a,b\n\"say \"\"hi\"\"\",2\n",                       // "" 转义
+        "a,b\n\"multi\nline\",2\n3,4\n",                   // 引号内含换行
+        "a,b\n\"tail\"x,2\n",                               // 闭合引号后的字面尾部
+        "\xEF\xBB\xBF" "a,b\n1,2\n",                        // BOM
+        "a,b\n1,2",                                         // 末行无换行
+        "a,b\n,2\n",                                        // 空字段
+        "a,b,c\n1,2,3,4\n",                                 // 行字段数不一致
+        "",
+        "\n\n\n",
+    };
+    for (const std::string& source : sources) {
+        CAPTURE(source);
+        check_stream_matches_buffer(source, CsvOptions{});
+    }
+}
+
+TEST_CASE("dsl/csv: 流式解析错误定位与整表一致") {
+    SUBCASE("未闭合引号 → ParseError") {
+        const std::string source = "a,b\n\"oops,2\n";
+        std::istringstream input(source);
+        CollectingSink sink;
+        ParseDiagnostic diagnostic;
+        const Status status = parse_csv_stream(input, CsvOptions{}, sink, &diagnostic);
+        CHECK(status == ErrorCode::ParseError);
+        CHECK(diagnostic.message == "引号字段未闭合");
+        // 诊断指向起始引号（第 2 行第 1 列）
+        CHECK(diagnostic.line == 2);
+        CHECK(diagnostic.column == 1);
+    }
+    SUBCASE("非法分隔符 → InvalidArgument") {
+        CsvOptions options;
+        options.delimiter = '"';
+        std::istringstream input("a,b\n");
+        CollectingSink sink;
+        const Status status = parse_csv_stream(input, options, sink);
+        CHECK(status == ErrorCode::InvalidArgument);
+    }
+    SUBCASE("超过 max_rows → OutOfRange") {
+        CsvOptions options;
+        options.max_rows = 2;
+        std::istringstream input("x\n1\n2\n3\n");
+        CollectingSink sink;
+        const Status status = parse_csv_stream(input, options, sink);
+        CHECK(status == ErrorCode::OutOfRange);
+    }
+}
+
+TEST_CASE("dsl/csv: 流式解析回调返回 false 可提前收工") {
+    struct StopEarly final : CsvRowSink {
+        bool on_row(std::vector<std::string>& fields) override {
+            rows.push_back(fields);
+            return rows.size() < 2;  // 收够 2 行就停
+        }
+        std::vector<std::vector<std::string>> rows;
+    };
+    std::istringstream input("x\n1\n2\n3\n4\n");
+    StopEarly sink;
+    const Status status = parse_csv_stream(input, CsvOptions{}, sink);
+    CHECK(status == ErrorCode::Ok);
+    REQUIRE(sink.rows.size() == 2);
+    CHECK(sink.rows[0][0] == "x");  // 表头
+    CHECK(sink.rows[1][0] == "1");
+}
+
+TEST_CASE("dsl/csv: sniff_columns 只读样本行，不为推断读满整个文件") {
+    // 10000 行数据，前 2 行是整数，第 3 行起是文本。
+    std::string source = "x\n";
+    for (int i = 0; i < 5000; ++i) {
+        source += "42\n";
+    }
+    source += "abc\n";
+
+    CsvOptions options;
+    options.sniff_rows = 2;
+    options.max_rows = 10000;
+    const Result<std::vector<ColumnProfile>> profiles = sniff_columns(source, options);
+    REQUIRE(profiles.has_value());
+    REQUIRE(profiles->size() == 1);
+    // 只看样本 → Integer（若读满整个文件会被后面的 abc 拖成 Text）
+    CHECK((*profiles)[0].type == ColumnType::Integer);
+    CHECK((*profiles)[0].filled == 2);
 }
 
 }  // namespace

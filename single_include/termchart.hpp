@@ -15908,12 +15908,20 @@ public:
     // 所有节点外框的并集；无节点返回默认空矩形。布局之后才有意义。
     [[nodiscard]] TERMCHART_API Rect bounds() const noexcept;
 
+    // 图级元数据存取口（袋子本体在 private 里）。
+    [[nodiscard]] Attributes& attributes() noexcept { return attributes_; }
+    [[nodiscard]] const Attributes& attributes() const noexcept { return attributes_; }
+
     void clear();
 
 private:
     std::vector<Node> nodes_;
     std::vector<Edge> edges_;
     NodeId next_id_ = 1;
+    // 图级元数据（不属于任何节点/边）：D2 的全局 style / vars、DOT 的 graph 级
+    // 属性、DSL 解析出的图级标注。以前图级属性在 AST → Graph 的转换里无处安放，
+    // 只能整段丢弃；给 Graph 一个袋子把它们带过去，渲染侧才能拿到"整图"的语义。
+    Attributes attributes_;
 };
 
 }  // namespace termchart::graph
@@ -19063,6 +19071,23 @@ struct AstEdge {
     std::vector<AstAttribute> attributes;
 };
 
+// 透明哈希/等价：让索引支持用 string_view 直接查。
+// 用 std::hash<std::string> 的默认 unordered_map 查不了 string_view（key_type 不透明），
+// 只能先构造一个临时 std::string —— 那是每次查询一次堆分配，等于把 O(N) 换成了 O(1) 分配。
+struct TransparentStringHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view text) const noexcept {
+        return std::hash<std::string_view>{}(text);
+    }
+};
+
+struct TransparentStringEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+        return lhs == rhs;
+    }
+};
+
 struct AstGraph {
     std::string name;        // 图名（digraph G / flowchart 无名时为空）
     std::string directive;   // 原文指令，例如 "flowchart TD"、"digraph"
@@ -19073,6 +19098,15 @@ struct AstGraph {
     std::vector<AstNode> nodes;
     std::vector<AstEdge> edges;
 
+    // key → nodes 下标的索引。**nodes 仍是唯一真源**（下标顺序 == 输出顺序，
+    // 所以绝不能把 nodes 换成哈希容器），索引只是加速器：把 find_node / ensure_node
+    // 从 O(N) 降到 O(1)，建图从 O(N²) 降到 O(N)。
+    // 外部若绕过 ensure_node 直接改 nodes（如 mermaid_flow 直接 push_back），
+    // 索引会在下次查询时按"size 不匹配"自动重建，不要求调用方改写法。
+    using NodeIndex = std::unordered_map<std::string, std::size_t, TransparentStringHash,
+                                          TransparentStringEqual>;
+    NodeIndex node_index_;
+
     // 两份重载（const / 非 const）：解析器要在找到的节点上继续填字段，
     // 历史上只能 `const_cast<AstNode*>(find_node(...))`，散在 8 处方言文件里。
     // 现在非 const 版本是第一等公民，const_cast 只保留在实现内部那一处。
@@ -19081,6 +19115,10 @@ struct AstGraph {
     [[nodiscard]] TERMCHART_API bool has_node(std::string_view key) const noexcept;
     // 找不到就创建（解析期的常见动作：边端点可能先于声明出现）。
     TERMCHART_API AstNode& ensure_node(std::string_view key);
+    // 重建 key → 下标索引。仅在"nodes 被外部直接改动"时被自动调用，
+    // 也可供外部在批量改完 nodes 后手动触发一次，省掉逐次查询时的重建。
+    // 需要为哈希表分配内存，因此**不**标 noexcept。
+    TERMCHART_API void rebuild_node_index();
 };
 
 // AST → Graph 的**唯一**适配点。alias 与 style 类属性直接写进 Attributes。
@@ -19371,6 +19409,7 @@ private:
 // 诊断：解析失败返回错误码，可选地把**首个**诊断写到 out_diagnostic；
 // 未闭合引号的位置指向**起始引号**。
 
+#include <iosfwd>
 
 
 namespace termchart::dsl {
@@ -19400,14 +19439,41 @@ struct CsvOptions {
 
 // 解析 CSV 为 document::TableModel：has_header 时首行作表头，其余为数据行。
 // 失败返回 ErrorCode::ParseError / OutOfRange / InvalidArgument。
+//
+// ⚠️ 内存口径：本函数**整表物化**（输入 + TableModel 同时在内存里），
+// 适合"整表都要"的场景；只想抽样看类型请用 sniff_columns，
+// 数据大到放不下时请用 parse_csv_stream（内存 O(一行)）。
 [[nodiscard]] TERMCHART_API Result<document::TableModel> parse_csv(
     std::string_view source, const CsvOptions& options = {},
     ParseDiagnostic* out_diagnostic = nullptr);
 
 // 逐列推断类型，返回每列的 ColumnProfile（name/type/filled/empty）。
-// 列数：has_header 时取表头列数，否则取所有行的最大列数。
+// 列数：has_header 时取表头列数，否则取**样本行**的最大列数。
+//
+// 内存口径：只读前 sniff_rows 个数据行做推断（sniff_rows==0 才读全部），
+// 不会为了推断 100 行把整个文件读进来。
 [[nodiscard]] TERMCHART_API Result<std::vector<ColumnProfile>> sniff_columns(
     std::string_view source, const CsvOptions& options = {},
+    ParseDiagnostic* out_diagnostic = nullptr);
+
+// 流式 CSV 的行接收器。
+//
+// 语义：每读到一行回调一次；fields 是该行按 CSV 规则解析出的字段。
+// has_header=true 时**第一次回调拿到的是表头**（字段即列名），其后是数据行。
+// 返回 false 表示"够了，别再读了"——解析随即正常结束（不是错误）。
+class TERMCHART_API CsvRowSink {
+public:
+    virtual ~CsvRowSink() = default;
+    virtual bool on_row(std::vector<std::string>& fields) = 0;
+};
+
+// 流式解析 CSV：逐行喂给 sink，内存占用 **O(一行)**，与文件大小无关。
+//
+// 适用场景：GB 级 CSV 直接喂给图表管线，不落中间表。
+// 失败返回 ParseError（引号未闭合）/ OutOfRange（超过 max_rows）/ InvalidArgument（非法分隔符）。
+// 行号列号在流式下是增量统计的，与整表解析口径一致。
+[[nodiscard]] TERMCHART_API Status parse_csv_stream(
+    std::istream& input, const CsvOptions& options, CsvRowSink& sink,
     ParseDiagnostic* out_diagnostic = nullptr);
 
 }  // namespace termchart::dsl
@@ -19423,7 +19489,12 @@ struct CsvOptions {
 //   `name.prop: value` 形式（同上，但显式指定节点）
 //   连接：`a -> b`、`a <- b`、`a -- b`（无箭头）、链 `a -> b -> c`、`a -> b: 标签`
 //   `direction: right|left|up|down` → AstGraph::direction（LR/RL/BT/TB）
-// ⛔ 认出但忽略：`style: { … }` 块（连同其 `}`）、`#` 注释、未知键值对
+//   `style: { … }` 顶层样式块 → **对所有节点生效**（逐条落成节点属性 `style.<名>`）
+//   `vars: { … }` 变量块 → 落进图级属性 `var.<名>`（目前只解析，**不做** `${}` 替换）
+//   `classes: { 名字: { … } }` 类定义 → 落进图级属性 `class.<名>.<属性>`；
+//       被 `x.classes: 名字` 引用的节点自动套用该类样式
+//   `x.style: { … }` 节点级样式块 → 逐条落成节点属性 `style.<名>`
+// ⛔ 认出但忽略：`#` 注释、未知键值对
 // ⛔ 不支持：`...` 常量节点、泛型 `**a**` 强调语法、SQL/class/markdown 等嵌入块、
 //   `a -> b: { label: x }` 这种"边上的属性块"（按普通边解析，标签取不到）
 //

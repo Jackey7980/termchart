@@ -4,15 +4,38 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "termchart"
-version = "0.1.0"
+version = "0.9.0"
 description = "Zero-mandatory-dependency terminal charting for Python"
 requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["terminal", "chart", "plot", "ascii", "svg", "png", "matplotlib"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 
+# source-dir 是**相对于本文件所在目录**的路径。
+# 本文件在 bindings/python/，仓库根在 ../../ —— 早先写 ".." 指向 bindings/，
+# 那儿根本没有 CMakeLists.txt，configure 直接失败，pip install 因此走不通。
 [tool.scikit-build]
-cmake.source-dir = ".."
+cmake.source-dir = "../.."
 cmake.build-type = "Release"
+# 模块装在 wheel 根目录（site-packages/termchart.cpython-*.pyd），无 Python 包层。
+wheel.packages = []
+# C++ SDK（静态库 + 全部头文件）也进了 install 树，但那是给 C++ 用户用的：
+# Python wheel 里不需要，否则一个 wheel 会背上 200MB+ 的 libtermchart.a。
+wheel.exclude = ["lib/*", "include/*", "share/*", "**/*.a", "**/*.lib"]
 
 [tool.scikit-build.cmake.define]
 TERMCHART_BUILD_PYTHON = "ON"
 TERMCHART_BUILD_TESTS = "OFF"
 TERMCHART_BUILD_EXAMPLES = "OFF"
+TERMCHART_BUILD_GUI_WIN32 = "OFF"
+TERMCHART_BUILD_GUI_QT = "OFF"
+TERMCHART_BUILD_GUI_TK = "OFF"
+TERMCHART_BUILD_WASM = "OFF"

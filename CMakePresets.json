@@ -113,6 +113,16 @@
     },
 
     {
+      "name": "analyze",
+      "inherits": "ninja",
+      "displayName": "Static analysis (clang-tidy + cppcheck)",
+      "cacheVariables": {
+        "TERMCHART_ENABLE_CLANG_TIDY": "ON",
+        "TERMCHART_ENABLE_CPPCHECK": "ON"
+      }
+    },
+
+    {
       "name": "windows-base",
       "hidden": true,
       "inherits": "base",
@@ -183,6 +193,10 @@
     {
       "name": "wasm",
       "configurePreset": "wasm"
+    },
+    {
+      "name": "analyze",
+      "configurePreset": "analyze"
     },
     {
       "name": "debug-windows",

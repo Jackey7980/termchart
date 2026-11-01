@@ -25,6 +25,18 @@ bool is_property(std::string_view text) noexcept {
     return false;
 }
 
+// D2 里三个块级声明的关键字。它们后面跟的是 `{ … }` 块，**不是**节点。
+constexpr std::string_view kD2BlockKeywords[] = {"style", "vars", "classes"};
+
+bool is_block_keyword(std::string_view text) noexcept {
+    for (const std::string_view keyword : kD2BlockKeywords) {
+        if (text == keyword) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string trim(std::string_view text) {
     std::size_t begin = 0;
     std::size_t end = text.size();
@@ -74,6 +86,29 @@ std::string direction_of(std::string_view value) {
     return {};
 }
 
+// D2 的一个块内条目：`key: value` 或 `key: { … }`（嵌套）。
+// style / vars 是"属性名 → 值"；classes 是"类名 → 属性集合"（一层嵌套）。
+struct D2BlockEntry {
+    std::string key;
+    std::string value;
+    std::vector<D2BlockEntry> children;
+};
+
+// 一个类定义（`classes: { foo: { fill: red } }` 里的 foo）。
+struct D2ClassDef {
+    std::string name;
+    std::vector<AstAttribute> properties;  // key = 属性名（"fill"/"stroke"/…）
+};
+
+// 去掉值外层的引号（`"#f00"` → `#f00`）。引号不配对时原样返回。
+std::string unquote(std::string_view text) {
+    if (text.size() >= 2 &&
+        (text.front() == '"' || text.front() == '\'') && text.back() == text.front()) {
+        return std::string(text.substr(1, text.size() - 2));
+    }
+    return std::string(text);
+}
+
 class D2Parser : public ParserBase {
 public:
     D2Parser(std::vector<Token> tokens, std::string_view source, const D2ParseOptions& options)
@@ -84,6 +119,9 @@ public:
         if (failed()) {
             return Unexpected<ErrorCode>(diagnostic().code);
         }
+        // 套用顺序决定优先级：节点自带 style > 类样式 > 全局 style。
+        apply_class_styles();
+        apply_global_style();
         return ast_;
     }
 
@@ -114,19 +152,199 @@ private:
         }
     }
 
-    // `style: { … }`：整块跳过（认识它，但不把它变成图结构）。
-    void skip_style_block() {
+    // ── 块级声明（style / vars / classes）────────────────────────────────
+    //
+    // 历史行为（两处都错，且 classes/vars 更糟）：
+    //   * `style: { … }` 的内容被**整块跳过** —— fill / stroke 全丢；
+    //   * `classes: { … }` / `vars: { … }` 落进"容器块"分支，凭空造出名为
+    //     classes / vars 的**幽灵节点**，甚至把 `vars: { x: 5 }` 里的 x 解析成节点。
+    // 现在统一按块解析：内容进图级属性袋 / 节点属性，绝不造节点。
+
+    // 前进到源偏移 >= target 的位置（token 的 offset 单调递增，可直接比较）。
+    void advance_to_offset(std::size_t target) {
+        while (!at_end() && current().offset < target) {
+            (void)advance();
+        }
+    }
+
+    // 读块内的一个值：到 ';' / '}' / 行尾为止；引号内的 ';' 不算分隔符。
+    std::string read_block_value() {
+        const std::size_t start = current().offset;
+        std::size_t end = start;
+        bool in_quotes = false;
+        while (end < source().size()) {
+            const char ch = source()[end];
+            if (ch == '"' || ch == '\'') {
+                in_quotes = !in_quotes;
+                ++end;
+                continue;
+            }
+            if (!in_quotes && (ch == ';' || ch == '}' || ch == '\n' || ch == '\r')) {
+                break;
+            }
+            ++end;
+        }
+        const std::string text = trim(source().substr(start, end - start));
+        advance_to_offset(end);
+        return unquote(text);
+    }
+
+    // 解析 `{ … }` 里的键值对（可嵌套一层，供 classes 用）。
+    bool parse_block_entries(std::vector<D2BlockEntry>& out) {
         if (!match_punct("{")) {
-            skip_to_end_of_line();
+            report(ErrorCode::ParseError, "期望 '{'");
+            return false;
+        }
+        while (!at_end()) {
+            skip_newlines();
+            if (at_end()) {
+                break;
+            }
+            if (match_punct(";")) {
+                continue;
+            }
+            if (match_punct("}")) {
+                return true;
+            }
+            if (!(check_kind(TokenKind::Identifier) || check_kind(TokenKind::Keyword) ||
+                  check_kind(TokenKind::Number) || check_kind(TokenKind::Text))) {
+                report(ErrorCode::ParseError, "块内期望属性名");
+                return false;
+            }
+            D2BlockEntry entry;
+            entry.key = advance().text;
+            if (!match_punct(":")) {
+                report(ErrorCode::ParseError, "块内属性缺少 ':'");
+                return false;
+            }
+            if (check_punct("{")) {
+                if (!parse_block_entries(entry.children)) {
+                    return false;
+                }
+            } else {
+                const std::size_t before = token_index();
+                entry.value = read_block_value();
+                if (token_index() == before && !check_punct("}") && !check_punct(";")) {
+                    // 值读空且游标没动：强制前进一个 token，保证循环一定推进
+                    //（fuzz 输入下"游标停住"就是挂死）。
+                    (void)advance();
+                }
+            }
+            out.push_back(std::move(entry));
+        }
+        report(ErrorCode::ParseError, "块缺少 '}'");
+        return false;
+    }
+
+    // 处理 `style: { … }` / `vars: { … }` / `classes: { … }`。
+    bool parse_block_declaration(const std::string& keyword) {
+        std::vector<D2BlockEntry> entries;
+        if (!parse_block_entries(entries)) {
+            return false;
+        }
+        if (keyword == "style") {
+            for (const D2BlockEntry& entry : entries) {
+                global_style_.push_back(AstAttribute{entry.key, entry.value});
+                ast_.attributes.push_back(AstAttribute{"style." + entry.key, entry.value});
+            }
+        } else if (keyword == "vars") {
+            for (const D2BlockEntry& entry : entries) {
+                variables_.push_back(AstAttribute{entry.key, entry.value});
+                ast_.attributes.push_back(AstAttribute{"var." + entry.key, entry.value});
+            }
+        } else {
+            for (const D2BlockEntry& entry : entries) {
+                D2ClassDef definition;
+                definition.name = entry.key;
+                for (const D2BlockEntry& property : entry.children) {
+                    definition.properties.push_back(AstAttribute{property.key, property.value});
+                    ast_.attributes.push_back(
+                        AstAttribute{"class." + entry.key + "." + property.key, property.value});
+                }
+                classes_.push_back(std::move(definition));
+            }
+        }
+        return true;
+    }
+
+    // 节点属性里是否已有某个 key。
+    static bool has_attribute(const AstNode& node, std::string_view key) noexcept {
+        for (const AstAttribute& attribute : node.attributes) {
+            if (attribute.key == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static const AstAttribute* find_attribute(const AstNode& node, std::string_view key) noexcept {
+        for (const AstAttribute& attribute : node.attributes) {
+            if (attribute.key == key) {
+                return &attribute;
+            }
+        }
+        return nullptr;
+    }
+
+    // D2 语义：`x.classes: foo bar` 里类名以空白或逗号分隔。
+    static std::vector<std::string> split_class_names(std::string_view value) {
+        std::vector<std::string> names;
+        std::size_t begin = 0;
+        while (begin <= value.size()) {
+            std::size_t end = begin;
+            while (end < value.size() && value[end] != ' ' && value[end] != '\t' &&
+                   value[end] != ',' && value[end] != '\n' && value[end] != '\r') {
+                ++end;
+            }
+            if (end > begin) {
+                names.emplace_back(value.substr(begin, end - begin));
+            }
+            if (end >= value.size()) {
+                break;
+            }
+            begin = end + 1;
+        }
+        return names;
+    }
+
+    // D2 语义：类样式套用到引用它的节点上；节点自己显式写的 style 优先。
+    // 先于全局 style 应用 —— 否则全局 style 会先把 key 占住，类样式就再也套不上。
+    void apply_class_styles() {
+        if (classes_.empty()) {
             return;
         }
-        int depth = 1;
-        while (!at_end() && depth > 0) {
-            const Token token = advance();
-            if (token.is_punct("{")) {
-                ++depth;
-            } else if (token.is_punct("}")) {
-                --depth;
+        for (AstNode& node : ast_.nodes) {
+            const AstAttribute* reference = find_attribute(node, "classes");
+            if (reference == nullptr) {
+                continue;
+            }
+            for (const std::string& name : split_class_names(reference->value)) {
+                for (const D2ClassDef& definition : classes_) {
+                    if (definition.name != name) {
+                        continue;
+                    }
+                    for (const AstAttribute& property : definition.properties) {
+                        const std::string key = "style." + property.key;
+                        if (!has_attribute(node, key)) {
+                            node.attributes.push_back(AstAttribute{key, property.value});
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // D2 语义：顶层 `style: { … }` 对**所有**节点生效（与声明顺序无关）。
+    void apply_global_style() {
+        if (global_style_.empty()) {
+            return;
+        }
+        for (AstNode& node : ast_.nodes) {
+            for (const AstAttribute& property : global_style_) {
+                const std::string key = "style." + property.key;
+                if (!has_attribute(node, key)) {
+                    node.attributes.push_back(AstAttribute{key, property.value});
+                }
             }
         }
     }
@@ -146,11 +364,11 @@ private:
         }
         std::string lhs = advance().text;
 
-        // `style: { ... }` 在任何人名之前处理（style 是关键字而非节点名）。
-        if (lhs == "style" && check_punct(":")) {
+        // D2 的三个块级声明：`style: { … }` / `vars: { … }` / `classes: { … }`。
+        // 它们是**关键字**而非节点名，后面跟的是块。在任何人名之前处理。
+        if (is_block_keyword(lhs) && check_punct(":")) {
             (void)advance();  // ':'
-            skip_style_block();
-            return true;
+            return parse_block_declaration(lhs);
         }
 
         // `name.prop: value`。点号可能已被词法层吃进标识符（D2 写 `a.tooltip: 提示`），
@@ -176,6 +394,23 @@ private:
             if (!match_punct(":")) {
                 report(ErrorCode::ParseError, "属性缺少 ':'");
                 return false;
+            }
+            if (property == "style" && check_punct("{")) {
+                // `x.style: { … }`：节点级样式块。逐条落成 "style.<属性>" 属性，
+                // 不再把整块原文塞进一个字符串。
+                if (lhs.empty()) {
+                    report(ErrorCode::ParseError, "style 块缺少宿主节点");
+                    return false;
+                }
+                std::vector<D2BlockEntry> entries;
+                if (!parse_block_entries(entries)) {
+                    return false;
+                }
+                AstNode& node = ensure(lhs);
+                for (const D2BlockEntry& entry : entries) {
+                    node.attributes.push_back(AstAttribute{"style." + entry.key, entry.value});
+                }
+                return true;
             }
             const std::string value = rest_of_line();
             apply_property(lhs, property, value);
@@ -332,6 +567,10 @@ private:
     AstNode overflow_node_;
     std::string last_key_;
     std::vector<std::string> owners_;
+    // 块级声明的解析结果（解析结束后统一套用到节点上）。
+    std::vector<AstAttribute> global_style_;  // 顶层 style
+    std::vector<AstAttribute> variables_;     // vars（目前只解析、不做 ${} 替换）
+    std::vector<D2ClassDef> classes_;         // classes
 };
 
 }  // namespace

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "termchart/core/error.hpp"
@@ -56,6 +57,23 @@ struct AstEdge {
     std::vector<AstAttribute> attributes;
 };
 
+// 透明哈希/等价：让索引支持用 string_view 直接查。
+// 用 std::hash<std::string> 的默认 unordered_map 查不了 string_view（key_type 不透明），
+// 只能先构造一个临时 std::string —— 那是每次查询一次堆分配，等于把 O(N) 换成了 O(1) 分配。
+struct TransparentStringHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view text) const noexcept {
+        return std::hash<std::string_view>{}(text);
+    }
+};
+
+struct TransparentStringEqual {
+    using is_transparent = void;
+    bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+        return lhs == rhs;
+    }
+};
+
 struct AstGraph {
     std::string name;        // 图名（digraph G / flowchart 无名时为空）
     std::string directive;   // 原文指令，例如 "flowchart TD"、"digraph"
@@ -66,6 +84,15 @@ struct AstGraph {
     std::vector<AstNode> nodes;
     std::vector<AstEdge> edges;
 
+    // key → nodes 下标的索引。**nodes 仍是唯一真源**（下标顺序 == 输出顺序，
+    // 所以绝不能把 nodes 换成哈希容器），索引只是加速器：把 find_node / ensure_node
+    // 从 O(N) 降到 O(1)，建图从 O(N²) 降到 O(N)。
+    // 外部若绕过 ensure_node 直接改 nodes（如 mermaid_flow 直接 push_back），
+    // 索引会在下次查询时按"size 不匹配"自动重建，不要求调用方改写法。
+    using NodeIndex = std::unordered_map<std::string, std::size_t, TransparentStringHash,
+                                          TransparentStringEqual>;
+    NodeIndex node_index_;
+
     // 两份重载（const / 非 const）：解析器要在找到的节点上继续填字段，
     // 历史上只能 `const_cast<AstNode*>(find_node(...))`，散在 8 处方言文件里。
     // 现在非 const 版本是第一等公民，const_cast 只保留在实现内部那一处。
@@ -74,6 +101,10 @@ struct AstGraph {
     [[nodiscard]] TERMCHART_API bool has_node(std::string_view key) const noexcept;
     // 找不到就创建（解析期的常见动作：边端点可能先于声明出现）。
     TERMCHART_API AstNode& ensure_node(std::string_view key);
+    // 重建 key → 下标索引。仅在"nodes 被外部直接改动"时被自动调用，
+    // 也可供外部在批量改完 nodes 后手动触发一次，省掉逐次查询时的重建。
+    // 需要为哈希表分配内存，因此**不**标 noexcept。
+    TERMCHART_API void rebuild_node_index();
 };
 
 // AST → Graph 的**唯一**适配点。alias 与 style 类属性直接写进 Attributes。

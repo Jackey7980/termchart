@@ -54,8 +54,10 @@ std::string num(double v) {
 
 void emit_color(std::string& out, const Color& c, const char* op) {
     if (c.is_none()) {
+        // 未设色：落为黑，避免产出非法操作符（旧实现写 "rg g\n"）。
+        out += "0 0 0 ";
         out += op;
-        out += " g\n";
+        out += "\n";
         return;
     }
     Rgb rgb;
@@ -87,9 +89,18 @@ protected:
     void end_path() override {
         if (path_.empty()) return;
         *content_ += path_;
-        if (!current_fill().is_none()) *content_ += "B\n";
-        else if (!current_stroke().is_none()) *content_ += "S\n";
-        else *content_ += "n\n";
+        // 路径 = 描边线：与 SVG/scene_renderer 约定一致，按当前描边色画线、不填充
+        // （填充矩形走 emit_filled_rect）。旧实现误用 B（fill+stroke），且从不发射
+        // 颜色操作符，导致折线被前次 FillOp 残留的填充色填成色块、描边色也错乱。
+        if (!current_stroke().is_none()) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.3f w\n", current_stroke_width());
+            *content_ += buf;
+            emit_color(*content_, current_stroke(), "RG");
+            *content_ += "S\n";
+        } else {
+            *content_ += "n\n";
+        }
         path_.clear();
     }
 
@@ -160,7 +171,8 @@ protected:
             }
             return;
         }
-        // 旧行为：Helvetica Tj
+        // 旧行为：Helvetica Tj（文本填充色用当前非描边色 rg，与 SVG fill 对齐）
+        emit_color(*content_, text.style.fg(), "rg");
         *content_ += "BT\n/F1 12 Tf\n";
         *content_ += num(text.at.x); *content_ += " ";
         *content_ += num(height_pt_ - text.at.y); *content_ += " Td\n";
@@ -187,11 +199,6 @@ protected:
 
 private:
     void append(const char* op, const Point& p) {
-        *content_ += op;
-        *content_ += num(p.x);
-        *content_ += " ";
-        *content_ += num(height_pt_ - p.y);
-        *content_ += " ";
         path_ += op;
         path_ += num(p.x);
         path_ += " ";

@@ -211,6 +211,7 @@ add_executable(termchart_tests
     unit/dsl/test_dsl_json.cpp
     unit/dsl/test_dsl_fixtures.cpp
     unit/dsl/test_dsl_d2.cpp
+    unit/dsl/test_dsl_ast.cpp
 
     # ── network ──
     unit/network/test_network.cpp
