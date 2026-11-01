@@ -453,6 +453,34 @@ void draw_arrows(canvas::Canvas& canvas, const graph::Graph& graph) {
     }
 }
 
+// 箭头头部：位图/矢量出口此前**完全不画箭头** ⇒ 方向信息全丢（分层图没了方向就
+// 没意义：读者分不清哪边是上游）。终端路径有 draw_arrows()，位图路径没有——
+// 同一份数据、两个出口给出两种语义，这是真缺口。
+//
+// 画法：沿最后一段方向在末端画一个"V"形箭头（两条短线），tip 落在 route 末端
+// （终点节点框的锚点）。场景单位 = 1 格，箭头长度取 1.2 格。
+void draw_arrowhead(scene::SceneBuilder& b, Point tip, Point prev, Color color) {
+    const double dx = tip.x - prev.x;
+    const double dy = tip.y - prev.y;
+    const double len = std::hypot(dx, dy);
+    if (!(len > 1.0e-9)) {
+        return;
+    }
+    const double ux = dx / len;
+    const double uy = dy / len;
+    constexpr double kHalfAngle = 0.42;  // ≈24°
+    constexpr double kSize = 1.2;        // 箭头长度（场景单位）
+    for (const double sign : {1.0, -1.0}) {
+        const double ca = std::cos(sign * kHalfAngle);
+        const double sa = std::sin(sign * kHalfAngle);
+        const double rx = ux * ca - uy * sa;
+        const double ry = ux * sa + uy * ca;
+        b.stroke(color, 1.0);
+        b.move_to(tip);
+        b.line_to(tip.x - rx * kSize, tip.y - ry * kSize);
+    }
+}
+
 // 把布局与路由结果（节点框 + 折线 + 标签）装成 Scene：密集图在 1 格 1 字符的
 // 画布上只能靠 ┼ ╱ 表达，看不清真形状，需要矢量/位图才能看清。
 scene::Scene build_scene(const graph::Graph& graph, const std::vector<EdgeKind>& kinds) {
@@ -465,10 +493,19 @@ scene::Scene build_scene(const graph::Graph& graph, const std::vector<EdgeKind>&
             continue;
         }
         const EdgeKind kind = k < kinds.size() ? kinds[k] : EdgeKind::Adjacent;
-        b.stroke(style_for(kind).fg(), 1.0);
+        const Color color = style_for(kind).fg();
+        b.stroke(color, 1.0);
         b.move_to(route.front());
         for (std::size_t i = 1; i < route.size(); ++i) {
             b.line_to(route[i]);
+        }
+        // 箭头（终点）：此前位图/矢量出口不画，方向信息全丢。
+        const graph::Edge& edge = graph.edges()[k];
+        if (edge.arrow() == graph::ArrowStyle::AtTarget || edge.arrow() == graph::ArrowStyle::Both) {
+            draw_arrowhead(b, route.back(), route[route.size() - 2], color);
+        }
+        if (edge.arrow() == graph::ArrowStyle::Both) {
+            draw_arrowhead(b, route.front(), route[1], color);
         }
     }
     for (const graph::Node& node : graph.nodes()) {
