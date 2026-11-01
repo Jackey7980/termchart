@@ -1,27 +1,16 @@
-// theme_mono.hpp —— 单色主题：值语义色板常量表（header-only，不可变）
+// theme_mono.hpp —— 单色主题（转发到 color/，既有 include 路径继续可用）
 //
-// 只用灰阶（r==g==b），给无真彩/无 16 色降级路径与黑白终端用。
-// success/danger 与前景同白：亮度编码不了语义，语义差异由组件自己的
-// 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。
+// 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+// （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+// 这里只保留别名，`termchart::widget::kMonoTheme` 的既有写法一字不改。
 #ifndef TERMCHART_WIDGET_THEME_MONO_HPP
 #define TERMCHART_WIDGET_THEME_MONO_HPP
 
-#include "termchart/widget/widget.hpp"
+#include "termchart/color/theme_mono.hpp"
 
 namespace termchart::widget {
 
-// clang-format off
-inline constexpr ThemePalette kMonoTheme{
-    .background   = Rgb{0, 0, 0},
-    .foreground   = Rgb{255, 255, 255},
-    .border       = Rgb{128, 128, 128},
-    .accent       = Rgb{255, 255, 255},
-    .text_dim     = Rgb{160, 160, 160},
-    .success      = Rgb{255, 255, 255},
-    .danger       = Rgb{255, 255, 255},
-    .highlight_bg = Rgb{64, 64, 64},
-};
-// clang-format on
+using termchart::color::kMonoTheme;
 
 }  // namespace termchart::widget
 

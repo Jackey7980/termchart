@@ -20,6 +20,11 @@ util/random.hpp
 util/assert.hpp
 color/named_colors.hpp
 color/rgba
+color/theme_palette
+color/theme_dark
+color/theme_light
+color/theme_mono
+color/theme
 util/base64
 math/stats
 math/interpolate

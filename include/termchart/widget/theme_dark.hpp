@@ -1,26 +1,16 @@
-// theme_dark.hpp —— 深色主题：值语义色板常量表（header-only，不可变）
+// theme_dark.hpp —— 深色主题（转发到 color/，既有 include 路径继续可用）
 //
-// 无全局状态、无注册表：要用就按值取用这张 constexpr 表。色值取向是
-// 深底浅字的终端默认观感（背景接近纯黑、强调色取终端常见的蓝）。
+// 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+// （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+// 这里只保留别名，`termchart::widget::kDarkTheme` 的既有写法一字不改。
 #ifndef TERMCHART_WIDGET_THEME_DARK_HPP
 #define TERMCHART_WIDGET_THEME_DARK_HPP
 
-#include "termchart/widget/widget.hpp"
+#include "termchart/color/theme_dark.hpp"
 
 namespace termchart::widget {
 
-// clang-format off
-inline constexpr ThemePalette kDarkTheme{
-    .background   = Rgb{16, 18, 24},
-    .foreground   = Rgb{220, 224, 232},
-    .border       = Rgb{70, 76, 90},
-    .accent       = Rgb{86, 156, 214},
-    .text_dim     = Rgb{130, 136, 150},
-    .success      = Rgb{106, 190, 120},
-    .danger       = Rgb{224, 98, 98},
-    .highlight_bg = Rgb{38, 79, 120},
-};
-// clang-format on
+using termchart::color::kDarkTheme;
 
 }  // namespace termchart::widget
 

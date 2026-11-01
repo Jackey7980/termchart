@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 410 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 415 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -5710,6 +5710,163 @@ constexpr Rgb blend(const Rgba& src, const Rgb& dst) noexcept {
             (static_cast<unsigned>(s) * alpha + static_cast<unsigned>(d) * inv + 127u) / 255u);
     };
     return Rgb{channel(src.r, dst.r), channel(src.g, dst.g), channel(src.b, dst.b)};
+}
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/theme_palette.hpp =====
+// theme_palette.hpp —— 全局调色板（值语义，header-only，不可变）
+//
+// **为什么住在 color/（L2）而不是 widget/**：这份色板要同时驱动 **图表**
+// （chart=L12）与 **控件**（widget=L18）。原先它住在 widget/（L18），而分层规则是
+// "文件只能 include 层号 ≤ 自己模块的文件"——chart(12) 根本引用不到 widget(18) 的
+// 东西，于是"全局主题"实际分裂成两套互不相通的配色：控件走 ThemePalette，图表走
+// 另一套 DefaultColor。下沉到 color/(L2) 后两侧都能引用，**一份色板驱动全局**。
+//
+// 无全局状态、无注册表：色板本身是纯值聚合，用法按值取用（也可整体替换）。
+
+
+namespace termchart::color {
+
+// 主题色板：纯值聚合，语义槽位固定。
+//   * 前 8 个槽 = 控件外观（widget）：底色/文字/边框/强调/次要/成功/危险/高亮底色。
+//   * 后 4 个槽 = 图表系列色（chart）：数据系列/统计中性/信息色/点缀警示色。
+// success/danger 在单色主题下与前景同色（亮度无法编码语义，形态差异由组件字符承担，
+// 如 checkbox 的 'x'/' '、按钮的按压反白）；图表侧的四个槽同理在 mono 下取灰阶。
+struct ThemePalette {
+    Rgb background;    // 面板/控件底色
+    Rgb foreground;    // 常规文字
+    Rgb border;        // 边框、括号等结构字符
+    Rgb accent;        // 强调：聚焦、选中标记、按压反白
+    Rgb text_dim;      // 次要/禁用文字
+    Rgb success;       // 语义：成功
+    Rgb danger;        // 语义：危险
+    Rgb highlight_bg;  // 悬停/选区底色
+    Rgb series;        // 图表：数据系列（中性前景）
+    Rgb neutral;       // 图表：统计类默认
+    Rgb info;          // 图表：信息色（金融/极坐标一类）
+    Rgb caution;       // 图表：点缀/警示色
+
+    constexpr bool operator==(const ThemePalette&) const noexcept = default;
+    constexpr bool operator!=(const ThemePalette&) const noexcept = default;
+};
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/theme_dark.hpp =====
+// theme_dark.hpp —— 深色主题：值语义色板常量表（header-only，不可变）
+//
+// 无全局状态、无注册表：要用就按值取用这张 constexpr 表。色值取向是
+// 深底浅字的终端默认观感（背景接近纯黑、强调色取终端常见的蓝）。
+
+
+namespace termchart::color {
+
+// clang-format off
+inline constexpr ThemePalette kDarkTheme{
+    .background   = Rgb{16, 18, 24},
+    .foreground   = Rgb{220, 224, 232},
+    .border       = Rgb{70, 76, 90},
+    .accent       = Rgb{86, 156, 214},
+    .text_dim     = Rgb{130, 136, 150},
+    .success      = Rgb{106, 190, 120},
+    .danger       = Rgb{224, 98, 98},
+    .highlight_bg = Rgb{38, 79, 120},
+    .series       = Rgb{220, 224, 232},
+    .neutral      = Rgb{104, 148, 208},
+    .info         = Rgb{86, 182, 194},
+    .caution      = Rgb{214, 178, 86},
+};
+// clang-format on
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/theme_light.hpp =====
+// theme_light.hpp —— 浅色主题：值语义色板常量表（header-only，不可变）
+//
+// 与 theme_dark 同构，槽位一致；背景亮、文字暗。浅底下的"高亮底色"
+// 用淡蓝而不是加深前景，保证与 background 的对比方向一致。
+
+
+namespace termchart::color {
+
+// clang-format off
+inline constexpr ThemePalette kLightTheme{
+    .background   = Rgb{246, 247, 249},
+    .foreground   = Rgb{30, 32, 38},
+    .border       = Rgb{200, 204, 214},
+    .accent       = Rgb{0, 102, 204},
+    .text_dim     = Rgb{110, 116, 128},
+    .success      = Rgb{40, 140, 80},
+    .danger       = Rgb{200, 50, 50},
+    .highlight_bg = Rgb{205, 225, 250},
+    .series       = Rgb{30, 32, 38},
+    .neutral      = Rgb{52, 96, 168},
+    .info         = Rgb{0, 138, 150},
+    .caution      = Rgb{176, 128, 0},
+};
+// clang-format on
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/theme_mono.hpp =====
+// theme_mono.hpp —— 单色主题：值语义色板常量表（header-only，不可变）
+//
+// 只用灰阶（r==g==b），给无真彩/无 16 色降级路径与黑白终端用。
+// success/danger 与前景同白：亮度编码不了语义，语义差异由组件自己的
+// 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。图表侧的四个槽同理取灰阶。
+
+
+namespace termchart::color {
+
+// clang-format off
+inline constexpr ThemePalette kMonoTheme{
+    .background   = Rgb{0, 0, 0},
+    .foreground   = Rgb{255, 255, 255},
+    .border       = Rgb{128, 128, 128},
+    .accent       = Rgb{255, 255, 255},
+    .text_dim     = Rgb{160, 160, 160},
+    .success      = Rgb{255, 255, 255},
+    .danger       = Rgb{255, 255, 255},
+    .highlight_bg = Rgb{64, 64, 64},
+    .series       = Rgb{255, 255, 255},
+    .neutral      = Rgb{128, 128, 128},
+    .info         = Rgb{160, 160, 160},
+    .caution      = Rgb{192, 192, 192},
+};
+// clang-format on
+
+}  // namespace termchart::color
+
+// ===== include/termchart/color/theme.hpp =====
+// theme.hpp —— 主题聚合 + 按名取用（header-only）
+//
+// Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
+// （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
+// 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
+//
+// 与色板同处 color/（L2）：图表（chart=L12）也要按名取主题，住在 widget/（L18）
+// 的话图表引用不到。
+
+
+
+namespace termchart::color {
+
+// 主题 = 名字 + 色板。
+struct Theme {
+    std::string name;
+    ThemePalette palette;
+};
+
+// 按名取主题；未知名回落 dark。
+[[nodiscard]] inline Theme theme_by_name(std::string_view name) noexcept {
+    if (name == "light") {
+        return Theme{"light", kLightTheme};
+    }
+    if (name == "mono") {
+        return Theme{"mono", kMonoTheme};
+    }
+    return Theme{"dark", kDarkTheme};
 }
 
 }  // namespace termchart::color
@@ -11515,7 +11672,52 @@ enum class DefaultColor {
     Amber,    // 3：黄，星标等点缀
 };
 
+// ── 全局默认调色板（可安装；缺省 = 保持历史 ansi16 默认色）──────────────
+// 图表的默认色全部经 default_color() 这**一个**收敛点解析，所以"全局换肤"只需
+// 装一张色板，不必逐个图表改参数。
+//
+// 为什么是进程级指针（与 widget 侧"按值传色板、无全局状态"不同）：图表的默认色
+// 在**构造期**就要定下来，那时手上没有"当前色板"可传；而 default_color() 是
+// 无参的默认参数求值点（`Color color = default_color(...)`），只能走全局。
+// 缺省 nullptr = 不覆盖 = 逐字保持历史 ansi16 行为（金标快照零变化）。
+inline const color::ThemePalette*& default_palette_slot() noexcept {
+    static const color::ThemePalette* palette = nullptr;
+    return palette;
+}
+
+// 安装全局默认调色板；传 nullptr 即回到历史 ansi16 默认色。
+inline void set_default_palette(const color::ThemePalette* palette) noexcept {
+    default_palette_slot() = palette;
+}
+
+// 当前生效的全局默认调色板（nullptr = 未安装，走历史 ansi16）。
+[[nodiscard]] inline const color::ThemePalette* default_palette() noexcept {
+    return default_palette_slot();
+}
+
 inline Color default_color(DefaultColor which = DefaultColor::Series) noexcept {
+    // 装了色板：语义槽位映射到色板槽位（series/neutral/info/caution 与控件槽位
+    // 一一对应，见 color::ThemePalette）。
+    if (const color::ThemePalette* palette = default_palette_slot()) {
+        switch (which) {
+            case DefaultColor::Accent:
+                return Color::rgb(palette->accent);
+            case DefaultColor::Warn:
+                return Color::rgb(palette->danger);
+            case DefaultColor::Neutral:
+                return Color::rgb(palette->neutral);
+            case DefaultColor::Muted:
+                return Color::rgb(palette->text_dim);
+            case DefaultColor::Cyan:
+                return Color::rgb(palette->info);
+            case DefaultColor::Amber:
+                return Color::rgb(palette->caution);
+            case DefaultColor::Series:
+                break;
+        }
+        return Color::rgb(palette->series);
+    }
+    // 未装色板：历史 ansi16 色号（逐字不变）。
     switch (which) {
         case DefaultColor::Accent:
             return Color::ansi16(2);
@@ -20056,6 +20258,48 @@ private:
 
 }  // namespace termchart::widget
 
+// ===== include/termchart/widget/theme_dark.hpp =====
+// theme_dark.hpp —— 深色主题（转发到 color/，既有 include 路径继续可用）
+//
+// 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+// （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+// 这里只保留别名，`termchart::widget::kDarkTheme` 的既有写法一字不改。
+
+
+namespace termchart::widget {
+
+using termchart::color::kDarkTheme;
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/theme_light.hpp =====
+// theme_light.hpp —— 浅色主题（转发到 color/，既有 include 路径继续可用）
+//
+// 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+// （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+// 这里只保留别名，`termchart::widget::kLightTheme` 的既有写法一字不改。
+
+
+namespace termchart::widget {
+
+using termchart::color::kLightTheme;
+
+}  // namespace termchart::widget
+
+// ===== include/termchart/widget/theme_mono.hpp =====
+// theme_mono.hpp —— 单色主题（转发到 color/，既有 include 路径继续可用）
+//
+// 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+// （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+// 这里只保留别名，`termchart::widget::kMonoTheme` 的既有写法一字不改。
+
+
+namespace termchart::widget {
+
+using termchart::color::kMonoTheme;
+
+}  // namespace termchart::widget
+
 // ===== include/termchart/widget/widget.hpp =====
 // widget.hpp —— widget 模块主头：保留式控件基类 + 主题色板值类型
 //
@@ -20064,28 +20308,17 @@ private:
 //     + 状态旗标（可见/可用/可聚焦/已聚焦）+ 可覆写的命中测试。
 //     它**不定义事件系统**——事件路由归 interaction/，无状态组件见
 //     immediate_widget.hpp（即时模式），响应式值见 reactive.hpp。
-//   * ThemePalette 是值语义色板：theme_dark/light/mono 各提供一张
-//     inline constexpr 表；不可变、无全局状态，可按值传递、可编译期取用。
+//   * ThemePalette 是值语义色板：定义在 **color/（L2）**，因为它要同时驱动
+//     控件（widget=L18）与图表（chart=L12）——留在 widget/ 里 chart 引用不到
+//     （层号规则：只能 include 层号 ≤ 自己的文件），"全局主题"就分裂成两套。
+//     这里保留 `termchart::widget::ThemePalette` 别名，既有写法一字不改。
 
 
 
 namespace termchart::widget {
 
-// 主题色板：纯值聚合，语义槽位固定。success/danger 在单色主题下与前景同色
-// （亮度无法编码语义，形态差异由组件字符承担，如 checkbox 的 'x'/' '）。
-struct ThemePalette {
-    Rgb background;    // 面板/控件底色
-    Rgb foreground;    // 常规文字
-    Rgb border;        // 边框、括号等结构字符
-    Rgb accent;        // 强调：聚焦、选中标记、按压反白
-    Rgb text_dim;      // 次要/禁用文字
-    Rgb success;       // 语义：成功
-    Rgb danger;        // 语义：危险
-    Rgb highlight_bg;  // 悬停/选区底色
-
-    constexpr bool operator==(const ThemePalette&) const noexcept = default;
-    constexpr bool operator!=(const ThemePalette&) const noexcept = default;
-};
+// 色板定义在 color/（L2，图表与控件共用一份）；此处转发别名保持既有 API。
+using termchart::color::ThemePalette;
 
 // 便捷 Style 构造。保持 constexpr：主题表 + 这两个函数可在编译期拼出常量样式。
 [[nodiscard]] constexpr Style style_fg(Rgb fg) noexcept {
@@ -20727,106 +20960,17 @@ private:
 
 }  // namespace termchart::widget
 
-// ===== include/termchart/widget/theme_dark.hpp =====
-// theme_dark.hpp —— 深色主题：值语义色板常量表（header-only，不可变）
-//
-// 无全局状态、无注册表：要用就按值取用这张 constexpr 表。色值取向是
-// 深底浅字的终端默认观感（背景接近纯黑、强调色取终端常见的蓝）。
-
-
-namespace termchart::widget {
-
-// clang-format off
-inline constexpr ThemePalette kDarkTheme{
-    .background   = Rgb{16, 18, 24},
-    .foreground   = Rgb{220, 224, 232},
-    .border       = Rgb{70, 76, 90},
-    .accent       = Rgb{86, 156, 214},
-    .text_dim     = Rgb{130, 136, 150},
-    .success      = Rgb{106, 190, 120},
-    .danger       = Rgb{224, 98, 98},
-    .highlight_bg = Rgb{38, 79, 120},
-};
-// clang-format on
-
-}  // namespace termchart::widget
-
-// ===== include/termchart/widget/theme_light.hpp =====
-// theme_light.hpp —— 浅色主题：值语义色板常量表（header-only，不可变）
-//
-// 与 theme_dark 同构，槽位一致；背景亮、文字暗。浅底下的"高亮底色"
-// 用淡蓝而不是加深前景，保证与 background 的对比方向一致。
-
-
-namespace termchart::widget {
-
-// clang-format off
-inline constexpr ThemePalette kLightTheme{
-    .background   = Rgb{246, 247, 249},
-    .foreground   = Rgb{30, 32, 38},
-    .border       = Rgb{200, 204, 214},
-    .accent       = Rgb{0, 102, 204},
-    .text_dim     = Rgb{110, 116, 128},
-    .success      = Rgb{40, 140, 80},
-    .danger       = Rgb{200, 50, 50},
-    .highlight_bg = Rgb{205, 225, 250},
-};
-// clang-format on
-
-}  // namespace termchart::widget
-
-// ===== include/termchart/widget/theme_mono.hpp =====
-// theme_mono.hpp —— 单色主题：值语义色板常量表（header-only，不可变）
-//
-// 只用灰阶（r==g==b），给无真彩/无 16 色降级路径与黑白终端用。
-// success/danger 与前景同白：亮度编码不了语义，语义差异由组件自己的
-// 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。
-
-
-namespace termchart::widget {
-
-// clang-format off
-inline constexpr ThemePalette kMonoTheme{
-    .background   = Rgb{0, 0, 0},
-    .foreground   = Rgb{255, 255, 255},
-    .border       = Rgb{128, 128, 128},
-    .accent       = Rgb{255, 255, 255},
-    .text_dim     = Rgb{160, 160, 160},
-    .success      = Rgb{255, 255, 255},
-    .danger       = Rgb{255, 255, 255},
-    .highlight_bg = Rgb{64, 64, 64},
-};
-// clang-format on
-
-}  // namespace termchart::widget
-
 // ===== include/termchart/widget/theme.hpp =====
-// theme.hpp —— 主题聚合 + 按名取用（header-only）
+// theme.hpp —— 主题聚合 + 按名取用（转发到 color/，既有 include 路径继续可用）
 //
-// Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
-// （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
-// 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
-
+// Theme 与 theme_by_name() 已下沉到 **color/（L2）**：图表（chart=L12）也要按名取
+// 主题，住在 widget/（L18）的话图表引用不到。这里只保留别名，既有写法一字不改。
 
 
 namespace termchart::widget {
 
-// 主题 = 名字 + 色板。
-struct Theme {
-    std::string name;
-    ThemePalette palette;
-};
-
-// 按名取主题；未知名回落 dark。
-[[nodiscard]] inline Theme theme_by_name(std::string_view name) noexcept {
-    if (name == "light") {
-        return Theme{"light", kLightTheme};
-    }
-    if (name == "mono") {
-        return Theme{"mono", kMonoTheme};
-    }
-    return Theme{"dark", kDarkTheme};
-}
+using termchart::color::Theme;
+using termchart::color::theme_by_name;
 
 }  // namespace termchart::widget
 

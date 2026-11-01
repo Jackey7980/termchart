@@ -5,14 +5,17 @@
 //     + 状态旗标（可见/可用/可聚焦/已聚焦）+ 可覆写的命中测试。
 //     它**不定义事件系统**——事件路由归 interaction/，无状态组件见
 //     immediate_widget.hpp（即时模式），响应式值见 reactive.hpp。
-//   * ThemePalette 是值语义色板：theme_dark/light/mono 各提供一张
-//     inline constexpr 表；不可变、无全局状态，可按值传递、可编译期取用。
+//   * ThemePalette 是值语义色板：定义在 **color/（L2）**，因为它要同时驱动
+//     控件（widget=L18）与图表（chart=L12）——留在 widget/ 里 chart 引用不到
+//     （层号规则：只能 include 层号 ≤ 自己的文件），"全局主题"就分裂成两套。
+//     这里保留 `termchart::widget::ThemePalette` 别名，既有写法一字不改。
 #ifndef TERMCHART_WIDGET_WIDGET_HPP
 #define TERMCHART_WIDGET_WIDGET_HPP
 
 #include <string>
 #include <utility>
 
+#include "termchart/color/theme_palette.hpp"
 #include "termchart/core/point.hpp"
 #include "termchart/core/rect.hpp"
 #include "termchart/core/rgb.hpp"
@@ -21,21 +24,8 @@
 
 namespace termchart::widget {
 
-// 主题色板：纯值聚合，语义槽位固定。success/danger 在单色主题下与前景同色
-// （亮度无法编码语义，形态差异由组件字符承担，如 checkbox 的 'x'/' '）。
-struct ThemePalette {
-    Rgb background;    // 面板/控件底色
-    Rgb foreground;    // 常规文字
-    Rgb border;        // 边框、括号等结构字符
-    Rgb accent;        // 强调：聚焦、选中标记、按压反白
-    Rgb text_dim;      // 次要/禁用文字
-    Rgb success;       // 语义：成功
-    Rgb danger;        // 语义：危险
-    Rgb highlight_bg;  // 悬停/选区底色
-
-    constexpr bool operator==(const ThemePalette&) const noexcept = default;
-    constexpr bool operator!=(const ThemePalette&) const noexcept = default;
-};
+// 色板定义在 color/（L2，图表与控件共用一份）；此处转发别名保持既有 API。
+using termchart::color::ThemePalette;
 
 // 便捷 Style 构造。保持 constexpr：主题表 + 这两个函数可在编译期拼出常量样式。
 [[nodiscard]] constexpr Style style_fg(Rgb fg) noexcept {

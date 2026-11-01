@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "termchart/color/theme_palette.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/core/point.hpp"
 
@@ -26,7 +27,52 @@ enum class DefaultColor {
     Amber,    // 3：黄，星标等点缀
 };
 
+// ── 全局默认调色板（可安装；缺省 = 保持历史 ansi16 默认色）──────────────
+// 图表的默认色全部经 default_color() 这**一个**收敛点解析，所以"全局换肤"只需
+// 装一张色板，不必逐个图表改参数。
+//
+// 为什么是进程级指针（与 widget 侧"按值传色板、无全局状态"不同）：图表的默认色
+// 在**构造期**就要定下来，那时手上没有"当前色板"可传；而 default_color() 是
+// 无参的默认参数求值点（`Color color = default_color(...)`），只能走全局。
+// 缺省 nullptr = 不覆盖 = 逐字保持历史 ansi16 行为（金标快照零变化）。
+inline const color::ThemePalette*& default_palette_slot() noexcept {
+    static const color::ThemePalette* palette = nullptr;
+    return palette;
+}
+
+// 安装全局默认调色板；传 nullptr 即回到历史 ansi16 默认色。
+inline void set_default_palette(const color::ThemePalette* palette) noexcept {
+    default_palette_slot() = palette;
+}
+
+// 当前生效的全局默认调色板（nullptr = 未安装，走历史 ansi16）。
+[[nodiscard]] inline const color::ThemePalette* default_palette() noexcept {
+    return default_palette_slot();
+}
+
 inline Color default_color(DefaultColor which = DefaultColor::Series) noexcept {
+    // 装了色板：语义槽位映射到色板槽位（series/neutral/info/caution 与控件槽位
+    // 一一对应，见 color::ThemePalette）。
+    if (const color::ThemePalette* palette = default_palette_slot()) {
+        switch (which) {
+            case DefaultColor::Accent:
+                return Color::rgb(palette->accent);
+            case DefaultColor::Warn:
+                return Color::rgb(palette->danger);
+            case DefaultColor::Neutral:
+                return Color::rgb(palette->neutral);
+            case DefaultColor::Muted:
+                return Color::rgb(palette->text_dim);
+            case DefaultColor::Cyan:
+                return Color::rgb(palette->info);
+            case DefaultColor::Amber:
+                return Color::rgb(palette->caution);
+            case DefaultColor::Series:
+                break;
+        }
+        return Color::rgb(palette->series);
+    }
+    // 未装色板：历史 ansi16 色号（逐字不变）。
     switch (which) {
         case DefaultColor::Accent:
             return Color::ansi16(2);
