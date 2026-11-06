@@ -26,7 +26,24 @@ else()
     endif()
 endif()
 
-message(STATUS "termchart GUI Qt 后端: ${TERMCHART_QT_VERSION_LABEL} Widgets")
+# ---- LGPL 合规闸门 ----
+# Qt 采用 LGPLv3 / GPLv3 / 商业 三重授权，而 termchart 本体是宽松许可（见 LICENSE）。
+# 只有**动态链接** LGPLv3 的 Qt 才满足其 §4「终端用户可替换库」的要求（保留 Qt 的
+# DLL/so，用户能自行换一个 Qt 而不必重编译本事）；反之若链接**静态构建**的 Qt，
+# LGPLv3 §4(d) 的「安装信息 / 可重链接」义务会转嫁给每一个下游分发者——这与本项目
+# 的宽松定位直接冲突。故在此 fail-loud 拦下静态 Qt，而不是靠文档提醒（与「可选扩展
+# 显式报错、不静默回退」的既定取向一致）。确需静态链接请自行取得 Qt 商业授权。
+get_target_property(_termchart_qt_core_type ${TERMCHART_QT_VERSION_LABEL}::Core TYPE)
+if(_termchart_qt_core_type STREQUAL "STATIC_LIBRARY")
+    message(FATAL_ERROR
+        "检测到静态构建的 Qt（${TERMCHART_QT_VERSION_LABEL}::Core 为 STATIC_LIBRARY）。\n"
+        "termchart 本体是宽松许可，静态链接 LGPLv3 的 Qt 会把 §4(d) 的可重链接义务\n"
+        "转嫁给所有下游分发者。请改用 Qt 的动态构建（官方安装包默认即是），\n"
+        "或为 Qt 取得商业授权后再开启 TERMCHART_BUILD_GUI_QT。")
+endif()
+unset(_termchart_qt_core_type)
+
+message(STATUS "termchart GUI Qt 后端: ${TERMCHART_QT_VERSION_LABEL} Widgets（动态链接，LGPLv3 合规）")
 
 add_library(termchart_gui_qt STATIC src/qt_backend.cpp)
 target_include_directories(termchart_gui_qt PUBLIC
@@ -34,7 +51,8 @@ target_include_directories(termchart_gui_qt PUBLIC
 # PUBLIC 传 termchart_gui（header-only）→ 再传 termchart（实现 Bitmap/字体等符号）。
 target_link_libraries(termchart_gui_qt PUBLIC termchart_gui PRIVATE ${TERMCHART_QT_TARGET})
 set_target_properties(termchart_gui_qt PROPERTIES
-    AUTOMOC ON  # CanvasWidget 是 QObject  subclass：需要 moc
+    AUTOMOC ON  # 保留 AUTOMOC：CanvasWidget 目前无 Q_OBJECT（事件走 std::function 回调），
+                # 一旦将来加信号/槽即自动生效；无 Q_OBJECT 时它不做任何事。
 )
 
 # Qt 平台层的告警策略与 gui_win32 同口径：Qt 头自带大量类型转换告警，

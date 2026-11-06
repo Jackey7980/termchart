@@ -5,17 +5,18 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #include <QApplication>
-#include <QWidget>
+#include <QCloseEvent>
 #include <QImage>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
-#include <QMouseEvent>
+#include <QWidget>
 #include <QWheelEvent>
-#include <QKeyEvent>
-#include <QCloseEvent>
-#include <QTimer>
+#include <QtGlobal>
 
 namespace termchart_gui_qt {
 namespace {
@@ -35,8 +36,33 @@ std::uint32_t modifiers_of(Qt::KeyboardModifiers m) {
     return bits;
 }
 
+// 鼠标坐标：Qt6 用 position()（pos()/localPos() 自 6.0 起标记 deprecated），
+// Qt5 没有 position()、只有 localPos()。统一在此收口，避免每个事件各写一遍 #if。
+QPointF mouse_local_pos(const QMouseEvent* e) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return e->position();
+#else
+    return e->localPos();
+#endif
+}
+
+// 滚轮坐标：Qt6 用 position()，Qt5 用 posF()。**注意 QWheelEvent 从来没有过
+// localPos()**——按鼠标事件的写法照抄 e->localPos() 在 Qt5/Qt6 上都编不过
+// （此前的实现正是这么写的，从未编译验证过）。
+QPointF wheel_local_pos(const QWheelEvent* e) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return e->position();
+#else
+    return e->posF();
+#endif
+}
+
 // 绘制 surface 的 QWidget：paintEvent 把 BitmapCanvas 的 RGBA 直贴。
 // Qt 的原子是 QImage（像素矩形真彩），与 TkCanvas 契约一致。
+//
+// 刻意**不加 Q_OBJECT**：本类不使用信号/槽，事件一律经 std::function 回调外发，
+// 因此不需要 moc。相应地源文件末尾也不能 `#include "qt_backend.moc"`——AUTOMOC
+// 只为含 Q_OBJECT 的 TU 生成 .moc，无 Q_OBJECT 却去 include 会直接编译失败。
 class CanvasWidget final : public QWidget {
 public:
     CanvasWidget(termchart_gui::BitmapCanvas& canvas, QWidget* parent = nullptr)
@@ -57,9 +83,10 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         const termchart_gui::Bitmap& px = canvas_.pixels();
-        // Format_RGBA8888（Qt5 为 Format_RGBA8888；内存布局 RGBA 与 Bitmap 一致）。
-        // 注意 Bitmap 行宽未必 4 字节对齐：按 bytesPerLine 直建，由 QImage 引用外部
-        // 缓冲（不拷贝），只用于本次绘制，生命周期覆盖 paintEvent 全程。
+        // Format_RGBA8888：内存布局 RGBA 与 Bitmap(channels=4) 一致。
+        // Bitmap 行按通道紧致对齐（row_bytes = w * channels），正好可直接当
+        // QImage 的 bytesPerLine 用。QImage 引用外部缓冲、不拷贝，生命周期覆盖
+        // paintEvent 全程即可。
         const auto* data = reinterpret_cast<const uchar*>(px.data());
         const QImage image(data, static_cast<int>(px.width()), static_cast<int>(px.height()),
                            static_cast<int>(px.row_bytes()), QImage::Format_RGBA8888);
@@ -68,24 +95,26 @@ protected:
 
     void resizeEvent(QResizeEvent* e) override {
         QWidget::resizeEvent(e);
+        const auto w = static_cast<std::uint32_t>(e->size().width());
+        const auto h = static_cast<std::uint32_t>(e->size().height());
         if (render_hook_) {
-            render_hook_(static_cast<std::uint32_t>(e->size().width()),
-                         static_cast<std::uint32_t>(e->size().height()));
+            render_hook_(w, h);  // 应用可就地重排版 + 重绘，避免拖动时闪白
         }
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::Resize;
-        ev.width = static_cast<std::uint32_t>(e->size().width());
-        ev.height = static_cast<std::uint32_t>(e->size().height());
+        ev.width = w;
+        ev.height = h;
         if (event_sink_) {
             event_sink_(std::move(ev));
         }
     }
 
     void mousePressEvent(QMouseEvent* e) override {
+        const QPointF pos = mouse_local_pos(e);
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::MousePress;
-        ev.x = static_cast<double>(e->localPos().x());
-        ev.y = static_cast<double>(e->localPos().y());
+        ev.x = pos.x();
+        ev.y = pos.y();
         ev.button = static_cast<int>(e->button());
         ev.modifiers = modifiers_of(e->modifiers());
         if (event_sink_) {
@@ -94,10 +123,11 @@ protected:
     }
 
     void mouseReleaseEvent(QMouseEvent* e) override {
+        const QPointF pos = mouse_local_pos(e);
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::MouseRelease;
-        ev.x = static_cast<double>(e->localPos().x());
-        ev.y = static_cast<double>(e->localPos().y());
+        ev.x = pos.x();
+        ev.y = pos.y();
         ev.button = static_cast<int>(e->button());
         ev.modifiers = modifiers_of(e->modifiers());
         if (event_sink_) {
@@ -106,10 +136,11 @@ protected:
     }
 
     void mouseMoveEvent(QMouseEvent* e) override {
+        const QPointF pos = mouse_local_pos(e);
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::MouseMove;
-        ev.x = static_cast<double>(e->localPos().x());
-        ev.y = static_cast<double>(e->localPos().y());
+        ev.x = pos.x();
+        ev.y = pos.y();
         ev.button = static_cast<int>(e->buttons());
         ev.modifiers = modifiers_of(e->modifiers());
         if (event_sink_) {
@@ -118,10 +149,11 @@ protected:
     }
 
     void wheelEvent(QWheelEvent* e) override {
+        const QPointF pos = wheel_local_pos(e);
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::Wheel;
-        ev.x = static_cast<double>(e->localPos().x());
-        ev.y = static_cast<double>(e->localPos().y());
+        ev.x = pos.x();
+        ev.y = pos.y();
         // 归一化为"格"：Qt 原生是 1/8 度（angleDelta），多数鼠标一步 = 120 = 1 格。
         const QPoint delta = e->angleDelta();
         ev.wheel_delta = static_cast<double>(delta.y()) / 120.0;
@@ -185,7 +217,7 @@ public:
     }
 
 private:
-    QWidget* widget_;  // 不持有：生命周期归 QApplication 对象树
+    QWidget* widget_;  // 不持有：生命周期归 Qt 对象树
 };
 
 }  // namespace
@@ -194,7 +226,7 @@ struct QtBackend::Impl {
     std::unique_ptr<termchart_gui::BitmapCanvas> canvas;
     std::unique_ptr<CanvasWidget> widget;
     bool running = false;
-    bool owns_app = false;  // 进程内首个后端负责创建 QApplication
+    bool quit_requested = false;
 
     std::mutex queue_mutex;
     std::deque<termchart_gui::Event> queue;
@@ -206,10 +238,10 @@ struct QtBackend::Impl {
     }
 };
 
-// QApplication 是进程级单例：首个后端创建它，之后复用 static qApp。
+// QApplication 是进程级单例：首个后端创建它，之后复用。
 static QApplication* ensure_qapplication() {
     if (QApplication::instance() != nullptr) {
-        return static_cast<QApplication*>(QApplication::instance());
+        return qobject_cast<QApplication*>(QApplication::instance());
     }
     static int argc = 1;
     static char arg0[] = "termchart_gui";
@@ -222,7 +254,9 @@ static QApplication* ensure_qapplication() {
 QtBackend::QtBackend(std::uint32_t width, std::uint32_t height, std::string title) {
     auto impl = std::make_unique<Impl>();
     QApplication* app = ensure_qapplication();
-    impl->owns_app = true;
+    if (app == nullptr) {
+        return;  // 无 QApplication（非 GUI 环境），valid() 为 false
+    }
 
     impl->canvas = std::make_unique<termchart_gui::BitmapCanvas>(width, height);
     impl->widget = std::make_unique<CanvasWidget>(*impl->canvas);
@@ -234,9 +268,13 @@ QtBackend::QtBackend(std::uint32_t width, std::uint32_t height, std::string titl
         }
     });
     impl->widget->set_event_sink([impl = impl.get()](termchart_gui::Event e) {
+        // 只有 Quit 才退出消息循环。此前这里对**任何**事件都调 quit()，
+        // 导致 run_loop 模式下第一次鼠标移动/尺寸变化就整个进程退出。
+        const bool is_quit = e.type == termchart_gui::EventType::Quit;
         impl->push(std::move(e));
-        if (impl->running) {
-            QApplication::quit();  // 收到 Quit 事件时退出 exec()
+        if (is_quit && impl->running) {
+            impl->quit_requested = true;
+            QApplication::quit();
         }
     });
     impl_ = std::move(impl);
@@ -244,7 +282,7 @@ QtBackend::QtBackend(std::uint32_t width, std::uint32_t height, std::string titl
 
 QtBackend::~QtBackend() {
     if (impl_ != nullptr && impl_->widget != nullptr) {
-        impl_->widget.reset();
+        impl_->widget.reset();  // 先于 canvas 销毁（widget 持有 canvas 引用）
     }
 }
 
@@ -280,11 +318,12 @@ void QtBackend::present() {
 }
 
 void QtBackend::run_loop(termchart_gui::EventLoop& loop) {
-    (void)loop;  // Qt 的消息泵即循环；loop 提供 post/定时器语义由应用自行桥接
+    (void)loop;  // Qt 的消息泵即循环；loop 的 post/定时器语义由应用自行桥接
     if (impl_->widget != nullptr) {
         impl_->widget->show();
     }
     impl_->running = true;
+    impl_->quit_requested = false;
     QApplication::exec();
     impl_->running = false;
 }
@@ -303,9 +342,5 @@ void QtBackend::set_render_hook(std::function<void(std::uint32_t, std::uint32_t)
 void QtBackend::process_events() {
     QApplication::processEvents();
 }
-
-// CanvasWidget 是 Q_OBJECT 子类且定义在本 TU：AUTOMOC 为含 Q_OBJECT 的 cpp
-// 生成同名 .moc，此处显式拉入（qmake 风格约定）。
-#include "qt_backend.moc"
 
 }  // namespace termchart_gui_qt

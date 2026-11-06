@@ -12,6 +12,17 @@
 // 平台隔离：Qt 头只出现在 src/qt_backend.cpp；本公开头不泄漏任何 Qt
 // 类型（QApplication/QWidget 全部藏进 PIMPL）。Qt5 / Qt6 均可（cpp 内按
 // QT_VERSION 分支）。
+//
+// 许可边界（重要）：Qt 是 LGPLv3 / GPLv3 / 商业 三重授权，termchart 本体是
+// 宽松许可。二者组合同样受约束：
+//   - **动态链接** Qt 时，只要随分发物附上 LGPLv3 全文与 Qt 源码获取途径、
+//     且不阻止用户替换 Qt 库本身，即可保持本项目的宽松许可（§4 合规）；
+//   - **静态链接** Qt 会触发 §4(d) 的「安装信息 / 可重链接」义务，需向用户
+//     提供目标文件或等效手段，与本项目定位冲突 —— CMakeLists 已 fail-loud
+//     拦截静态 Qt；
+//   - **不要**为了省事把本项目改成 GPLv3：那会让所有使用者被传染，且与
+//     APACHE-2.0/MIT 的既有声明也不一致。
+// 本后端**不 vendoring 任何 Qt 二进制**，一切经 find_package 由使用者自备。
 #ifndef TERMCHART_GUI_QT_BACKEND_HPP
 #define TERMCHART_GUI_QT_BACKEND_HPP
 

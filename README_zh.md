@@ -70,3 +70,9 @@ ctest --preset ninja              # 3. 全部测试与冒烟
 
 Apache License 2.0（见 [`LICENSES/`](LICENSES/)）。Turbo 色表：Anton Mikhailov /
 Google LLC（Apache-2.0）；doctest：MIT（vendored，仅测试使用）。
+
+**Qt 6（可选 GUI 后端，`plugins/gui_qt/`）**：The Qt Company Ltd. 及贡献者，
+**LGPLv3 / GPLv3 / 商业** 三重授权。本项目**不分发**任何 Qt 二进制，
+`TERMCHART_BUILD_GUI_QT=ON` 时由使用者 `find_package` 自备，且**只允许动态链接**
+（CMake 遇静态 Qt 直接报错）。据此本项目本体许可不被 Qt 传染；但你若分发含该后端的
+可执行文件，须随附 LGPLv3 全文与 Qt 源码获取途径，并保证终端用户能替换 Qt 库本身。

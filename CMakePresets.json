@@ -99,6 +99,16 @@
       }
     },
     {
+      "name": "qt",
+      "inherits": "ninja",
+      "displayName": "Debug + Qt GUI 后端 (Ninja)",
+      "description": "需先设置环境变量 QTDIR 指向 Qt 安装前缀（含 lib/cmake/Qt6 的那一层，动态构建）。termchart 是宽松许可，Qt 是 LGPLv3/GPLv3/商业：本预设只允动态链接，静态 Qt 会在配置期报错。",
+      "cacheVariables": {
+        "TERMCHART_BUILD_GUI_QT": "ON",
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}"
+      }
+    },
+    {
       "name": "wasm",
       "inherits": "base",
       "displayName": "WASM (Emscripten)",
@@ -193,6 +203,10 @@
     {
       "name": "ninja-release",
       "configurePreset": "ninja-release"
+    },
+    {
+      "name": "qt",
+      "configurePreset": "qt"
     },
     {
       "name": "wasm",

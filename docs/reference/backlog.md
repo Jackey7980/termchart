@@ -181,9 +181,20 @@
   widget 命中/回调、ChartWidget 悬停/缩放/淡入、Combo/Gauge/Polar 渲染均落真彩像素断言）**2026-10-28 复核全过**。
   **真实落地边界（据实更正）**：原生窗口后端 `Win32Backend` / `QtBackend` / `TkBackend` 的完整实现位于
   **`plugins/gui_win32` / `plugins/gui_qt` / `plugins/gui_tk`**（默认 OFF，仅因依赖外部运行时），**不在**
-  `include/termchart_gui/` 内；`termchart_gui::Backend` 接口目前只有无头实现，尚未桥接到某个真实窗口事件循环
-  （桥接需 Tk/Qt/Win32 运行时，无法在本机 headless / CI 验证，记为后续）。GUI 复用边界是 `scene`(L4) 及以下，
-  不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
+  `include/termchart_gui/` 内；`termchart_gui::Backend` 接口目前只有无头实现作为默认路径，真实窗口事件循环
+  需使用者显式启用对应插件（桥接需 Tk/Qt/Win32 运行时）。
+  **Qt 侧 2026-11-07 已真编译 + 冒烟验证**：Qt 6.8.3（`mingw_64` 动态构建）、GCC 15.2，
+  `-DTERMCHART_BUILD_GUI_QT=ON` 下 355 个 TU 全过，产出 `examples/qt_demo.exe`，`--smoke` 输出
+  `frame rendered, window closed cleanly`；`objdump -p` 依赖为 `Qt6Core/Gui/Widgets.dll`（**动态链接**）。
+  首编暴露并修掉三个「从未编译过」才现形的缺陷：① `QWheelEvent` **从来就没有** `localPos()`
+  （Qt5 是 `posF()`、Qt6 是 `position()`），原实现照抄鼠标事件的写法，Qt5/Qt6 都编不过；
+  ② `CanvasWidget` 无 `Q_OBJECT` 却 `#include "qt_backend.moc"`（AUTOMOC 不会为无 `Q_OBJECT` 的 TU 生成 .moc）；
+  ③ 事件回调对**任何**事件都调 `QApplication::quit()`，`run_loop` 模式下首次鼠标移动/尺寸变化即整个进程退出。
+  **许可边界（重要）**：Qt 是 **LGPLv3 / GPLv3 / 商业** 三重授权，而本项目本体是宽松许可。只允许**动态链接**——
+  `plugins/gui_qt/CMakeLists.txt` 在配置期对静态 Qt `fail-loud`（静态链接会触发 LGPLv3 §4(d) 的可重链接义务，
+  转嫁给所有下游分发者）；**不 vendoring** 任何 Qt 二进制，一律 `find_package` 由使用者自备；分发含该后端的
+  可执行文件时须附 LGPLv3 全文与 Qt 源码获取途径，并保证终端用户能替换 Qt 库本身。**不要**为省事把本项目改 GPLv3。
+  GUI 复用边界是 `scene`(L4) 及以下，不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
 
 ## 六、地理图（`chart/geo`）与地图数据链（2026-10-18 登记）
 
