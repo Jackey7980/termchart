@@ -231,9 +231,12 @@ std::string encode_mp4(std::span<const Bitmap> frames, const EncodeOptions& opts
 
     const int num_frames = static_cast<int>(p.samples.size());
     const int fps = opts.fps > 0 ? opts.fps : 25;
-    const uint32_t ts = 1000;
-    const uint32_t dur = static_cast<uint32_t>(num_frames) * (ts / static_cast<uint32_t>(fps));
-    const uint32_t sample_delta = ts / static_cast<uint32_t>(fps);
+    // 时基取 fps*1000：每帧恰好 1000 tick（= 1ms×1000），从而 dur 与 sample_delta 都为整数且精确。
+    // 原先 ts=1000 时 dur = num_frames*(ts/fps) 因整数除被截断（1000/60→16），会让 60fps 视频
+    // 少算约 4%（300 帧的 5s 视频只剩 4.8s）；改后 5s 严格等于 5.000s。
+    const uint32_t ts = static_cast<uint32_t>(fps) * 1000u;
+    const uint32_t dur = static_cast<uint32_t>(num_frames) * 1000u;
+    const uint32_t sample_delta = 1000u;
     const uint32_t mtx[9] = {0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000};
 
     std::string ftyp;
