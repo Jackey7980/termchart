@@ -17,12 +17,15 @@
 namespace termchart::image {
 namespace {
 
-// ── 之字形扫描：自然序下标 → 之字序位置 ──────────────────────────────────────
+// ── 之字形扫描：自然序下标 → 之字序位置（即标准 zigzag 表的逆）──────────────
+// 标准 JPEG zigzag 给出的是 scan→natural：{0,1,8,16,9,2,...}。
+// 这里需要 natural→scan，因此取它的逆。两处使用（写 DQT、Fdct 后排 AC）
+// 都以自然序下标 i 为索引，把系数放到 kZigZag[i] 这个之字序位置。
 constexpr int kZigZag[64] = {
-    0,  1,  8, 16,  9,  2,  3, 10, 17, 24, 32, 25, 18, 11,  4,  5,
-    12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13,  6,  7, 14, 21, 28,
-    35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
-    58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+    0,  1,  5,  6, 14, 15, 27, 28,  2,  4,  7, 13, 16, 26, 29, 42,
+    3,  8, 12, 17, 25, 30, 41, 43,  9, 11, 18, 24, 31, 40, 44, 53,
+    10, 19, 23, 32, 39, 45, 52, 54, 20, 22, 33, 38, 46, 51, 55, 60,
+    21, 34, 37, 47, 50, 56, 59, 61, 35, 36, 48, 49, 57, 58, 62, 63};
 
 // ── 标准量化表（自然序）────────────────────────────────────────────────────
 constexpr std::uint8_t kQuantLum[64] = {
@@ -38,10 +41,10 @@ constexpr std::uint8_t kQuantChrom[64] = {
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99};
 
 // ── 标准哈夫曼表（JPEG 规范 Annex K）：BITS[16] + HUFFVAL[] ──────────────────
-constexpr int kDcLumBits[16]  = {0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0};
+constexpr int kDcLumBits[16]  = {0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0};
 constexpr int kDcLumVals[12]  = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
-constexpr int kAcLumBits[16]  = {0, 0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1};
+constexpr int kAcLumBits[16]  = {0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 125};
 constexpr int kAcLumVals[162] = {
     0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07,
     0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xA1, 0x08, 0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52, 0xD1, 0xF0,
@@ -55,10 +58,10 @@ constexpr int kAcLumVals[162] = {
     0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8,
     0xF9, 0xFA};
 
-constexpr int kDcChromBits[16] = {0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0};
+constexpr int kDcChromBits[16] = {0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
 constexpr int kDcChromVals[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
-constexpr int kAcChromBits[16] = {0, 0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2};
+constexpr int kAcChromBits[16] = {0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 119};
 constexpr int kAcChromVals[162] = {
     0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21, 0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71,
     0x13, 0x22, 0x32, 0x81, 0x08, 0x14, 0x42, 0x91, 0xA1, 0xB1, 0xC1, 0x09, 0x23, 0x33, 0x52, 0xF0,
@@ -80,6 +83,9 @@ struct Huff {
 
 // 由 BITS/HUFFVAL 构造规范哈夫曼码（symbol 即 HUFFVAL 的顺序，code 按长度升序分配）。
 void build_huff(Huff& h, const int* bits, const int* vals, int nvals) {
+    // 先全部清零：symbol 值是任意字节（如 AC 的 0xF0/0xA2..0xFA），
+    // 不能按条目数 nvals 当索引清零，否则会误清 >=nvals 的合法高符号。
+    for (int i = 0; i < 256; ++i) { h.code[i] = 0; h.len[i] = 0; }
     int code = 0, k = 0;
     for (int l = 1; l <= 16; ++l) {
         for (int i = 0; i < bits[l - 1]; ++i) {
@@ -90,8 +96,7 @@ void build_huff(Huff& h, const int* bits, const int* vals, int nvals) {
         }
         code <<= 1;
     }
-    // 其余 symbol 标记长度 0（未使用）。
-    for (int i = nvals; i < 256; ++i) { h.code[i] = 0; h.len[i] = 0; }
+    (void)nvals;
 }
 
 // ── 位写入器（MSB 优先，扫描数据做 0xFF 填充）───────────────────────────────
@@ -158,7 +163,7 @@ void fdct_block(const double in[64], double out[64]) {
             double s = 0;
             for (int y = 0; y < 8; ++y) s += tmp[y * 8 + u] * c[v][y];
             const double cv = (v == 0) ? 0.7071067811865476 : 1.0;
-            out[u * 8 + v] = s * 0.5 * cv;
+            out[v * 8 + u] = s * 0.5 * cv;  // JPEG 自然序 = [垂直频率][水平频率]
         }
 }
 
