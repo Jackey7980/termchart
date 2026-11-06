@@ -1,4 +1,4 @@
-// mp4_mux.cpp —— 自写 MP4（ISO-BMFF）封装 + encode_mp4 入口
+// mp4.cpp —— 自写 MP4（ISO-BMFF）封装 + encode_mp4 入口
 //
 // 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。按 EncodeOptions::video_codec 选
 // 内部码流（H264 走自写 Annex-B H.264；H265 走自写 Annex-B HEVC），再封装成可被标准
