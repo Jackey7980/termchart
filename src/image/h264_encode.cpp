@@ -178,7 +178,7 @@ std::string build_pps() {
 std::string build_idr_slice(const Yuv420& f, int idr_id) {
     BitWriter w;
     w.ue(0);                    // first_mb_in_slice
-    w.ue(7);                    // slice_type = I（IDR 用 non-ref 变体 7）
+    w.ue(2);                    // slice_type = I（参考型；IDR 要求 nal_ref_idc!=0，须用 2 而非 7）
     w.ue(0);                    // pic_parameter_set_id
     w.u(0, 4);                  // frame_num
     w.ue(static_cast<unsigned>(idr_id));  // idr_pic_id
