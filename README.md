@@ -193,8 +193,9 @@ L22 gui           并列 header-only 库 `termchart_gui`：GUI 原生后端 + �
 
 ## 许可
 
-库本体采用 Apache License 2.0（见 `LICENSES/`）。其中：
+库本体采用 **MIT License**（全文见 `LICENSE` 与 `LICENSES/MIT.txt`）。第三方资产各自的许可：
 
-- **Turbo 色表**：Anton Mikhailov / Google LLC，Apache License 2.0（数据源 `assets/colormaps/turbo.dat`）；
+- **Turbo 色表**：Anton Mikhailov / Google LLC，Apache License 2.0（数据源 `assets/colormaps/turbo.dat`，全文见 `LICENSES/Apache-2.0.txt`）；
 - **doctest**：MIT，vendored 于 `third_party/doctest/`，仅测试使用；
+- **stb_image / stb_image_write**：public domain（Sean Barrett），vendored 于 `third_party/stb/`，可选图像编解码；
 - **Qt（可选 GUI 后端，`plugins/gui_qt/`）**：The Qt Company Ltd. 及贡献者，**LGPLv3 / GPLv3 / 商业** 三重授权。本项目**不分发**任何 Qt 二进制，`TERMCHART_BUILD_GUI_QT=ON` 时由使用者 `find_package` 自备；且**只允许动态链接**（CMake 遇到静态 Qt 直接报错）。据此本项目本体许可不被 Qt 传染，但若你分发含该后端的可执行文件，须随附 LGPLv3 全文与 Qt 源码获取途径，并保证终端用户能替换 Qt 库本身。

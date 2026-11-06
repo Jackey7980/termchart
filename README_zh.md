@@ -68,8 +68,10 @@ ctest --preset ninja              # 3. 全部测试与冒烟
 
 ## 许可
 
-Apache License 2.0（见 [`LICENSES/`](LICENSES/)）。Turbo 色表：Anton Mikhailov /
-Google LLC（Apache-2.0）；doctest：MIT（vendored，仅测试使用）。
+**MIT License**（全文见 [`LICENSE`](LICENSE) 与 [`LICENSES/MIT.txt`](LICENSES/MIT.txt)）。
+第三方资产：Turbo 色表：Anton Mikhailov / Google LLC（Apache-2.0，全文见
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt)）；doctest：MIT（vendored，仅测试使用）；
+stb_image / stb_image_write：public domain（vendored 于 `third_party/stb/`）。
 
 **Qt 6（可选 GUI 后端，`plugins/gui_qt/`）**：The Qt Company Ltd. 及贡献者，
 **LGPLv3 / GPLv3 / 商业** 三重授权。本项目**不分发**任何 Qt 二进制，
