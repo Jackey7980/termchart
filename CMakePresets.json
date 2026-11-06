@@ -100,8 +100,12 @@
     },
     {
       "name": "wasm",
+      "inherits": "base",
       "displayName": "WASM (Emscripten)",
       "generator": "Ninja",
+      "environment": {
+        "EM_COMPILER_WRAPPER": "ccache"
+      },
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
         "CMAKE_BUILD_TYPE": "Release",

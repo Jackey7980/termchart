@@ -110,9 +110,21 @@
   * `cmake/TermchartOptions.cmake`：`TERMCHART_BUILD_WASM` 开关（默认 OFF）。
   * `CMakePresets.json`：`wasm` 配置/构建预设（`-DCMAKE_TOOLCHAIN_FILE=$env{EMSDK}/...`、
     `TERMCHART_BUILD_WASM=ON`、关测试/示例/bench 以省 Emscripten 链接成本）。
-  验证：本机无 emsdk，**未实际编译 WASM 目标**（仅确认普通 `cmake --preset ninja` 重配无错、
-  新 src/wasm 不被普通构建误编）；需在装有 emsdk 的环境跑 `cmake --preset wasm && cmake --build --preset wasm`
-  产出 `termchart_wasm.html` 后在浏览器打开。仍**刻意不并入 CI**（runner 生态差异大）。
+  验证（2026-11-06 首次真编译，emsdk 6.0.13 / clang，Windows + Ninja）：`cmake --preset wasm`
+  产出 `termchart_wasm.html/.js/.wasm`，348 个 TU 全过；在 node 里伪造 canvas 上下文实调
+  `termchart_render_demo()`，拿到 480×240×4 = 460800 字节、左上 `[0,0,255]`、中心 `[127,255,127]`，
+  与渐变公式一致。首编暴露并修掉三个**只有真编译才现形**的缺陷：
+  ① `EM_ASM` 是普通可变参宏，预处理只按圆括号配对、不认花括号——块内裸逗号
+     （`var w=$1, h=$2, c=$3;`）会切断宏参数，剩余部分被当 C++ 解析，已改为一行为一声明；
+  ② `add_executable` 在 Emscripten 下默认后缀 `.js`，此时 `--shell-file` 被 em++ **静默忽略**
+     （只给一条 `-Wunused-command-line-argument`），模板等于没接；已设 `SUFFIX ".html"`；
+  ③ `"SHELL:-s EXPORTED_FUNCTIONS=['_a','_b']"` 在 Windows + Ninja 下外层单引号被剥掉，
+     emcc 收到 `[_a,_b]` 解析失败后静默忽略，产物零自定义导出；已改紧连逗号写法
+     `-sEXPORTED_FUNCTIONS=_a,_b`。另注意 `-O3` 下 binaryen 会压缩 wasm 导出名（`f`/`g`），
+     js 侧靠 `Module["_termchart_blit_canvas"]=wasmExports["f"]` 映射表保证 `ccall` 可用。
+  编译缓存：`wasm` 预设的 `environment` 里设 `EM_COMPILER_WRAPPER=ccache`（Emscripten 官方支持的
+  ccache 包装方式，实测 100% cacheable），配合 ninja 满核并行。
+  仍**刻意不并入 CI**（runner 生态差异大）。
 
 ## 三、质量与一致性（精简，逐条证据见 `quality_todo.md`）
 

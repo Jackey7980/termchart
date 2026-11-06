@@ -130,10 +130,16 @@ endif()
 if(EMSCRIPTEN AND TERMCHART_BUILD_WASM)
     add_executable(termchart_wasm src/wasm/termchart_wasm.cpp)
     target_link_libraries(termchart_wasm PRIVATE termchart)
+    # 导出清单必须用「紧连 + 逗号分隔」写法，不能写 "SHELL:-s EXPORTED_FUNCTIONS=['_a','_b']"：
+    # 在 Windows + Ninja 下那层单引号会被 shell 剥掉，emcc 收到 [_a,_b] 解析失败后**静默忽略**，
+    # 最终 wasm 里一个自定义导出都没有（真踩过，只在 Linux 上跑的 CI 发现不了）。
     target_link_options(termchart_wasm PRIVATE
-        "SHELL:-s EXPORTED_FUNCTIONS=['_termchart_blit_canvas','_termchart_render_demo']"
-        "SHELL:-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
-        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/examples/wasm/shell.html")
+        "-sEXPORTED_FUNCTIONS=_termchart_blit_canvas,_termchart_render_demo"
+        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
+        "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/examples/wasm/shell.html")
+    # --shell-file 只在输出 HTML 时生效；add_executable 在 Emscripten 下默认后缀是 .js，
+    # 不改后缀的话 shell 模板会被静默忽略（em++ 仅给一条 -Wunused-command-line-argument）。
+    set_target_properties(termchart_wasm PROPERTIES SUFFIX ".html")
 endif()
 
 # Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart；缺 pybind11 即报错。

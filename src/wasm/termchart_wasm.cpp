@@ -29,7 +29,12 @@ static double smooth(double x) {
 extern "C" EMSCRIPTEN_KEEPALIVE
 void termchart_blit_canvas(const uint8_t* rgba, int w, int h, int channels) {
     EM_ASM({
-        var w = $1, h = $2, c = $3;
+        // 注意：EM_ASM 是普通可变参宏，预处理只按圆括号配对、不认花括号——花括号内
+        // 的裸逗号会切断宏参数（code 只拿到第一个逗号之前的内容，其余被当 C++ 解析）。
+        // 故这里一行只声明一个变量；需要逗号的表达式一律包在圆括号里（见下方 for）。
+        var w = $1;
+        var h = $2;
+        var c = $3;
         var canvas = document.getElementById('canvas');
         if (!canvas) return;
         canvas.width = w;
