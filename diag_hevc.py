@@ -62,6 +62,8 @@ CODE_FILES = [
     "src/image/codec/hevc/nal_unit.cpp",
     "src/image/codec/hevc/cabac_context.cpp",
     "src/image/codec/hevc/cabac_engine.cpp",
+    "src/image/codec/hevc/cabac_syntax.cpp",
+    "src/image/codec/hevc/ctb_tree.cpp",
 ]
 src = "\n".join(open(p, encoding="utf-8").read()
                 for p in CODE_FILES if os.path.exists(p))
@@ -93,7 +95,7 @@ check(3, "CABAC 引擎（range=510、无首比特反转、终止 bin）", ok3,
       "实现路径=区间反解（非 bitsToFollow），由 5/6 逐字节兜底")
 
 # 4. PCM 后重置
-i = src.find("void flush_cu(")
+i = src.find("flush_cu(")
 body = src[i:i + 1800] if i >= 0 else ""
 ok4 = "range = 0x1FE" in src and "flush_cu" in src and "init_one(" not in body
 check(4, "PCM 后重置（low/range/pending 复位，上下文不重置）", ok4,
