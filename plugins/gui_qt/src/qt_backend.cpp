@@ -343,4 +343,10 @@ void QtBackend::process_events() {
     QApplication::processEvents();
 }
 
+void QtBackend::show() noexcept {
+    if (impl_ != nullptr && impl_->widget != nullptr) {
+        impl_->widget->show();
+    }
+}
+
 }  // namespace termchart_gui_qt

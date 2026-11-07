@@ -68,6 +68,11 @@ public:
     // 供应用层主动泵一次 Qt 事件（不依赖 run_loop 的自持循环模式也用得上）。
     void process_events();
 
+    // 显式把 QWidget 显示出来。Qt 不像 Win32/Tk 那样构造即可见，必须 show()
+    // 窗口才会弹出；run_loop() 内部也会 show()，二者不冲突（幂等）。
+    // 适用「应用自持 process_events 循环」模式（见 qt_demo）。
+    void show() noexcept;
+
 private:
     std::unique_ptr<Impl> impl_;
 };

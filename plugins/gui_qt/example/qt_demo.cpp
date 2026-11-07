@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
 
     Mount mount(root, backend);
     mount.paint_all();  // paint_all 内含 present()（清屏→重排→绘制→上屏）
+    backend.show();     // Qt 必须显式 show() 才弹窗（Win32/Tk 构造即可见，Qt 不）
 
     // 尺寸变化同步重渲染（与 Win32 同款钩子语义：Qt 的 resizeEvent 里就地回调）。
     backend.set_render_hook([&](std::uint32_t w, std::uint32_t h) {
