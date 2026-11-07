@@ -88,4 +88,66 @@ void CabacContext::init(int slice_qp) {
     init_one(13, 184);  // part_mode 首 bin（bin "1" → PART_2Nx2N）
 }
 
+namespace {
+
+// FFmpeg libavcodec/hevc/cabac.c 的 init_values[0]（I slice，init_type=0）。
+// 按 CABAC_ELEMS 中 NUM_BINS>0 的元素顺序展开；CNU（未用上下文）写 154。
+// 共 179 项，与 kCtx* 绝对偏移一一对应。P/B 的 init_values[1..2] 在阶段二补。
+constexpr int kInitValueCount = 179;
+constexpr std::uint8_t kInitValues[kInitValueCount] = {
+    153, 200,                                            // sao_merge_flag, sao_type_idx
+    139, 141, 157,                                      // split_coding_unit_flag
+    154,                                                // cu_transquant_bypass_flag
+    154, 154, 154,                                      // skip_flag (CNU)
+    154, 154, 154,                                      // cu_qp_delta
+    154,                                                // pred_mode_flag (CNU)
+    184, 154, 154, 154,                                 // part_mode
+    184,                                                // prev_intra_luma_pred_flag
+    63, 139,                                            // intra_chroma_pred_mode
+    154, 154,                                           // merge_flag, merge_idx (CNU)
+    154, 154, 154, 154, 154,                            // inter_pred_idc (CNU)
+    154, 154, 154, 154,                                 // ref_idx_l0/l1 (CNU)
+    154, 154, 154, 154,                                 // abs_mvd_greater0/1 (CNU)
+    154, 154,                                           // mvp_lx_flag, no_residual_data_flag
+    153, 138, 138,                                      // split_transform_flag
+    111, 141,                                           // cbf_luma
+    94, 138, 182, 154, 154,                             // cbf_cb/cr
+    139, 139, 139, 139, 139, 139,                       // transform_skip / rdpcm flags
+    110, 110, 124, 125, 140, 153, 125, 127, 140,        // last_sig_coeff_x_prefix
+    109, 111, 143, 127, 111, 79, 108, 123, 63,
+    110, 110, 124, 125, 140, 153, 125, 127, 140,        // last_sig_coeff_y_prefix
+    109, 111, 143, 127, 111, 79, 108, 123, 63,
+    91, 171, 134, 141,                                  // significant_coeff_group_flag
+    111, 111, 125, 110, 110, 94, 124, 108, 124, 107,    // significant_coeff_flag (44)
+    125, 141, 179, 153, 125, 107, 125, 141, 179, 153,
+    125, 107, 125, 141, 179, 153, 125, 140, 139, 182,
+    182, 152, 136, 152, 136, 153, 136, 139, 111, 136,
+    139, 111, 141, 111,
+    140, 92, 137, 138, 140, 152, 138, 139, 153, 74,     // coeff_abs_level_greater1 (24)
+    149, 92, 139, 107, 122, 152, 140, 179, 166, 182,
+    140, 227, 122, 197,
+    138, 153, 136, 167, 152, 152,                       // coeff_abs_level_greater2 (6)
+    154, 154, 154, 154, 154, 154, 154, 154,             // log2_res_scale_abs
+    154, 154,                                           // res_scale_sign_flag
+    154, 154,                                           // cu_chroma_qp_offset_*
+};
+
+}  // namespace
+
+void CabacContext::init_hevc(int slice_qp, int init_type) {
+    const int qp = slice_qp < 0 ? 0 : (slice_qp > 51 ? 51 : slice_qp);
+    (void)init_type;  // 阶段二补 P/B 的 init_values[1..2]
+    for (int i = 0; i < kContextCount; ++i) ctx[i].state = 0;
+    // 与 FFmpeg cabac_init_state() 逐字一致。
+    for (int i = 0; i < kInitValueCount; ++i) {
+        const int v = kInitValues[i];
+        const int m = (v >> 4) * 5 - 45;
+        const int n = ((v & 15) << 3) - 16;
+        int pre = 2 * (((m * qp) >> 4) + n) - 127;
+        pre ^= pre >> 31;
+        if (pre > 124) pre = 124 + (pre & 1);
+        ctx[i].state = static_cast<std::uint8_t>(pre);
+    }
+}
+
 }  // namespace termchart::image::codec::hevc
