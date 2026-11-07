@@ -73,7 +73,10 @@ void CabacArith::encode_terminate(int bin) {
 void CabacArith::flush(bool terminated) {
     if (finished_) return;
     if (terminated) {
-        low_ += range_ - 2;
+        // encode_terminate 已经做过 range_ -= 2；此处把码值放到该区间的顶端，
+        // 与解码端 decodeBinTrm 的 value >= (range << 7) 判定对偶。
+        // 若这里再减一次 2，码值会落到阈值下方，解码端会读到 end_of_slice=0。
+        low_ += static_cast<std::uint32_t>(range_);
         low_ |= 1;
     }
     low_ <<= 9;
