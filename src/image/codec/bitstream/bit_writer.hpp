@@ -1,10 +1,10 @@
 // bit_writer.hpp —— H.264 / HEVC 共用的比特流基建（MSB-first）
 //
 // 设计约束：
-//   * 只做「位打包 + 指数哥伦布 + RBSP 收尾 + 防竞争 + Annex-B 起始码」，
-//     不含任何 H.264/H.265 语义，两个编解码器与容器层都可以直接复用。
+//   * 只做「位打包 + 指数哥伦布 + RBSP 收尾」，不含任何 H.264/H.265 语义；
+//     防竞争与 Annex-B 封装已下沉到 ep_nal.hpp/cpp。
 //   * 高位在前（H.264 的 RBSP、HEVC 的 slice_segment_header/SEI 都是 MSB-first）。
-//   * 不抛异常、不依赖库内部类型，header-only + inline。
+//   * 不抛异常、不依赖库内部类型。
 #ifndef TERMCHART_SRC_IMAGE_CODEC_BITSTREAM_BIT_WRITER_HPP
 #define TERMCHART_SRC_IMAGE_CODEC_BITSTREAM_BIT_WRITER_HPP
 
@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+
+#include "ep_nal.hpp"
 
 namespace termchart::image::codec::bitstream {
 
@@ -29,9 +31,9 @@ public:
         }
     }
 
-    // 定长无符号，高位在前。
-    void u(std::uint32_t value, int len) {
-        for (int i = len - 1; i >= 0; --i) put_bit(static_cast<int>((value >> i) & 1u));
+    // 定长无符号，高位在前。value 用 64 位：HEVC 有 u(0, 44) 这类超过 32 位的字段。
+    void u(std::uint64_t value, int len) {
+        for (int i = len - 1; i >= 0; --i) put_bit(static_cast<int>((value >> i) & 1ull));
     }
 
     // 无符号指数哥伦布 ue(v)：H.264 9.1 / H.265 9.2 同构。
@@ -53,6 +55,15 @@ public:
     // 只补零到字节边界（pcm_alignment_zero_bit / byte_alignment 的补零段）。
     void align_zero() {
         while (nbits_ != 0) put_bit(0);
+    }
+
+    // 字节对齐时直接落一字节（PCM 8bit 样本快路径）。
+    void put_byte(std::uint8_t b) {
+        if (nbits_ == 0) {
+            buf_.push_back(static_cast<char>(b));
+        } else {
+            u(b, 8);
+        }
     }
 
     // rbsp_trailing_bits：先写 stop bit(1) 再补零对齐。
@@ -78,39 +89,6 @@ private:
     int cur_ = 0;    // 正在累积的字节
     int nbits_ = 0;  // 已累积位数（0..7）
 };
-
-// ── 防竞争字节（emulation prevention）─────────────────────────────────
-// 00 00 后紧跟 ≤0x03 的字节时插入 0x03。H.264 7.4.1 / H.265 7.4.2 同构。
-inline std::string emulation_prevention(const std::string& rbsp) {
-    std::string out;
-    out.reserve(rbsp.size() + rbsp.size() / 64 + 4);
-    int zeros = 0;
-    for (char ch : rbsp) {
-        const int c = static_cast<unsigned char>(ch);
-        if (zeros >= 2 && c <= 3) {
-            out.push_back(static_cast<char>(3));
-            zeros = 0;
-        }
-        out.push_back(ch);
-        zeros = (c == 0) ? zeros + 1 : 0;
-    }
-    return out;
-}
-
-// ── Annex-B 封装 ──────────────────────────────────────────────────────
-// header 是 NAL 头的原始字节（H.264 1 字节，H.265 2 字节），先插起始码再写头，
-// 最后追加防竞争处理过的载荷。
-inline std::string annexb_nal(const std::uint8_t* header, std::size_t hn, const std::string& rbsp) {
-    std::string out;
-    out.reserve(hn + rbsp.size() + 8);
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(1));  // start code 00 00 00 01
-    for (std::size_t i = 0; i < hn; ++i) out.push_back(static_cast<char>(header[i]));
-    out += emulation_prevention(rbsp);
-    return out;
-}
 
 // 8bit 饱和（重建/色彩转换共用）。
 inline int clamp_u8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }

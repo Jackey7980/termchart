@@ -7,93 +7,20 @@
 #include <utility>
 #include <vector>
 
+#include "codec/bitstream/bit_writer.hpp"
+#include "codec/hevc/nal_unit.hpp"
+
 namespace termchart::image {
 namespace {
 
-// ── MSB-first 位写入器（HEVC 高位在前）──
-struct BitWriter {
-    std::string buf;
-    int cur = 0;
-    int nbits = 0;
-    void put_bit(int b) {
-        cur = (cur << 1) | (b & 1);
-        if (++nbits == 8) {
-            buf.push_back(static_cast<char>(cur));
-            cur = 0;
-            nbits = 0;
-        }
-    }
-    void u(unsigned long long value, int len) {
-        for (int i = len - 1; i >= 0; --i) {
-            put_bit(static_cast<int>((value >> i) & 1ull));
-        }
-    }
-    void ue(unsigned v) {
-        unsigned code = v + 1;
-        int n = 0;
-        for (unsigned t = code; t > 1; t >>= 1) ++n;
-        for (int i = 0; i < n; ++i) put_bit(0);
-        for (int i = n; i >= 0; --i) put_bit(static_cast<int>((code >> i) & 1u));
-    }
-    void se(int v) {
-        unsigned k = (v <= 0) ? static_cast<unsigned>(-2 * v)
-                               : static_cast<unsigned>(2 * v - 1);
-        ue(k);
-    }
-    // 仅补零对齐到字节边界（PCM 的 pcm_alignment_zero_bit / 各层 byte alignment 用）。
-    void align_zero() {
-        while (nbits != 0) put_bit(0);
-    }
-    // 字节对齐时直接落一字节（PCM 8bit 样本走快路径，省去 8 次 put_bit）。
-    void put_byte(std::uint8_t b) {
-        if (nbits == 0) {
-            buf.push_back(static_cast<char>(b));
-        } else {
-            u(b, 8);
-        }
-    }
-    // rbsp_trailing_bits：先写停止位 1 再补零对齐，用于 NAL / SPS/PPS/VPS / slice 末尾。
-    std::string finish() {
-        put_bit(1);
-        align_zero();
-        return std::move(buf);
-    }
-};
+// ── 通用比特流基建（阶段 9 · A1）─────────────────────────────────────────
+// 位写入器 / 防竞争 / Annex-B / NAL 头已下沉到 image/codec/bitstream 与
+// image/codec/hevc/nal_unit。I_PCM 的编码逻辑仍自包含，只替换底层实现；
+// 门禁 G0（diag_hevc.py 6/6 + 20430B/sha）保证码流字节级不变。
+using codec::bitstream::BitWriter;
+using codec::hevc::make_nal;
 
-// 防竞争字节：在 00 00 后且下个字节 ≤3 时插入 0x03（与 H.264 同规则）。
-std::string add_ep(const std::string& rbsp) {
-    std::string out;
-    int zeros = 0;
-    for (char ch : rbsp) {
-        const int c = static_cast<unsigned char>(ch);
-
-        if (zeros >= 2 && c <= 3) {
-            out.push_back(static_cast<char>(3));
-            zeros = 0;
-        }
-        out.push_back(ch);
-        zeros = (c == 0) ? zeros + 1 : 0;
-    }
-    return out;
-}
-
-// HEVC NAL：2 字节头（forbidden_zero(1) | nal_unit_type(6) | nuh_layer_id(6) |
-// nuh_temporal_id_plus1(3)） + EP(RBSP)，前面补 00 00 00 01 起始码。
-std::string make_nal(int type, const std::string& rbsp) {
-    std::string ep = add_ep(rbsp);
-    std::string out;
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(1));  // start code 00 00 00 01
-    const unsigned header = static_cast<unsigned>(type) << 9 | 1u;  // layer=0, temporal=1
-    out.push_back(static_cast<char>((header >> 8) & 0xFF));
-    out.push_back(static_cast<char>(header & 0xFF));
-    out += ep;
-    return out;
-}
-
-int clamp8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+int clamp8(int v) { return codec::bitstream::clamp_u8(v); }
 
 struct Yuv420 {
     int cw = 0, ch = 0;
