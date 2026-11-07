@@ -660,9 +660,10 @@ std::string build_idr_slice(const Yuv420& f, int slice_qp) {
     return rbsp;
 }
 
-}  // namespace
-
-std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions&) {
+// I_PCM 档：完整自包含实现。后续把 bit_writer / parameter_sets / cabac_* /
+// ctb_tree 等下沉到 image/codec/hevc/ 时，只服务真压缩档；这条 PCM 路径保持
+// 原样，作为 diag_hevc.py 的字节级黄金回归基线，任何一步都不许改变其码流。
+std::string encode_hevc_pcm_annexb(std::span<const Bitmap> frames) {
     if (frames.empty()) return std::string{};
     const int W = static_cast<int>(frames[0].width());
     const int H = static_cast<int>(frames[0].height());
@@ -683,6 +684,20 @@ std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptio
         out += make_nal(19, build_idr_slice(f, 26));  // IDR slice, slice QP = 26
     }
     return out;
+}
+
+}  // namespace
+
+std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts) {
+    switch (opts.video_mode) {
+        case VideoEncodeMode::Pcm:
+            return encode_hevc_pcm_annexb(frames);
+        case VideoEncodeMode::Intra:
+        case VideoEncodeMode::Inter:
+            // 阶段一/二才落地；显式返回空串，不静默降级成 PCM。
+            return std::string{};
+    }
+    return std::string{};
 }
 
 }  // namespace termchart::image

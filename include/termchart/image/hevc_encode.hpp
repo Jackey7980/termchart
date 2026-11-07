@@ -17,7 +17,9 @@
 
 namespace termchart::image {
 
-// 输出 Annex-B 字节流：VPS + SPS + PPS + 每帧一个 IDR slice（I_PCM CTU）。空输入返回空串。
+// 按 EncodeOptions::video_mode 分派档位。默认 Pcm：输出完整独立的 I_PCM 码流
+// （VPS + SPS + PPS + 每帧一个 IDR slice），字节级稳定，供 diag_hevc.py 做黄金回归。
+// Intra/Inter 为真压缩档（阶段一/二）保留，未落地时返回空串，不静默降级。
 TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image

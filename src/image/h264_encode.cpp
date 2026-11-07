@@ -182,7 +182,7 @@ h264_detail::YuvFrame to_intra_frame(const Yuv420& f) {
 
 }  // namespace
 
-std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptions&) {
+std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts) {
     if (frames.empty()) return std::string{};
     int W = static_cast<int>(frames[0].width());
     int H = static_cast<int>(frames[0].height());
@@ -197,9 +197,10 @@ std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptio
     std::string out;
     out += make_nal(3, 7, build_sps(cw, ch));   // SPS
     out += make_nal(3, 8, build_pps());         // PPS
-    // 临时对照开关：设置 TERMCHART_H264_INTRA 后走「帧内预测+变换量化+CAVLC」档，
-    // 否则仍是 I_PCM。两档共用同一套 SPS/PPS 与 NAL 封装，便于逐帧比对。
-    const bool use_intra = std::getenv("TERMCHART_H264_INTRA") != nullptr;
+    // 统一走 EncodeOptions::video_mode；保留旧环境变量作为向后兼容的对照开关。
+    // 默认 Pcm 仍是 I_PCM，两档共用同一套 SPS/PPS 与 NAL 封装。
+    const bool use_intra = opts.video_mode != VideoEncodeMode::Pcm ||
+                           std::getenv("TERMCHART_H264_INTRA") != nullptr;
     for (size_t i = 0; i < frames.size(); ++i) {
         const Yuv420 f = to_yuv(frames[i]);
         const std::string rbsp =
