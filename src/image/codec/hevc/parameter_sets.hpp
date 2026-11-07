@@ -22,6 +22,12 @@ struct Sps {
     // conformance window 裁剪（单位 CropUnitY：4:2:0 下 = 2 个亮度行）。
     // CTB 对齐产生的底部 padding 靠这个字段裁掉，让显示尺寸回到真实 W/H。
     int conf_win_bottom = 0;
+    // pcm_enabled_flag。true = 沿用既有 I_PCM 路径（字节级与 G0 基准一致）；
+    // false = 关 PCM，进入 CABAC 编码树（真压缩档），需配合 max_thd_intra>=1。
+    bool pcm_enabled = true;
+    // max_transform_hierarchy_depth_intra：PCM 路径固定为 0；非 PCM 路径需 >=1
+    // 才能让 8x8 CU 的 transform_tree 做 8x8 -> 4x4 这一级分裂。
+    int max_transform_hierarchy_depth_intra = 0;
 };
 
 struct Pps {};

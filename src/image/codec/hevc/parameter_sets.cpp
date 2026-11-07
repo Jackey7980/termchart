@@ -81,16 +81,20 @@ std::string write_sps(const Sps& sps) {
     w.ue(0);      // log2_min_luma_transform_block_size_minus2
     w.ue(3);      // log2_diff_max_min_luma_transform_block_size
     w.ue(0);      // max_transform_hierarchy_depth_inter
-    w.ue(0);      // max_transform_hierarchy_depth_intra
+    w.ue(static_cast<unsigned>(sps.max_transform_hierarchy_depth_intra));  // max_transform_hierarchy_depth_intra
     w.u(0, 1);    // scaling_list_enabled_flag
     w.u(0, 1);    // amp_enabled_flag
     w.u(0, 1);    // sample_adaptive_offset_enabled_flag
-    w.u(1, 1);    // pcm_enabled_flag
-    w.u(7, 4);    // pcm_sample_bit_depth_luma_minus1
-    w.u(7, 4);    // pcm_sample_bit_depth_chroma_minus1
-    w.ue(0);      // log2_min_pcm_luma_coding_block_size_minus3（PCM 块 = 8）
-    w.ue(0);      // log2_diff_max_min_pcm_luma_coding_block_size
-    w.u(1, 1);    // pcm_loop_filter_disabled_flag
+    if (sps.pcm_enabled) {
+        w.u(1, 1);    // pcm_enabled_flag
+        w.u(7, 4);    // pcm_sample_bit_depth_luma_minus1
+        w.u(7, 4);    // pcm_sample_bit_depth_chroma_minus1
+        w.ue(0);      // log2_min_pcm_luma_coding_block_size_minus3（PCM 块 = 8）
+        w.ue(0);      // log2_diff_max_min_pcm_luma_coding_block_size
+        w.u(1, 1);    // pcm_loop_filter_disabled_flag
+    } else {
+        w.u(0, 1);    // pcm_enabled_flag = 0（关 PCM，走 CABAC 编码树）
+    }
     w.ue(0);      // num_short_term_ref_pic_sets
     w.u(0, 1);    // long_term_ref_pics_present_flag
     w.u(0, 1);    // sps_temporal_mvp_enabled_flag

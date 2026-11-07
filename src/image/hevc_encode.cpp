@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,6 +14,9 @@
 #include "codec/hevc/slice_header.hpp"
 #include "codec/hevc/cabac_engine.hpp"
 #include "codec/hevc/cabac_syntax.hpp"
+#include "codec/hevc/cabac_arith.hpp"
+#include "codec/hevc/cabac_context.hpp"
+#include "codec/hevc/cu_coding.hpp"
 #include "codec/hevc/ctb_tree.hpp"
 
 namespace termchart::image {
@@ -106,6 +110,113 @@ std::string build_idr_slice(const Yuv420& f, int slice_qp) {
     return rbsp;
 }
 
+// ── 非 PCM（CABAC 编码树）档：阶段一 B3-4 ───────────────────────────────────
+// 用已经 bin 化、且对偶 FFmpeg 语义验证过的 8x8 帧内 CU 语法（cu_coding +
+// cabac_arith），把帧编码成真正的 CABAC 码流。当前只做「语法/码流级真压缩档」：
+// 不做前向变换/量化/帧内预测（系数是合成的小值），仅验证「我们产出的 bin 序列经
+// CABAC 写出后，能被标准解码器 ffmpeg 解出来且不报错」。变换/量化/预测是后续步骤。
+using codec::hevc::CabacArith;
+using codec::hevc::CabacContext;
+using codec::hevc::CuIntra8x8;
+using codec::hevc::kBypassCtx;
+using codec::hevc::kCtxSplitCuFlag;
+
+std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
+    codec::hevc::SliceHeader sh;
+    std::string rbsp = codec::hevc::write_slice_header(sh);
+    CabacArith cabac;
+    cabac.init();
+    CabacContext ctx;
+    ctx.init_hevc(slice_qp);  // I slice -> initType 0
+
+    const int cw8 = f.cw / 8;
+    const int ctb_w = f.cw / 64, ctb_h = f.ch / 64;
+    const int total_ctb = ctb_w * ctb_h;
+    int ctb_idx = 0;
+
+    auto emit_cu = [&](int x0, int y0, int global_cu) {
+        CuIntra8x8 cu;
+        cu.part_2nx2n = true;
+        cu.prev_intra_luma_pred_flag = true;  // 走 mpm_idx
+        cu.mpm_idx = global_cu % 3;
+        cu.intra_chroma_pred_mode = 4;        // DM
+        cu.cbf_cb = 0;
+        cu.cbf_cr = 0;
+        std::int16_t blocks[4][16] = {};
+        // 放少量 1..3 的小 DC，强制走 residual 路径又不触发 escape（escape 未实现）。
+        if (global_cu % 13 == 0) blocks[0][0] = static_cast<std::int16_t>(1 + (global_cu % 3));
+        cu.luma4x4[0] = blocks[0];
+        cu.luma4x4[1] = nullptr;
+        cu.luma4x4[2] = nullptr;
+        cu.luma4x4[3] = nullptr;
+        const auto bins = codec::hevc::encode_cu_intra_8x8(cu);
+        for (const auto& b : bins) {
+            if (b.ctx == kBypassCtx) cabac.encode_bypass(b.val);
+            else cabac.encode_decision(ctx.ctx[b.ctx], b.val);
+        }
+    };
+
+    // coding_tree：从 64x64 一路分裂到 8x8。均质 8x8 网格下 split_cu_flag 的相邻
+    // 深度恒等于当前深度 -> FFmpeg 的 inc=(depth_left>ct_depth)+(depth_top>ct_depth)=0
+    // -> 所有 split_cu_flag 都用 ctx == kCtxSplitCuFlag(=2)。
+    std::function<void(int, int, int)> code_tree = [&](int x0, int y0, int depth) {
+        if (depth < 3) {
+            cabac.encode_decision(ctx.ctx[kCtxSplitCuFlag], 1);
+            const int half = (1 << (6 - depth)) / 2;
+            for (int i = 0; i < 4; ++i)
+                code_tree(x0 + ((i & 1) * half), y0 + ((i >> 1) * half), depth + 1);
+        } else {
+            cabac.encode_decision(ctx.ctx[kCtxSplitCuFlag], 0);
+            emit_cu(x0, y0, (y0 / 8) * cw8 + (x0 / 8));
+        }
+    };
+
+    for (int ctb_y = 0; ctb_y < f.ch; ctb_y += 64) {
+        for (int ctb_x = 0; ctb_x < f.cw; ctb_x += 64) {
+            code_tree(ctb_x, ctb_y, 0);
+            cabac.encode_terminate(ctb_idx == total_ctb - 1 ? 1 : 0);
+            ++ctb_idx;
+        }
+    }
+    rbsp += cabac.finish();
+    return rbsp;
+}
+
+std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames) {
+    if (frames.empty()) return std::string{};
+    const int W = static_cast<int>(frames[0].width());
+    const int H = static_cast<int>(frames[0].height());
+    for (const auto& f : frames) {
+        if (static_cast<int>(f.width()) != W || static_cast<int>(f.height()) != H)
+            return std::string{};
+    }
+    // 非 PCM 路径的 coding_tree 不做 CTB 边界部分块，要求尺寸为 64 的整数倍；
+    // 不满足时显式返回空（fail-loud，不静默降级成 PCM）。
+    if (W % 64 != 0 || H % 64 != 0) return std::string{};
+    const int cw = ((W + 63) / 64) * 64;
+    const int ch = ((H + 63) / 64) * 64;
+
+    std::string out;
+    const int level_idc = (cw >= 3840 || ch >= 2160) ? 153 : 30;
+    codec::hevc::Vps vps;
+    vps.general_level_idc = level_idc;
+    out += make_nal(32, codec::hevc::write_vps(vps));  // VPS
+    codec::hevc::Sps sps;
+    sps.general_level_idc = level_idc;
+    sps.pic_width_in_luma_samples = cw;
+    sps.pic_height_in_luma_samples = ch;
+    sps.conf_win_bottom = (ch - H) / 2;
+    sps.pcm_enabled = false;                          // 关 PCM，走 CABAC 编码树
+    sps.max_transform_hierarchy_depth_intra = 1;      // 允许 8x8 -> 4x4 一级分裂
+    out += make_nal(33, codec::hevc::write_sps(sps));  // SPS
+    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));  // PPS
+    for (const auto& frame : frames) {
+        const Yuv420 f = to_yuv(frame);
+        out += make_nal(19, build_intra_idr_slice(f, 26));  // IDR slice, QP = 26
+    }
+    return out;
+}
+
 // I_PCM 档：完整自包含实现。后续把 bit_writer / parameter_sets / cabac_* /
 // ctb_tree 等下沉到 image/codec/hevc/ 时，只服务真压缩档；这条 PCM 路径保持
 // 原样，作为 diag_hevc.py 的字节级黄金回归基线，任何一步都不许改变其码流。
@@ -150,8 +261,9 @@ std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptio
         case VideoEncodeMode::Pcm:
             return encode_hevc_pcm_annexb(frames);
         case VideoEncodeMode::Intra:
+            return encode_hevc_intra_annexb(frames);
         case VideoEncodeMode::Inter:
-            // 阶段一/二才落地；显式返回空串，不静默降级成 PCM。
+            // 阶段二才落地；显式返回空串，不静默降级成 PCM。
             return std::string{};
     }
     return std::string{};
