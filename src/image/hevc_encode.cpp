@@ -126,6 +126,8 @@ std::string encode_hevc_pcm_annexb(std::span<const Bitmap> frames) {
     codec::hevc::Sps sps;
     sps.pic_width_in_luma_samples = cw;
     sps.pic_height_in_luma_samples = ch;
+    // 4:2:0 下 CropUnitY = SubHeightC = 2，故裁掉的行数除以 2。
+    sps.conf_win_bottom = (ch - H) / 2;
     out += make_nal(33, codec::hevc::write_sps(sps));  // SPS
     out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));  // PPS
     for (const auto& frame : frames) {

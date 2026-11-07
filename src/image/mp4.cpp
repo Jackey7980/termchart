@@ -300,7 +300,9 @@ std::string encode_mp4(std::span<const Bitmap> frames, const EncodeOptions& opts
 
     std::string stsd;
     put_u32(stsd, 1);
-    stsd += is_hevc ? build_hevc1(cw, ch, p) : build_avc1(cw, ch, p);
+    // HEVC 的 SPS 带 conformance window，sample entry 应声明裁剪后的显示尺寸；
+    // H264 档尚无裁剪窗口，继续用编码尺寸。
+    stsd += is_hevc ? build_hevc1(W, H, p) : build_avc1(cw, ch, p);
     std::string stsd_box = fullbox("stsd", 0, stsd);
 
     std::string stts;

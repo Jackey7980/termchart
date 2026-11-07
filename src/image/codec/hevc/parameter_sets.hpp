@@ -15,6 +15,9 @@ struct Vps {};
 struct Sps {
     int pic_width_in_luma_samples = 0;
     int pic_height_in_luma_samples = 0;
+    // conformance window 裁剪（单位 CropUnitY：4:2:0 下 = 2 个亮度行）。
+    // CTB 对齐产生的底部 padding 靠这个字段裁掉，让显示尺寸回到真实 W/H。
+    int conf_win_bottom = 0;
 };
 
 struct Pps {};

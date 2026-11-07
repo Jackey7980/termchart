@@ -57,7 +57,17 @@ std::string write_sps(const Sps& sps) {
     w.ue(1);      // chroma_format_idc = 1 (4:2:0)
     w.ue(static_cast<unsigned>(sps.pic_width_in_luma_samples));
     w.ue(static_cast<unsigned>(sps.pic_height_in_luma_samples));
-    w.u(0, 1);    // conformance_window_flag = 0
+    // conformance_window_flag：CTB 对齐产生底部 padding 时写裁剪窗口，
+    // 让解码端输出原始 W×H 而不是补齐后的 cw×ch。
+    if (sps.conf_win_bottom > 0) {
+        w.u(1, 1);
+        w.ue(0);  // conf_win_left_offset
+        w.ue(0);  // conf_win_right_offset
+        w.ue(0);  // conf_win_top_offset
+        w.ue(static_cast<unsigned>(sps.conf_win_bottom));  // conf_win_bottom_offset
+    } else {
+        w.u(0, 1);
+    }
     w.ue(0);      // bit_depth_luma_minus8
     w.ue(0);      // bit_depth_chroma_minus8
     w.ue(0);      // log2_max_pic_order_cnt_lsb_minus4

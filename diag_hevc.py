@@ -26,9 +26,11 @@ import sys
 STREAM = "tc_hevc.265"
 SRC = "src/image/hevc_encode.cpp"
 RAW = "_verify_pcm.yuv"
-BASE_BYTES = 20430
-BASE_SHA_PREFIX = "10a4759ac9bcbed137012443"
-W, H, NFRAMES = 64, 64, 3  # 64x48 源图按 CTB 对齐补到 64x64
+# 2026-11-07 重新钉基线：SPS 增加 conformance window 裁掉 CTB padding，
+# 解码尺寸由 64x64 回到真实 64x48；slice 数据未变，码流 +1 字节。
+BASE_BYTES = 20431
+BASE_SHA_PREFIX = "de6bc9afd016d1bc5e726c3d"
+W, H, NFRAMES = 64, 48, 3
 
 FF = (r"C:\Users\琳琳\AppData\Roaming\Python\Python314\site-packages"
       r"\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v9.0.2.exe")
