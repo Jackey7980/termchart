@@ -138,7 +138,7 @@ std::string build_avc1(int cw, int ch, const Parsed& p) {
 }
 
 // ── HEVC（H.265）配置 ──
-std::string build_hvcc(const Parsed& p) {
+std::string build_hvcc(const Parsed& p, int level_idc) {
     std::string payload;
     put_u8(payload, 1);     // configurationVersion
     // general_profile_space(2)=0 | general_tier_flag(1)=0 | general_profile_idc(5)=1
@@ -151,7 +151,7 @@ std::string build_hvcc(const Parsed& p) {
                                 (uint64_t(1) << 39);
     put_u32(payload, static_cast<uint32_t>(constraint >> 16));
     put_u16(payload, static_cast<uint16_t>(constraint & 0xFFFF));
-    put_u8(payload, 30);    // general_level_idc
+    put_u8(payload, static_cast<uint8_t>(level_idc));  // 须与 SPS 的 general_level_idc 一致
     // reserved(4)=1111 | min_spatial_segmentation_idc(12)=0
     put_u8(payload, 0xF0);
     put_u8(payload, 0);
@@ -184,7 +184,14 @@ std::string build_hvcc(const Parsed& p) {
     return box("hvcC", payload);
 }
 
-std::string build_hevc1(int cw, int ch, const Parsed& p) {
+std::string build_pasp() {
+    std::string payload;
+    put_u32(payload, 1);  // hSpacing
+    put_u32(payload, 1);  // vSpacing
+    return box("pasp", payload);
+}
+
+std::string build_hevc1(int cw, int ch, const Parsed& p, int level_idc) {
     std::string payload;
     for (int i = 0; i < 6; ++i) put_u8(payload, 0);
     put_u16(payload, 1);
@@ -200,7 +207,8 @@ std::string build_hevc1(int cw, int ch, const Parsed& p) {
     for (int i = 0; i < 32; ++i) put_u8(payload, 0);
     put_u16(payload, 0x0018);
     put_u16(payload, 0xFFFF);
-    payload += build_hvcc(p);
+    payload += build_hvcc(p, level_idc);
+    payload += build_pasp();  // 显式 1:1 PAR
     return box("hvc1", payload);
 }
 
@@ -302,7 +310,10 @@ std::string encode_mp4(std::span<const Bitmap> frames, const EncodeOptions& opts
     put_u32(stsd, 1);
     // HEVC 的 SPS 带 conformance window，sample entry 应声明裁剪后的显示尺寸；
     // H264 档尚无裁剪窗口，继续用编码尺寸。
-    stsd += is_hevc ? build_hevc1(W, H, p) : build_avc1(cw, ch, p);
+    // 必须与 hevc_encode.cpp / parameter_sets.cpp 的 level 判据同步：
+    // 4K 用 Level 5.1(153)，小尺寸用 3.0(30)。
+    const int level_idc = (cw >= 3840 || ch >= 2160) ? 153 : 30;
+    stsd += is_hevc ? build_hevc1(W, H, p, level_idc) : build_avc1(cw, ch, p);
     std::string stsd_box = fullbox("stsd", 0, stsd);
 
     std::string stts;

@@ -10,9 +10,13 @@ namespace termchart::image::codec::hevc {
 
 // 当前配置固定：Main / 4:2:0 8bit / CTB=64 / I_PCM。只有图像尺寸随输入变化。
 // 阶段二打开帧间、SAO、deblocking 等开关时在此追加字段并同步 write_*.cpp。
-struct Vps {};
+struct Vps {
+    // VPS / SPS 的 profile_tier_level 必须写同一个 level；4K 需 Level 5.1(153)。
+    int general_level_idc = 30;
+};
 
 struct Sps {
+    int general_level_idc = 30;
     int pic_width_in_luma_samples = 0;
     int pic_height_in_luma_samples = 0;
     // conformance window 裁剪（单位 CropUnitY：4:2:0 下 = 2 个亮度行）。

@@ -122,8 +122,14 @@ std::string encode_hevc_pcm_annexb(std::span<const Bitmap> frames) {
     const int ch = ((H + 63) / 64) * 64;
 
     std::string out;
-    out += make_nal(32, codec::hevc::write_vps(codec::hevc::Vps{}));  // VPS
+    // Level 声明必须覆盖实际图像尺寸/采样率：4K 用 Level 5.1(153)，小尺寸沿用
+    // 3.0(30)。把 3.0 挂在 4K 上会让硬解按错误的 DPB/码率预算拒绝码流。
+    const int level_idc = (cw >= 3840 || ch >= 2160) ? 153 : 30;
+    codec::hevc::Vps vps;
+    vps.general_level_idc = level_idc;
+    out += make_nal(32, codec::hevc::write_vps(vps));  // VPS
     codec::hevc::Sps sps;
+    sps.general_level_idc = level_idc;
     sps.pic_width_in_luma_samples = cw;
     sps.pic_height_in_luma_samples = ch;
     // 4:2:0 下 CropUnitY = SubHeightC = 2，故裁掉的行数除以 2。

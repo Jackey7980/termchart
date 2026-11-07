@@ -11,7 +11,7 @@ using bitstream::BitWriter;
 // profile_tier_level（MaxNumSubLayersMinus1 = 0，无子层循环）。
 // HEVC 7.3.3：general_profile_idc==1（Main）走 else 分支 → 4 个约束标志之后是
 // general_reserved_zero_44bits（44 个 0），绝不可把 Main 专属 max_*_constraint 标志写进该区。
-void profile_tier_level(BitWriter& w) {
+void profile_tier_level(BitWriter& w, int level_idc) {
     w.u(0, 2);   // general_profile_space
     w.u(0, 1);   // general_tier_flag
     w.u(1, 5);   // general_profile_idc = 1 (Main, 8-bit)
@@ -21,12 +21,12 @@ void profile_tier_level(BitWriter& w) {
     w.u(1, 1);   // general_non_packed_constraint_flag
     w.u(1, 1);   // general_frame_only_constraint_flag
     w.u(0, 44);  // general_reserved_zero_44bits（Main profile = else 分支，全 0）
-    w.u(30, 8);  // general_level_idc = 30
+    w.u(static_cast<unsigned>(level_idc), 8);  // general_level_idc
 }
 
 }  // namespace
 
-std::string write_vps(const Vps&) {
+std::string write_vps(const Vps& vps) {
     BitWriter w;
     w.u(0, 4);    // vps_video_parameter_set_id
     w.u(1, 1);    // vps_base_layer_internal_flag
@@ -35,7 +35,7 @@ std::string write_vps(const Vps&) {
     w.u(0, 3);    // vps_max_sub_layers_minus1
     w.u(1, 1);    // vps_temporal_id_nesting_flag
     w.u(0xFFFF, 16);  // vps_reserved_0xffff_16bits
-    profile_tier_level(w);
+    profile_tier_level(w, vps.general_level_idc);
     w.u(1, 1);    // vps_sub_layer_ordering_info_present_flag
     w.ue(0);      // vps_max_dec_pic_buffering_minus1[0]
     w.ue(0);      // vps_max_num_reorder_pics[0]
@@ -52,7 +52,7 @@ std::string write_sps(const Sps& sps) {
     w.u(0, 4);    // sps_video_parameter_set_id
     w.u(0, 3);    // sps_max_sub_layers_minus1
     w.u(1, 1);    // sps_temporal_id_nesting_flag
-    profile_tier_level(w);
+    profile_tier_level(w, sps.general_level_idc);
     w.ue(0);      // sps_seq_parameter_set_id
     w.ue(1);      // chroma_format_idc = 1 (4:2:0)
     w.ue(static_cast<unsigned>(sps.pic_width_in_luma_samples));
@@ -95,7 +95,20 @@ std::string write_sps(const Sps& sps) {
     w.u(0, 1);    // long_term_ref_pics_present_flag
     w.u(0, 1);    // sps_temporal_mvp_enabled_flag
     w.u(0, 1);    // strong_intra_smoothing_enabled_flag
-    w.u(0, 1);    // vui_parameters_present_flag
+    // VUI 最小集（HEVC 7.3.4）：显式声明 1:1 SAR，避免播放器用
+    // coded_height(2176) 与 display_height(2160) 推算出 135:136 这类错误 PAR。
+    w.u(1, 1);    // vui_parameters_present_flag
+    w.u(1, 1);    // aspect_ratio_info_present_flag
+    w.u(1, 8);    // aspect_ratio_idc = 1 (SAR 1:1)
+    w.u(0, 1);    // overscan_info_present_flag
+    w.u(0, 1);    // video_signal_type_present_flag
+    w.u(0, 1);    // chroma_loc_info_present_flag
+    w.u(0, 1);    // neutral_chroma_indication_flag
+    w.u(0, 1);    // field_seq_flag
+    w.u(0, 1);    // frame_field_info_present_flag
+    w.u(0, 1);    // default_display_window_flag
+    w.u(0, 1);    // vui_timing_info_present_flag
+    w.u(0, 1);    // bitstream_restriction_flag
     w.u(0, 1);    // sps_extension_present_flag
     return w.finish();
 }

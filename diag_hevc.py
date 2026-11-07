@@ -27,9 +27,10 @@ STREAM = "tc_hevc.265"
 SRC = "src/image/hevc_encode.cpp"
 RAW = "_verify_pcm.yuv"
 # 2026-11-07 重新钉基线：SPS 增加 conformance window 裁掉 CTB padding，
-# 解码尺寸由 64x64 回到真实 64x48；slice 数据未变，码流 +1 字节。
-BASE_BYTES = 20431
-BASE_SHA_PREFIX = "de6bc9afd016d1bc5e726c3d"
+# 并补 VUI 最小集（1:1 SAR）与参数化 general_level_idc。
+# 解码尺寸回到真实 64x48；slice 数据始终未变，码流 20430 -> 20431 -> 20433 字节。
+BASE_BYTES = 20433
+BASE_SHA_PREFIX = "5d4adef591829b46e4116e5c"
 W, H, NFRAMES = 64, 48, 3
 
 FF = (r"C:\Users\琳琳\AppData\Roaming\Python\Python314\site-packages"
