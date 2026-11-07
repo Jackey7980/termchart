@@ -9,6 +9,8 @@
 
 #include "codec/bitstream/bit_writer.hpp"
 #include "codec/hevc/nal_unit.hpp"
+#include "codec/hevc/parameter_sets.hpp"
+#include "codec/hevc/slice_header.hpp"
 
 namespace termchart::image {
 namespace {
@@ -66,119 +68,10 @@ Yuv420 to_yuv(const Bitmap& bmp) {
     return out;
 }
 
-// profile_tier_level（MaxNumSubLayersMinus1 = 0，无子层循环）。
-// HEVC 7.3.3：general_profile_idc==1（Main）走 else 分支 → 4 个约束标志之后是
-// general_reserved_zero_44bits（44 个 0），绝不可把 Main 专属 max_*_constraint 标志写进该区。
-// 注意：FFmpeg 8.1.2 对 Main 仍按 else 分支读 44 个 reserved 0，写 1 会被忽略但会污染 SPS 后续字段解析。
-void profile_tier_level(BitWriter& w) {
-    w.u(0, 2);   // general_profile_space
-    w.u(0, 1);   // general_tier_flag
-    w.u(1, 5);   // general_profile_idc = 1 (Main, 8-bit)
-    w.u(2, 32);  // general_profile_compatibility_flags：bit1 置位（Main 兼容）
-    w.u(1, 1);   // general_progressive_source_flag
-    w.u(0, 1);   // general_interlaced_source_flag
-    w.u(1, 1);   // general_non_packed_constraint_flag
-    w.u(1, 1);   // general_frame_only_constraint_flag
-    w.u(0, 44);  // general_reserved_zero_44bits（Main profile = else 分支，全 0）
-    w.u(30, 8);  // general_level_idc = 30
-}
-
-std::string build_vps() {
-    BitWriter w;
-    w.u(0, 4);    // vps_video_parameter_set_id
-    w.u(1, 1);    // vps_base_layer_internal_flag
-    w.u(1, 1);    // vps_base_layer_available_flag
-    w.u(0, 6);    // vps_max_layers_minus1
-    w.u(0, 3);    // vps_max_sub_layers_minus1
-    w.u(1, 1);    // vps_temporal_id_nesting_flag
-    w.u(0xFFFF, 16);  // vps_reserved_0xffff_16bits
-    profile_tier_level(w);
-    w.u(1, 1);    // vps_sub_layer_ordering_info_present_flag
-    w.ue(0);      // vps_max_dec_pic_buffering_minus1[0]
-    w.ue(0);      // vps_max_num_reorder_pics[0]
-    w.ue(0);      // vps_max_latency_increase_plus1[0]
-    w.u(0, 6);    // vps_max_layer_id
-    w.ue(0);      // vps_num_layer_sets_minus1
-    w.u(0, 1);    // vps_timing_info_present_flag
-    w.u(0, 1);    // vps_extension_present_flag
-    return w.finish();
-}
-
-std::string build_sps(int cw, int ch) {
-    BitWriter w;
-    w.u(0, 4);    // sps_video_parameter_set_id
-    w.u(0, 3);    // sps_max_sub_layers_minus1
-    w.u(1, 1);    // sps_temporal_id_nesting_flag
-    profile_tier_level(w);
-    w.ue(0);      // sps_seq_parameter_set_id
-    w.ue(1);      // chroma_format_idc = 1 (4:2:0)
-    w.ue(static_cast<unsigned>(cw));   // pic_width_in_luma_samples
-    w.ue(static_cast<unsigned>(ch));   // pic_height_in_luma_samples
-    w.u(0, 1);    // conformance_window_flag = 0
-    w.ue(0);      // bit_depth_luma_minus8
-    w.ue(0);      // bit_depth_chroma_minus8
-    w.ue(0);      // log2_max_pic_order_cnt_lsb_minus4
-    w.u(0, 1);    // sps_sub_layer_ordering_info_present_flag = 0
-    w.ue(0);      // sps_max_dec_pic_buffering_minus1（层 0）
-    w.ue(0);      // sps_max_num_reorder_pics（层 0）
-    w.ue(0);      // sps_max_latency_increase_plus1（层 0）
-    // CTB = 64（MinCb=8, MaxCb=8+diff3=64）；log2_min_cb_minus3=0、diff_max_min=3。
-    w.ue(0);      // log2_min_luma_coding_block_size_minus3
-    w.ue(3);      // log2_diff_max_min_luma_coding_block_size
-    w.ue(0);      // log2_min_luma_transform_block_size_minus2
-    w.ue(3);      // log2_diff_max_min_luma_transform_block_size
-    w.ue(0);      // max_transform_hierarchy_depth_inter
-    w.ue(0);      // max_transform_hierarchy_depth_intra
-    w.u(0, 1);    // scaling_list_enabled_flag
-    w.u(0, 1);    // amp_enabled_flag
-    w.u(0, 1);    // sample_adaptive_offset_enabled_flag
-    w.u(1, 1);    // pcm_enabled_flag
-    w.u(7, 4);    // pcm_sample_bit_depth_luma_minus1
-    w.u(7, 4);    // pcm_sample_bit_depth_chroma_minus1
-    w.ue(0);      // log2_min_pcm_luma_coding_block_size_minus3（PCM 块 = 8）
-    w.ue(0);      // log2_diff_max_min_pcm_luma_coding_block_size
-    w.u(1, 1);    // pcm_loop_filter_disabled_flag
-    w.ue(0);      // num_short_term_ref_pic_sets
-    w.u(0, 1);    // long_term_ref_pics_present_flag
-    w.u(0, 1);    // sps_temporal_mvp_enabled_flag
-    w.u(0, 1);    // strong_intra_smoothing_enabled_flag
-    w.u(0, 1);    // vui_parameters_present_flag
-    w.u(0, 1);    // sps_extension_present_flag
-    return w.finish();
-}
-
-std::string build_pps() {
-    BitWriter w;
-    w.ue(0);      // pps_pic_parameter_set_id
-    w.ue(0);      // pps_seq_parameter_set_id
-    w.u(0, 1);    // dependent_slice_segments_enabled_flag
-    w.u(0, 1);    // output_flag_present_flag
-    w.u(0, 3);    // num_extra_slice_header_bits（3 位）
-    w.u(0, 1);    // sign_data_hiding_enabled_flag
-    w.u(0, 1);    // cabac_init_present_flag
-    w.ue(0);      // num_ref_idx_l0_default_active_minus1
-    w.ue(0);      // num_ref_idx_l1_default_active_minus1
-    w.se(0);      // init_qp_minus26
-    w.u(0, 1);    // constrained_intra_pred_flag
-    w.u(0, 1);    // transform_skip_enabled_flag
-    w.u(0, 1);    // cu_qp_delta_enabled_flag
-    w.se(0);      // pps_cb_qp_offset
-    w.se(0);      // pps_cr_qp_offset
-    w.u(0, 1);    // pps_slice_chroma_qp_offsets_present_flag
-    w.u(0, 1);    // weighted_pred_flag
-    w.u(0, 1);    // weighted_bipred_flag
-    w.u(0, 1);    // transquant_bypass_enabled_flag
-    w.u(0, 1);    // tiles_enabled_flag
-    w.u(0, 1);    // entropy_coding_sync_enabled_flag
-    w.u(0, 1);    // pps_loop_filter_across_slices_enabled_flag
-    w.u(0, 1);    // deblocking_filter_control_present_flag（0→pps_deblocking_filter_disabled_flag 由解码器推断为 0）
-    w.u(0, 1);    // pps_scaling_list_data_present_flag
-    w.u(0, 1);    // lists_modification_present_flag
-    w.ue(0);      // log2_parallel_merge_level_minus2
-    w.u(0, 1);    // slice_segment_header_extension_present_flag
-    w.u(0, 1);    // pps_extension_present_flag
-    return w.finish();
-}
+// ── 参数集已下沉（阶段 9 · A2）───────────────────────────────────────────
+// VPS/SPS/PPS 的位序列在 codec/hevc/parameter_sets.{hpp,cpp}，
+// slice_segment_header() 在 codec/hevc/slice_header.{hpp,cpp}。
+// 本文件保留 I_PCM 的 CABAC / 编码树 / PCM 样本逻辑，门禁 G0 保证字节级不变。
 
 // ── HEVC CABAC 段构造（H.265 标准算法，clean-room 实现）────────────────────
 // 三张概率/状态表取自 H.265 标准（Table 9-37 / 9-38 / 9-39），属规范数据；
@@ -540,34 +433,8 @@ void code_cu(CabacEncoder& cabac, const Yuv420& f, int x0, int y0, int log2size,
 }
 
 std::string build_idr_slice(const Yuv420& f, int slice_qp) {
-    BitWriter w;
-    // HEVC 7.3.6.1 slice_segment_header()（first_slice_segment_in_pic_flag=1，
-    // pps.dependent_slice_segments_enabled_flag=0，非 dependent 分支）：
-    w.u(1, 1);    // first_slice_segment_in_pic_flag
-    // IDR/BLA/CRA（nal_unit_type ∈ [BLA_W_LP, RSV_IRAP_VCL23]，本流为 IDR_W_RADL=19）
-    // 首片必须读 no_output_of_prior_pics_flag（HEVC 7.3.6.1；FFmpeg 9.0.2 实测会读）。
-    w.u(0, 1);    // no_output_of_prior_pics_flag
-    w.ue(0);      // slice_pic_parameter_set_id
-    // 本 PPS：num_extra_slice_header_bits=0 ⇒ 0 个 slice_reserved_flag；output_flag_present_flag=0
-    // ⇒ 无 pic_output_flag；separate_colour_plane_flag=0 ⇒ 无 colour_plane_id。
-    w.ue(2);      // slice_type = 2 (I)
-    // 关键：nal_unit_type == IDR_W_RADL ⇒ HEVC 7.3.6.1 不读 slice_pic_order_cnt_lsb 与
-    // short_term_ref_pic_set（IDR 无参考帧）。早期版本多写这 4 bit 会把后续所有字段整体后移，
-    // 最终 byte_alignment 处的 alignment_bit 落到填充 0 上 → "alignment_bit_equal_to_one=0"，
-    // FFmpeg 直接跳过整个 slice NALU。故此处【绝不】写 poc_lsb。
-    // 同样，本 PPS：tiles_enabled_flag=0 且 entropy_coding_sync_enabled_flag=0 ⇒ 不读
-    // num_entry_point_offsets；pps_loop_filter_across_slices_enabled_flag=0 ⇒
-    // slice_loop_filter_across_slices_enabled_flag 由解码端推断（不读）；
-    // sample_adaptive_offset_enabled_flag=0 ⇒ 无 slice_sao_*_flag；
-    // cabac_init_present_flag=0 ⇒ 无 cabac_init_flag；
-    // deblocking_filter_control_present_flag=0 ⇒ 无 slice_deblocking_filter_disabled_flag；
-    // pps_slice_chroma_qp_offsets_present_flag=0 ⇒ 无 slice_cb/cr_qp_offset。
-    // 因此 slice_type 之后本配置下解码端实际只再读一个字段：
-    w.se(0);      // slice_qp_delta（init_qp_minus26=0 ⇒ 0）
-    // HEVC 7.3.6.1：slice_segment_header() 末尾必须有 byte_alignment()（先写 1 作为
-    // alignment_bit_equal_to_one，再补 0 到字节边界），随后 CABAC 从该字节边界开始。
-    // 必须用 w.finish()（先 put 1 再补零）把整个头 flush 成整数字节。
-    std::string rbsp = w.finish();
+    codec::hevc::SliceHeader sh;
+    std::string rbsp = codec::hevc::write_slice_header(sh);
     CabacEncoder cabac;
     cabac.init_contexts(slice_qp);
     bool first_ctb = true;
@@ -603,9 +470,12 @@ std::string encode_hevc_pcm_annexb(std::span<const Bitmap> frames) {
     const int ch = ((H + 63) / 64) * 64;
 
     std::string out;
-    out += make_nal(32, build_vps());  // VPS
-    out += make_nal(33, build_sps(cw, ch));  // SPS
-    out += make_nal(34, build_pps());  // PPS
+    out += make_nal(32, codec::hevc::write_vps(codec::hevc::Vps{}));  // VPS
+    codec::hevc::Sps sps;
+    sps.pic_width_in_luma_samples = cw;
+    sps.pic_height_in_luma_samples = ch;
+    out += make_nal(33, codec::hevc::write_sps(sps));  // SPS
+    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));  // PPS
     for (const auto& frame : frames) {
         const Yuv420 f = to_yuv(frame);
         out += make_nal(19, build_idr_slice(f, 26));  // IDR slice, slice QP = 26

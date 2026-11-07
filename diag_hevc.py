@@ -53,11 +53,20 @@ def expected(x, y, phase):
     return ly & 0xFF, lu & 0xFF, lv & 0xFF
 
 
-src = open(SRC, encoding="utf-8").read()
+# A2 起语法元素分散到 codec/hevc/*.cpp，静态不变量扫描必须覆盖全部实现文件；
+# 判据本身不放宽，第 6 条的码流字节/sha 基线仍是最强门禁。
+CODE_FILES = [
+    "src/image/hevc_encode.cpp",
+    "src/image/codec/hevc/parameter_sets.cpp",
+    "src/image/codec/hevc/slice_header.cpp",
+    "src/image/codec/hevc/nal_unit.cpp",
+]
+src = "\n".join(open(p, encoding="utf-8").read()
+                for p in CODE_FILES if os.path.exists(p))
 
 # 1. slice header
-sh_start = src.find("// HEVC 7.3.6.1 slice_segment_header()")
-sh = src[sh_start:sh_start + 3000] if sh_start >= 0 else ""
+SH_FILE = "src/image/codec/hevc/slice_header.cpp"
+sh = open(SH_FILE, encoding="utf-8").read() if os.path.exists(SH_FILE) else ""
 need = ["first_slice_segment_in_pic_flag", "no_output_of_prior_pics_flag",
         "slice_pic_parameter_set_id", "slice_type", "slice_qp_delta", "byte_alignment"]
 forbidden = ["slice_sao_luma_flag", "slice_sao_chroma_flag",
