@@ -60,6 +60,8 @@ CODE_FILES = [
     "src/image/codec/hevc/parameter_sets.cpp",
     "src/image/codec/hevc/slice_header.cpp",
     "src/image/codec/hevc/nal_unit.cpp",
+    "src/image/codec/hevc/cabac_context.cpp",
+    "src/image/codec/hevc/cabac_engine.cpp",
 ]
 src = "\n".join(open(p, encoding="utf-8").read()
                 for p in CODE_FILES if os.path.exists(p))
