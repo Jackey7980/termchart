@@ -18,6 +18,7 @@
 
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
+| 2026-11-07 | **新增 HEVC 编码器演进路线（阶段 9）**：I_PCM 保留为显式档位、不参与分层拆分。新增 `VideoEncodeMode{Pcm,Intra,Inter}`（默认 `Pcm`），`encode_hevc_pcm_annexb` 自包含；`diag_hevc.py` 钉死 6 条严格验收（逐字节 `dec_U[0:16]==enc_U[0:16]`、`Y[0]==16`、FFmpeg 3 帧 0 error、码流 20430B / sha 精确），**6/6 GREEN**。H.264 侧同步修正帧内 CAVLC 码流语法与重建一致性（intra CBP 表、TrailingOnes、level 遍历范围、8×8 象限块序、DC 边界预测等）：16 组分辨率 FFmpeg 0 error、纯色 MAE 0、渐变亮度 Y-MAE < 2。**进度口径**：阶段 9 条目暂不勾选——单测与 `check_headers.sh` 未补，按「勾选即完成」四条件执行。 | 9、16 |
 | 2026-10-31 | **WebP 无损解码落地（`image` 缺口再收口）**。`decode_image` 的 WebP 分支改走**原生零依赖 VP8L 解码器** `image/webp_decode`（与 `encode_webp` 对称）：从码长独立复算 canonical 码（按位反转发射、按反转键查表），**不信编码器自己的码字**，规避"同错同过"；约束与 v1 编码器输出一一对应——**无 Predictor/ColorTransform/SubtractGreen/ColorIndex 变换、无色彩缓存、单一 htree group**；含变换的外部 WebP 仍回落 stb（可选依赖）或如实 `Unsupported`（fail-loud，不做猜着解）。公开 API `decode_webp(data,size)->Result<Bitmap>`。`tests/unit/image/test_webp_decode.cpp` 9 用例覆盖 4/3 通道回环、渐变全 256 值、容器损坏→`ParseError`、含变换→`Unsupported`；另更新 `test_stb_image`（WebP 已原生，移出"需 stb"断言）。**验证**：doctest 1365 用例 / 233147 断言 0 失败（含 WebP 编解码回环逐像素精确）；ctest 90 项中 89 通过、1 项 `example_33_mermaid_flowchart` Not Run（**预存、他人 mermaid/dsl 在途工作，与本次无关**）。**未做**：外部带变换 WebP 的本地解码（仍依赖 stb）、AVIF 编码/解码、WebP 体积优化（LZ77/变换）。 | 5、16 |
 | 2026-10-31 | **WebP 无损编码落地（`image` 缺口收口）**。`image/webp_encode`（自包含零依赖 VP8L lossless 编码器）：RIFF/`WEBP`/`VP8L` 容器（奇数 chunk 补 RIFF pad）、LSB-first 位写器、canonical Huffman 码字**按位反转**发射（解码器按反转键查表，反了则 Kraft 失败）、码长码（CLCODE，simple_code=0 / 13 个 3 bit 长度 / `use_length=0`）、平面码长表（GREEN 280 字母表 = 232×len8 + 48×len9，R/B/A 各 256×len8，DIST 40 字母表 `{1,1}`）、像素恒发 4 符号 G,R,B,A（`has_alpha=0` 时 alpha 强制 255）；头部顺序严格为 transform 位 → color cache 位 → **meta-Huffman 标志位**（漏发即整流偏移 1 bit，ffmpeg 报 `Invalid data found`）。v1 刻意不做 LZ77/变换/自适应码长（体积约 4 字节/像素），换的是可验证的正确性。`ImageFormat::Webp` 接进 `encode()` 分发器。**验证**：`tests/unit/image/test_webp_encode.cpp` 自带**独立最小 VP8L 解码器**（不信编码器自己的码字，避免同错同过），9 用例 91 断言；libwebp 1.6.0 / PIL / ffmpeg 三方接受且**逐像素零失配**（solid 64×48、gradient 48×32、奇数 pad 5×1）；示例 `85_webp_lossless`（Scene→SceneRenderer→Bitmap→encode_webp，800×450 24 色带，PIL 采样逐点吻合、113 种颜色）；全量 doctest 1360 用例 / 233120 断言 0 失败。**未做**：LZ77 回溯与 Predictor/ColorTransform（体积优化）、WebP *解码*仍走 stb（**已于同日补上原生零依赖解码器**，见上）、AVIF 编码未开工。 | 5、16 |
 | 2026-10-28 | **图表统一 `to_scene` 大迁移 + GeoMap 收尾 + GUI 渲染库越界崩溃修复**。`chart/` 各图种（cartesian 核心 7 + 剩余 14、indicator 5、text 4、statistical 11、flow 2、polar 8、geo 5、hierarchical 6、financial 6 等，共 73 个图表头已接 `to_scene`）统一产出 `scene::Scene` IR；`chart/geo`（GeoMap）补齐分级图例/色标、命中测试、离线地图数据分发、TopoJSON 缝合离线回归；`backend` 加 SVG/PDF 文字轮廓化 `text-to-outline`。GUI 平行栈 `termchart_gui` 修复 `lerp_geom`→`recompute_tangents` 的 `ChartGeom` 不变式漏洞（`xs`/`ly` 长度须 == `n`；`gauge`/`polar` 只设 `n=1` 却留空 `xs`/`ly`，动画收敛时喂出畸形几何导致 `vector<double>` 越界 abort；天气 demo 联网必崩），并加 `--dump`/`--simulate`/`--feed` 诊断开关，gdb 复现并验证真实联网交互不崩。 | 12、13、22 |
@@ -444,6 +445,71 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 - [ ] scene 及以下**零改动**（复用边界的硬验证）
 - [ ] GUI 示例跑通，原生事件循环正常
+
+---
+
+### 阶段 9 — HEVC 编码器：I_PCM 基线 → 真压缩 → 帧间 → 环路滤波
+
+> **核心原则**：先让 I_PCM 像素级严格正确，再拆文件；拆文件按依赖倒序
+> （先基建、再熵编码、再变换/预测，最后才接 P 帧和环路滤波）。
+> **I_PCM 不拆散、不废弃**：它是 `VideoEncodeMode::Pcm` 下一条完整独立的可选档位，
+> 自包含，不参与 `image/codec/hevc/` 的分层重构；真压缩档另起路径，默认档位不变。
+
+**门禁 G0（每拆一个文件必跑）**：`python diag_hevc.py` 必须 6/6 GREEN，且
+`tc_hevc.265` = 20430 字节 / sha256 `10a4759a…`。任一破坏立即回退，
+不许带着坏基线前进。6 条为：slice header 严格 IDR 语法、8×8 叶顺序、
+CABAC 引擎不变量、PCM 后重置、`dec_U[0:16] == enc_U[0:16]` 且 `Y[0] == 16`、
+FFmpeg 3 帧 0 error + 码流字节/sha 精确。
+
+**依赖方向（禁止反向依赖）**
+
+```
+cabac_syntax → cabac_engine → cabac_context
+ctb_tree → intra / inter → transquant → transform / quantize
+slice_header → parameter_sets → nal_unit → ep_nal → bit_writer
+```
+
+**A. 拆文件（依赖倒序，PCM 码流字节级不变）**
+
+- [ ] A1 拆基建：`bit_writer`、`ep_nal`、`nal_unit`，I_PCM 码流原样迁移
+- [ ] A2 拆 `parameter_sets`（VPS/SPS/PPS 改 `Sps{}`/`Pps{}` + `write()`）与 `slice_header`
+- [ ] A3 拆 `cabac_engine` / `cabac_context`（Table 9-37~9-40、init_values、状态转移）/ `cabac_syntax`
+- [ ] A4 拆 `ctb_tree`（`code_cu` 迁入；`split_cu_flag` 的 ctxInc = `(x0>0)+(y0>0)`）
+
+**B. 阶段一：真帧内压缩（新增档，不替换 PCM）**
+
+- [ ] B1 `transform` 4×4/8×8 整数 DCT 蝶形 + `transform_skip`；`quantize` QP→步长、死区、逆量化
+- [ ] B2 `transquant` 残差/重建；`intra_prediction` 参考样本填充、边界平滑，先 DC + Planar + H/V，后补 35 角度
+- [ ] B3 `cabac_syntax` 补 `cbf_luma/cb/cr`、`last_sig_coeff_x/y`、`coeff_abs_level_*` 与 `residual_coding` bin 序列
+- [ ] **出口**：FFmpeg 0 error、PSNR > 35 dB（QP=26）；64×64 图体积比 I_PCM 降 ≥80%；QP 22/26/30/34 下体积与 PSNR 单调；真压缩档码流不再出现 `pcm_flag`
+
+**C. 阶段二：P 帧与参考帧管理**
+
+- [ ] C1 `dpb`（DPB / 参考列表 / POC）、`motion_estimate`（整像素全搜索 + 小菱形，SATD）、`inter_prediction`（Merge/AMVP、1/4 像素插值）
+- [ ] C2 `slice_header` 扩 `slice_type=P` / `num_ref_idx` / `ref_pic_list_modification`；`cabac_syntax` 扩 `merge_flag/idx`、`mvp_flag`、`mvd`、`ref_idx`；`ctb_tree` 增帧间划分；`parameter_sets` 开 `sps_temporal_mvp_enabled_flag`
+- [ ] **出口**：I+P+P 三帧 0 error；P 帧显著小于 I 帧；POC 单调、参考帧索引正确
+
+**D. 阶段三：质量与性能**
+
+- [ ] D1 `deblocking`（bS、阈值表、亮/色度滤波）
+- [ ] D2 `sao`（EO/BO，先 off 再逐步打开）
+- [ ] D3 `rd_optimization`（SATD/SSD + λ·bits 决定 CU 切分/模式/CBF），可选 `bitstream_control`
+- [ ] **出口**：DBF/SAO 后 PSNR +≥0.5 dB 或同 PSNR 体积 −≥5%；关闭 RD 仍合法，打开后体积 −≥10%
+
+**DAG 归属**
+
+| 模块 | 层级 | 理由 |
+| --- | --- | --- |
+| `bit_writer` / `ep_nal` / `transform` / `quantize` | L0 math 或 L5 image | 无 HEVC 语义，通用比特流/整数矩阵 |
+| `cabac_*` / `ctb_tree` / `intra` / `inter` / `dpb` / `deblocking` / `sao` | `image/codec/hevc` | HEVC 专属表、状态机与预测/环路语义 |
+| `mp4_muxer` | `image/codec/container` | 容器封装 |
+
+**纪律**：每个 `.hpp` 配一个 `.cpp`，头只暴露接口与 POD 结构体，不暴露 CABAC 内部表；
+每拆 1 个文件跑一次 G0；新增档位一律走 `VideoEncodeMode`，默认 `Pcm` 码流不许变；
+提交按 `CONTRIBUTING.md` 走垂直切片，生成物与源码不混提。
+
+**阶段出口条件**：A~D 全部勾选，且每条按「代码落地 + 单测通过 + `check_headers.sh` 通过 +
+相关校验脚本通过」四条件验收；`check_layers.py` 确认无反向依赖。
 
 ---
 
