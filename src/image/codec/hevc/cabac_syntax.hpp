@@ -71,6 +71,35 @@ bool get_cbf_luma(BinCursor& c, int trafo_depth, int& value);
 bool get_cbf_cb_cr(BinCursor& c, int trafo_depth, int& value);
 bool get_split_transform_flag(BinCursor& c, int log2_trafo_size, int& value);
 
+// ── CU 内元素的组合顺序（按 FFmpeg libavcodec/hevc/hevcdec.c 逐行核对）──
+// I slice / 4:2:0 / pcm_enabled_flag=0 / transquant_bypass=0 / cu_qp_delta=0 /
+// PART_2Nx2N（side=1）下的 coding_unit() 到 hls_transform_tree() 根节点：
+//   part_mode(仅 log2_cb_size==MinCbLog2SizeY)
+//   prev_intra_luma_pred_flag
+//     ==1 -> mpm_idx(bypass 0..2)；==0 -> rem_intra_luma_pred_mode(5 bypass)
+//   intra_chroma_pred_mode(4:2:0 只读 1 个)
+//   split_transform_flag(仅当 SPS/PPS 条件允许时)
+//   cbf_cb, cbf_cr(trafo_depth==0 必读), cbf_luma(intra 必读)
+// 之后由上层按 split_transform_flag 追加 4 个子树或 4x4 残差 bin 序列。
+struct CuIntraBins {
+    bool emit_part_mode = true;
+    bool part_2nx2n = true;
+    bool prev_intra_luma_pred_flag = true;
+    int mpm_idx = 0;                  // prev=1 时有效，0..2
+    int rem_intra_luma_pred_mode = 0;  // prev=0 时有效，0..31
+    int intra_chroma_pred_mode = 4;   // 0..4
+    bool emit_split_transform_flag = false;
+    int log2_trafo_size = 3;
+    int trafo_depth = 0;
+    bool split_transform_flag = false;
+    bool emit_chroma_cbf = true;      // trafo_depth==0 恒为 true
+    int cbf_cb = 0, cbf_cr = 0, cbf_luma = 1;
+};
+
+std::vector<Bin> encode_cu_intra_bins(const CuIntraBins& p);
+// shape 提供不由 bin 决定的开关（emit_*、log2_trafo_size、trafo_depth）。
+bool decode_cu_intra_bins(BinCursor& c, const CuIntraBins& shape, CuIntraBins* out);
+
 }  // namespace termchart::image::codec::hevc
 
 #endif  // TERMCHART_SRC_IMAGE_CODEC_HEVC_CABAC_SYNTAX_HPP

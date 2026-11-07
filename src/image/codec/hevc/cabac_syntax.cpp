@@ -164,4 +164,57 @@ bool get_split_transform_flag(BinCursor& c, int log2_trafo_size, int& value) {
     return c.decision(kCtxSplitTransform + 5 - log2_trafo_size, value);
 }
 
+// ── CU 组合顺序 ──────────────────────────────────────────────────────────
+std::vector<Bin> encode_cu_intra_bins(const CuIntraBins& p) {
+    std::vector<Bin> out;
+    if (p.emit_part_mode) put_part_mode_intra(out, p.part_2nx2n);
+    put_prev_intra_luma_pred_flag(out, p.prev_intra_luma_pred_flag ? 1 : 0);
+    if (p.prev_intra_luma_pred_flag) put_mpm_idx(out, p.mpm_idx);
+    else put_rem_intra_luma_pred_mode(out, p.rem_intra_luma_pred_mode);
+    put_intra_chroma_pred_mode(out, p.intra_chroma_pred_mode);
+    if (p.emit_split_transform_flag)
+        put_split_transform_flag(out, p.log2_trafo_size, p.split_transform_flag ? 1 : 0);
+    if (p.emit_chroma_cbf) {
+        put_cbf_cb_cr(out, p.trafo_depth, p.cbf_cb);
+        put_cbf_cb_cr(out, p.trafo_depth, p.cbf_cr);
+    }
+    put_cbf_luma(out, p.trafo_depth, p.cbf_luma);
+    return out;
+}
+
+bool decode_cu_intra_bins(BinCursor& c, const CuIntraBins& shape, CuIntraBins* out) {
+    if (!out) return false;
+    *out = shape;
+    int v = 0;
+    if (shape.emit_part_mode) {
+        bool pm = false;
+        if (!get_part_mode_intra(c, pm)) return false;
+        out->part_2nx2n = pm;
+    }
+    if (!get_prev_intra_luma_pred_flag(c, v)) return false;
+    out->prev_intra_luma_pred_flag = (v != 0);
+    if (out->prev_intra_luma_pred_flag) {
+        if (!get_mpm_idx(c, v)) return false;
+        out->mpm_idx = v;
+    } else {
+        if (!get_rem_intra_luma_pred_mode(c, v)) return false;
+        out->rem_intra_luma_pred_mode = v;
+    }
+    if (!get_intra_chroma_pred_mode(c, v)) return false;
+    out->intra_chroma_pred_mode = v;
+    if (shape.emit_split_transform_flag) {
+        if (!get_split_transform_flag(c, shape.log2_trafo_size, v)) return false;
+        out->split_transform_flag = (v != 0);
+    }
+    if (shape.emit_chroma_cbf) {
+        if (!get_cbf_cb_cr(c, shape.trafo_depth, v)) return false;
+        out->cbf_cb = v;
+        if (!get_cbf_cb_cr(c, shape.trafo_depth, v)) return false;
+        out->cbf_cr = v;
+    }
+    if (!get_cbf_luma(c, shape.trafo_depth, v)) return false;
+    out->cbf_luma = v;
+    return true;
+}
+
 }  // namespace termchart::image::codec::hevc
