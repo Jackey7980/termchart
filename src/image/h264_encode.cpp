@@ -3,90 +3,23 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
+
+#include "h264_bits.hpp"
+#include "h264_intra.hpp"
 
 namespace termchart::image {
 namespace {
 
-// ── MSB-first 位写入器（H.264 RBSP 高位在前）──
-struct BitWriter {
-    std::string buf;
-    int cur = 0;
-    int nbits = 0;
-    void put_bit(int b) {
-        cur = (cur << 1) | (b & 1);
-        if (++nbits == 8) {
-            buf.push_back(static_cast<char>(cur));
-            cur = 0;
-            nbits = 0;
-        }
-    }
-    void u(unsigned value, int len) {
-        for (int i = len - 1; i >= 0; --i) {
-            put_bit((value >> i) & 1u);
-        }
-    }
-    void ue(unsigned v) {
-        unsigned code = v + 1;
-        int n = 0;
-        for (unsigned t = code; t > 1; t >>= 1) {
-            ++n;
-        }
-        for (int i = 0; i < n; ++i) put_bit(0);
-        for (int i = n; i >= 0; --i) put_bit((code >> i) & 1u);
-    }
-    void se(int v) {
-        unsigned k = (v <= 0) ? static_cast<unsigned>(-2 * v)
-                               : static_cast<unsigned>(2 * v - 1);
-        ue(k);
-    }
-    // rbsp_trailing_bits：始终先写 rbsp_stop_one_bit(1)，再补对齐零位。
-    // 只用于 NAL 末尾（finish），不可用于宏块层内部。
-    void byte_align() {
-        put_bit(1);
-        while (nbits != 0) put_bit(0);
-    }
-    // 仅补零对齐，不写停止位。宏块层 I_PCM 的 pcm_alignment_zero_bit 用这个，
-    // 因为规范规定它只填 0（停止位属于 NAL 末尾的 rbsp_trailing_bits）。
-    void align_zero() {
-        while (nbits != 0) put_bit(0);
-    }
-    std::string finish() {
-        byte_align();
-        return std::move(buf);
-    }
-};
+// BitWriter / 防竞争 / NAL 封装统一来自 h264_bits.hpp（底层是
+// codec/bitstream/bit_writer.hpp，与 HEVC 共用），此处不再本地重写。
+using h264_detail::add_ep;
+using h264_detail::BitWriter;
+using h264_detail::make_nal;
 
-// 防竞争字节：在 00 00 后且下个字节 ≤3 时插入 0x03。
-std::string add_ep(const std::string& rbsp) {
-    std::string out;
-    int zeros = 0;
-    for (char ch : rbsp) {
-        const int c = static_cast<unsigned char>(ch);
-        if (zeros >= 2 && c <= 3) {
-            out.push_back(static_cast<char>(3));
-            zeros = 0;
-        }
-        out.push_back(ch);
-        zeros = (c == 0) ? zeros + 1 : 0;
-    } 
-    return out;
-}
-
-std::string make_nal(int nal_ref_idc, int type, const std::string& rbsp) {
-    std::string ep = add_ep(rbsp);
-    std::string out;
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(0));
-    out.push_back(static_cast<char>(1));  // start code 00 00 00 01
-    out.push_back(static_cast<char>((nal_ref_idc << 5) | type));
-    out += ep;
-    return out;
-}
-
-int clamp8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+int clamp8(int v) { return h264_detail::clamp8(v); }
 
 // 单帧 RGB(A) → YUV420（BT.601），并按 16 对齐补边；返回 Y/U/V 三块与编码尺寸。
 struct Yuv420 {
@@ -171,6 +104,14 @@ std::string build_pps() {
     w.u(0, 1);                  // deblocking_filter_control_present_flag
     w.u(0, 1);                  // constrained_intra_pred_flag
     w.u(0, 1);                  // redundant_pic_cnt_present_flag
+    // 关键：这三个字段属于 PPS 的「more_rbsp_data() 分支」。若不显式写出来，
+    // 解码器（FFmpeg h264_ps.c）看到标志位之后仍有剩余位（我们补的 stop bit + 对齐零），
+    // 就会继续读，把 rbsp_stop_one_bit 当成 transform_8x8_mode_flag = 1。
+    // 一旦被误判成 1，I_NxN 宏块在 mb_type 之后会多读 1 bit 的 transform_size_8x8_flag，
+    // 导致后续所有模式/残差整体错位（I_PCM 档不读这个 flag，所以以前没暴露）。
+    w.u(0, 1);                  // transform_8x8_mode_flag = 0
+    w.u(0, 1);                  // pic_scaling_matrix_present_flag
+    w.se(0);                    // second_chroma_qp_index_offset
     return w.finish();
 }
 
@@ -228,6 +169,17 @@ std::string build_idr_slice(const Yuv420& f, int idr_id) {
     return w.finish();
 }
 
+// Yuv420（本文件）与 h264_detail::YuvFrame（帧内档）字段完全同构，直接搬。
+h264_detail::YuvFrame to_intra_frame(const Yuv420& f) {
+    h264_detail::YuvFrame out;
+    out.cw = f.cw;
+    out.ch = f.ch;
+    out.y = f.y;
+    out.u = f.u;
+    out.v = f.v;
+    return out;
+}
+
 }  // namespace
 
 std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptions&) {
@@ -245,9 +197,15 @@ std::string encode_h264_annexb(std::span<const Bitmap> frames, const EncodeOptio
     std::string out;
     out += make_nal(3, 7, build_sps(cw, ch));   // SPS
     out += make_nal(3, 8, build_pps());         // PPS
+    // 临时对照开关：设置 TERMCHART_H264_INTRA 后走「帧内预测+变换量化+CAVLC」档，
+    // 否则仍是 I_PCM。两档共用同一套 SPS/PPS 与 NAL 封装，便于逐帧比对。
+    const bool use_intra = std::getenv("TERMCHART_H264_INTRA") != nullptr;
     for (size_t i = 0; i < frames.size(); ++i) {
         const Yuv420 f = to_yuv(frames[i]);
-        out += make_nal(3, 5, build_idr_slice(f, static_cast<int>(i)));  // IDR slice
+        const std::string rbsp =
+            use_intra ? h264_detail::build_idr_slice_intra(to_intra_frame(f), static_cast<int>(i), 26)
+                      : build_idr_slice(f, static_cast<int>(i));
+        out += make_nal(3, 5, rbsp);  // IDR slice
     }
     return out;
 }
