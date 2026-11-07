@@ -29,6 +29,10 @@ public:
     bool decision(int expect_ctx, int& val);
     bool bypass(int& val);
     std::size_t consumed() const { return pos_; }
+    // 供子语法（如 residual_coding）从当前位置继续读。
+    const Bin* current() const { return bins_ + pos_; }
+    std::size_t remaining() const { return count_ - pos_; }
+    void advance(std::size_t n) { pos_ += n; }
 
 private:
     const Bin* bins_;
