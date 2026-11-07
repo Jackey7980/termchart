@@ -1,7 +1,7 @@
-// quantize.hpp —— 阶段一 B1：QP 量化 / 逆量化接口
+// quantize.hpp —— HEVC 4x4 量化 / 逆量化接口
 //
-// 与 transform 的 4x4 核心变换配对：MF 表负责量化，LevelScale 表负责反量化，
-// 两者的乘积在同一 QP 下约等于 2^(15+qp/6)，保证往返缩放自洽。
+// 与 transform 的 4x4 核心变换配对：逆量化逐位对齐 ffmpeg hevc cabac.c 的
+// (level*scale*scale_m + add) >> shift；前向为该式的舍入逆。
 #ifndef TERMCHART_SRC_IMAGE_CODEC_HEVC_QUANTIZE_HPP
 #define TERMCHART_SRC_IMAGE_CODEC_HEVC_QUANTIZE_HPP
 

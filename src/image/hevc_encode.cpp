@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <utility>
@@ -18,6 +19,9 @@
 #include "codec/hevc/cabac_context.hpp"
 #include "codec/hevc/cu_coding.hpp"
 #include "codec/hevc/ctb_tree.hpp"
+#include "codec/hevc/intra_prediction.hpp"
+#include "codec/hevc/residual_coding.hpp"
+#include "codec/hevc/transquant.hpp"
 
 namespace termchart::image {
 namespace {
@@ -110,11 +114,11 @@ std::string build_idr_slice(const Yuv420& f, int slice_qp) {
     return rbsp;
 }
 
-// ── 非 PCM（CABAC 编码树）档：阶段一 B3-4 ───────────────────────────────────
-// 用已经 bin 化、且对偶 FFmpeg 语义验证过的 8x8 帧内 CU 语法（cu_coding +
-// cabac_arith），把帧编码成真正的 CABAC 码流。当前只做「语法/码流级真压缩档」：
-// 不做前向变换/量化/帧内预测（系数是合成的小值），仅验证「我们产出的 bin 序列经
-// CABAC 写出后，能被标准解码器 ffmpeg 解出来且不报错」。变换/量化/预测是后续步骤。
+// ── 非 PCM（CABAC 编码树）档：真实帧内编码管线 ─────────────────────────────
+// 8x8 帧内 CU：DC 预测 -> 前向变换（亮度 4x4 用 DST-VII）-> 量化 -> 用量化后的
+// level 重建（与解码端 ffmpeg 走同一套逆变换/逆量化），重建像素既是本 CU 后续
+// TU 的参考，也是后续 CU 的参考。语法层（cu_coding + cabac_arith）此前已按
+// FFmpeg 语义逐 bin 核对过，这里只把合成系数换成真实系数。
 using codec::hevc::CabacArith;
 using codec::hevc::CabacContext;
 using codec::hevc::CuIntra8x8;
@@ -129,26 +133,62 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     CabacContext ctx;
     ctx.init_hevc(slice_qp);  // I slice -> initType 0
 
-    const int cw8 = f.cw / 8;
-    const int ctb_w = f.cw / 64, ctb_h = f.ch / 64;
+    // 重建帧：帧内预测的参考必须是「重建像素」而非源像素，否则编码端与解码端
+    // 的预测基准发散，误差会沿着 CU 扫描顺序一路累积。
+    Yuv420 rec;
+    rec.cw = f.cw;
+    rec.ch = f.ch;
+    rec.y.assign(static_cast<std::size_t>(f.cw) * static_cast<std::size_t>(f.ch), 0);
+    const std::size_t cn = static_cast<std::size_t>(f.cw / 2) * static_cast<std::size_t>(f.ch / 2);
+    rec.u.assign(cn, 128);
+    rec.v.assign(cn, 128);
+
+    const int cw = f.cw;
+    const int ctb_w = cw / 64, ctb_h = f.ch / 64;
     const int total_ctb = ctb_w * ctb_h;
     int ctb_idx = 0;
 
-    auto emit_cu = [&](int x0, int y0, int global_cu) {
+    // 全部 PU 都用 DC(1)：MPM 列表只由左/上 PU 模式决定，而它们也都是 DC
+    // （边界外推时规范把不可用邻居定为 DC），故 candModeList 恒为 {Planar, DC, 26}，
+    // DC 的索引恒为 1。
+    constexpr int kDcMode = 1;
+    constexpr int kDcMpmIdx = 1;
+
+    auto emit_cu = [&](int x0, int y0) {
+        // 4 个 z 序 4x4 TU：顺序必须与解码端 hls_transform_unit 一致——每个 TU 的
+        // 左/上参考要么来自已完成的邻块，要么来自本 CU 内已经重建的前序 TU。
+        std::int16_t scan[4][16] = {};
+        for (int i = 0; i < 4; ++i) {
+            const int tx = x0 + ((i & 1) ? 4 : 0);
+            const int ty = y0 + ((i & 2) ? 4 : 0);
+            const bool has_top = ty > 0;
+            const bool has_left = tx > 0;
+            std::uint8_t top[5] = {0, 0, 0, 0, 0};
+            std::uint8_t left[5] = {0, 0, 0, 0, 0};
+            for (int k = 0; k < 4; ++k) {
+                if (has_top) top[k] = rec.y[static_cast<std::size_t>(ty - 1) * cw + tx + k];
+                if (has_left) left[k] = rec.y[static_cast<std::size_t>(ty + k) * cw + (tx - 1)];
+            }
+            std::uint8_t pred[16];
+            codec::hevc::predict_intra(kDcMode, 4, top, left, has_top, has_left, pred);
+            std::int16_t raster[16];
+            codec::hevc::encode_tu_4x4(
+                &f.y[static_cast<std::size_t>(ty) * cw + tx], cw, pred,
+                &rec.y[static_cast<std::size_t>(ty) * cw + tx], cw, raster, slice_qp,
+                /*use_dst=*/true);
+            // 变换输出是行主序，残差语法要的是对角扫描序。
+            for (int n = 0; n < 16; ++n)
+                scan[i][n] = raster[codec::hevc::kDiagScan4x4Y[n] * 4 + codec::hevc::kDiagScan4x4X[n]];
+        }
+
         CuIntra8x8 cu;
         cu.part_2nx2n = true;
         cu.prev_intra_luma_pred_flag = true;  // 走 mpm_idx
-        cu.mpm_idx = global_cu % 3;
-        cu.intra_chroma_pred_mode = 4;        // DM
+        cu.mpm_idx = kDcMpmIdx;
+        cu.intra_chroma_pred_mode = 4;        // DM（色度跟随亮度 DC）
         cu.cbf_cb = 0;
         cu.cbf_cr = 0;
-        std::int16_t blocks[4][16] = {};
-        // 放少量 1..3 的小 DC，强制走 residual 路径又不触发 escape（escape 未实现）。
-        if (global_cu % 13 == 0) blocks[0][0] = static_cast<std::int16_t>(1 + (global_cu % 3));
-        cu.luma4x4[0] = blocks[0];
-        cu.luma4x4[1] = nullptr;
-        cu.luma4x4[2] = nullptr;
-        cu.luma4x4[3] = nullptr;
+        for (int i = 0; i < 4; ++i) cu.luma4x4[i] = scan[i];
         const auto bins = codec::hevc::encode_cu_intra_8x8(cu);
         for (const auto& b : bins) {
             if (b.ctx == kBypassCtx) cabac.encode_bypass(b.val);
@@ -156,18 +196,34 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         }
     };
 
-    // coding_tree：从 64x64 一路分裂到 8x8。均质 8x8 网格下 split_cu_flag 的相邻
-    // 深度恒等于当前深度 -> FFmpeg 的 inc=(depth_left>ct_depth)+(depth_top>ct_depth)=0
-    // -> 所有 split_cu_flag 都用 ctx == kCtxSplitCuFlag(=2)。
+    // coding_tree：从 64x64 一路分裂到 8x8（= MinCbLog2SizeY，见 SPS 的
+    // log2_min_luma_coding_block_size_minus3=0），故 log2_cb_size==3 的叶子
+    // 【不写】split_cu_flag（FFmpeg: log2_cb_size > log2_min_cb_size 才解码）。
+    //
+    // split_cu_flag 的上下文不是固定的：FFmpeg 用
+    //   inc = (depth_left > ct_depth) + (depth_top > ct_depth)
+    // 从 min-CB 粒度的 ct_depth 表取左/上邻居的编码深度。用错上下文会让解码端的
+    // 算术解码器立刻跑偏（表现：整帧像素全错但 ffmpeg 不报错）。
+    const int cw8 = cw / 8;
+    std::vector<std::uint8_t> ct_depth(
+        static_cast<std::size_t>(cw8) * static_cast<std::size_t>(f.ch / 8), 0);
+
     std::function<void(int, int, int)> code_tree = [&](int x0, int y0, int depth) {
-        if (depth < 3) {
-            cabac.encode_decision(ctx.ctx[kCtxSplitCuFlag], 1);
-            const int half = (1 << (6 - depth)) / 2;
+        const int log2_cb = 6 - depth;
+        if (log2_cb > 3) {
+            int inc = 0;
+            if (x0 > 0 && ct_depth[static_cast<std::size_t>(y0 >> 3) * cw8 + (x0 >> 3) - 1] > depth)
+                ++inc;
+            if (y0 > 0 && ct_depth[static_cast<std::size_t>((y0 >> 3) - 1) * cw8 + (x0 >> 3)] > depth)
+                ++inc;
+            cabac.encode_decision(ctx.ctx[kCtxSplitCuFlag + inc], 1);
+            const int half = (1 << log2_cb) / 2;
             for (int i = 0; i < 4; ++i)
                 code_tree(x0 + ((i & 1) * half), y0 + ((i >> 1) * half), depth + 1);
         } else {
-            cabac.encode_decision(ctx.ctx[kCtxSplitCuFlag], 0);
-            emit_cu(x0, y0, (y0 / 8) * cw8 + (x0 / 8));
+            emit_cu(x0, y0);
+            ct_depth[static_cast<std::size_t>(y0 >> 3) * cw8 + (x0 >> 3)] =
+                static_cast<std::uint8_t>(depth);
         }
     };
 
@@ -179,6 +235,15 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         }
     }
     rbsp += cabac.finish();
+#ifdef TERMCHART_HEVC_RECON_DUMP
+    {
+        std::FILE* fp = std::fopen("tc_enc_recon.yuv", "ab");
+        if (fp) {
+            std::fwrite(rec.y.data(), 1, rec.y.size(), fp);
+            std::fclose(fp);
+        }
+    }
+#endif
     return rbsp;
 }
 

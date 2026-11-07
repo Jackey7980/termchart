@@ -2,6 +2,9 @@
 
 > 生成日期：2026-10-19。用途：把"继续完成整个项目"的进度、决策、未提交 WIP、剩余路线图、架构红线一次性交代清楚，供下一位（人或 Agent）无缝接手。
 > 权威口径仍以 `ROADMAP.md` / `docs/reference/backlog.md` / `docs/reference/capability_matrix.md` 为准；本文件是某一时刻的快照。
+>
+> **注意：本文已过时**（§0 提到的 BMP 解码器 WIP 早已落地）。当前活跃的专题交接见
+> [`hevc_encoder_handoff.md`](hevc_encoder_handoff.md)（自写 HEVC 真帧内压缩档）。
 
 ## 0. TL;DR 给接手者
 

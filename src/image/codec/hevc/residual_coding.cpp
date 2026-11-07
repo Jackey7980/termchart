@@ -40,10 +40,17 @@ struct Reader {
     }
 };
 
-// FFmpeg decode_residual 的 greater1_ctx 演化。
+// FFmpeg decode_residual 的 greater1_ctx 演化：
+//   greater1_ctx = (greater1_ctx + (greater1_ctx - 1U < 2)) & (flag - 1);
+// 逐项展开：(g-1U < 2) 只在 g==1 或 g==2 时为 1，故只在这两处递增；
+// flag==1 时 &(1-1)=&0 清零，flag==0 时 &0xFFFFFFFF 保持。
+// 注意 g==0 时【不递增】（0-1U 回绕成极大值），早期实现写成 g+1 会让
+// 「cc; 一个 level>1 的系数把 g 归零」之后紧接着的 level==1 系数用错上下文，
+// 解码端算术解码器从此跑偏（多非零系数的块整块崩坏，单系数块却完全正常）。
 inline int next_greater1_ctx(int g, int flag) {
     if (flag) return 0;
-    return g < 3 ? g + 1 : 3;
+    if (g == 1 || g == 2) return g + 1;
+    return g;
 }
 
 // 是否写 coeff_abs_level_remaining，以及其基准 level。

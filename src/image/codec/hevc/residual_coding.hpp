@@ -25,8 +25,8 @@ extern const std::uint8_t kSigCoeffCtxMap4x4[16];
 //
 // 当前子集：亮度 c_idx=0、log2_trafo_size=2、SCAN_DIAG、单 CG、
 // sign_data_hiding_flag=0、无 transform_skip / scaling_list。
-// Rice 的 escape 分支（prefix>=3）暂不支持，见实现中的断言。
-// ok 为 false 表示遇到尚未实现的 Rice escape 分支（返回空序列）。
+// Rice 的 escape 分支（prefix>=3）已实现（对齐 FFmpeg coeff_abs_level_remaining_decode）。
+// ok 为 false 表示量化 level 超出 Rice 可表达范围（返回空序列）。
 std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok = nullptr);
 
 // 按 FFmpeg 解码语义独立回读，用于自检与回归；成功时写回 coeff 与消耗 bin 数。
