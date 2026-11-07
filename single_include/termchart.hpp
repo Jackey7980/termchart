@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 415 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 416 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -9087,6 +9087,10 @@ struct RasterOptions {
     Color bg = Color::ansi16(0);    // 熄灭色
     bool invert = false;            // 反相（照片负片效果）
     double threshold = 0.5;         // 二进制子像素的开/关阈值
+    // 盲文水平桥接（目前只有盲文光栅器认这个开关，其余光栅器忽略）：一条横贯的细
+    // 笔画在每格只覆盖左半格（覆盖率不足阈值）时只点亮一个点，长直线在屏幕上呈虚线；
+    // 打开后相邻两格同行都亮左点时把右点也补上 ⇒ 横向连续（竖向不受影响）。
+    bool bridge_horizontal = true;
 };
 
 class Rasterizer {
@@ -9724,6 +9728,13 @@ struct CapEnvironment {
     // 真彩色宿主的可靠信号（原生 Windows 会话里 TERM 往往为空）。**放在末尾**，
     // 以免破坏既有按位置初始化 {term, colorterm, term_program, ci} 的调用点。
     std::string_view wt_session;
+    // TERMCHART_COLOR：显式颜色开关（最高优先级，见 docs/reference/terminal_capabilities.md）。
+    //   always/force      非 tty 也发颜色（重定向到 less -R / 写文件 / CI 制品时用）
+    //   truecolor/24bit   同上，并强制 24 位色
+    //   256 / 16          同上，并强制对应档位
+    //   none/never/off    禁色
+    //   空（未设置）       走常规探测
+    std::string_view color;
 };
 
 struct TerminalCaps {
@@ -22424,6 +22435,51 @@ format_timestamp_short(double epoch, double span_seconds, double resolution_seco
 //
 // 分层：本模块只回答"画什么、为什么"（探测/路由/否决/打分），不回答"怎么写到
 // 终端"——那是 api（L21 同级，刻意不互相依赖）与 gui 的事。
+
+// ===== include/termchart/gui/cells.hpp =====
+// cells.hpp —— 字符网格（CellBuffer）→ 位图：把"终端里看到的画面"直接存成 PNG
+//
+// 为什么补这条通路：库里原本只有两条位图出口——
+//   * image::encode_png(Bitmap)：位图编码；
+//   * gui::SceneRenderer：Scene IR → 位图（矢量语义 + 5×7 点阵字形）。
+// 但**终端画面本身**（canvas::Canvas::to_buffer() 的字符网格 + 每格样式）没有位图出口：
+// 想把终端里真实看到的样子存成 PNG，只能靠外部工具去解析 ANSI 字节流——那是旁路，
+// 引擎不参与，画质与终端实际渲染脱节（颜色被降级、盲文/半块被当普通字形处理）。
+//
+// 本文件补上正路：CellBuffer → Bitmap，字形语义与终端一致——
+//   * 盲文 U+2800–U+28FF：按 Unicode Braille Patterns 的 2×4 点阵**直接画点**
+//     （盲文在终端里本就是点阵语义，不是字形）；
+//   * 方块元素 U+2580–U+259F：按字符语义画矩形/与背景混色（半块热力图靠它表达数值，
+//     上半=前景色、下半=背景色）；
+//   * 其余码点：gui::draw_text（内置 5×7 点阵 + 系统 TTF，CJK 走 TTF）。
+//
+// 用途：README 配图、文档插图、把终端里好看的样子存成图片分享。
+
+
+
+namespace termchart {
+
+// 字符网格在 core（core/buffer.hpp）——前向声明只为了按 const 引用接收。
+class CellBuffer;
+
+}  // namespace termchart
+
+namespace termchart::gui {
+
+struct CellBitmapOptions {
+    double cell_w = 9.0;    // 每格宽（像素）
+    double cell_h = 16.0;   // 每格高（像素）
+    Rgb background{13, 17, 23};    // 画布底色（Style 未指定背景时也用它）
+    Rgb foreground{201, 209, 217}; // Style 未指定前景时用它
+    bool transparent = false;       // 背景 alpha=0（供再合成）
+};
+
+// 字符网格 → 位图。宽字符的续接格（kContinuationCp）不产出任何像素——
+// 终端绘制宽字形时自动占两列，补空格反而会盖住右半边。
+[[nodiscard]] TERMCHART_API image::Bitmap render_cells_to_bitmap(
+    const CellBuffer& cells, const CellBitmapOptions& options = {});
+
+}  // namespace termchart::gui
 
 // ===== include/termchart/gui/font.hpp =====
 // font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）
