@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <memory>
 
 namespace termchart::util::geo {
 
@@ -17,8 +18,12 @@ struct JsonValue {
     double number_value = 0.0;
     bool   bool_value = false;
     std::string string_value;
-    std::vector<JsonValue> array_value;
-    std::vector<std::pair<std::string, JsonValue>> object_value;
+    // 递归结构：JsonValue 含自身的 vector。直接写 std::vector<JsonValue> 会让
+    // 一些严格的编译器（clang）在类定义体内实例化 vector 析构时因元素类型
+    // 不完整而失败。用 unique_ptr 包装打破递归：unique_ptr<T> 容忍不完整 T，
+    // 其析构推迟到类外（此时 JsonValue 已完整）才实例化。
+    std::unique_ptr<std::vector<JsonValue>> array_value;
+    std::unique_ptr<std::vector<std::pair<std::string, JsonValue>>> object_value;
 };
 
 struct Parser {
@@ -61,6 +66,7 @@ struct Parser {
 
     JsonValue parse_object() {
         JsonValue v; v.type = JsonValue::Type::Object;
+        v.object_value = std::make_unique<std::vector<std::pair<std::string, JsonValue>>>();
         ++i;  // {
         while (true) {
             skip_ws();
@@ -68,7 +74,7 @@ struct Parser {
             JsonValue key = parse_string();
             if (!eat(':')) fail("expected ':'");
             JsonValue val = parse_value();
-            v.object_value.emplace_back(std::move(key.string_value), std::move(val));
+            v.object_value->emplace_back(std::move(key.string_value), std::move(val));
             skip_ws();
             if (i < s.size() && s[i] == ',') { ++i; continue; }
             if (i < s.size() && s[i] == '}') { ++i; break; }
@@ -79,11 +85,12 @@ struct Parser {
 
     JsonValue parse_array() {
         JsonValue v; v.type = JsonValue::Type::Array;
+        v.array_value = std::make_unique<std::vector<JsonValue>>();
         ++i;  // [
         while (true) {
             skip_ws();
             if (i < s.size() && s[i] == ']') { ++i; break; }
-            v.array_value.push_back(parse_value());
+            v.array_value->push_back(parse_value());
             skip_ws();
             if (i < s.size() && s[i] == ',') { ++i; continue; }
             if (i < s.size() && s[i] == ']') { ++i; break; }
@@ -163,24 +170,24 @@ struct Parser {
 
 const JsonValue* find(const JsonValue& obj, const std::string& key) {
     if (obj.type != JsonValue::Type::Object) return nullptr;
-    for (const auto& [k, val] : obj.object_value) {
+    for (const auto& [k, val] : *obj.object_value) {
         if (k == key) return &val;
     }
     return nullptr;
 }
 
 void parse_coord(const JsonValue& v, double& lon, double& lat) {
-    if (v.type != JsonValue::Type::Array || v.array_value.size() < 2)
+    if (v.type != JsonValue::Type::Array || v.array_value->size() < 2)
         throw std::runtime_error("coordinate must be [lon, lat]");
-    lon = v.array_value[0].number_value;
-    lat = v.array_value[1].number_value;
+    lon = (*v.array_value)[0].number_value;
+    lat = (*v.array_value)[1].number_value;
 }
 
 void parse_ring(const JsonValue& ring_val, std::vector<Point>& ring) {
     if (ring_val.type != JsonValue::Type::Array) throw std::runtime_error("ring not array");
     ring.clear();
-    ring.reserve(ring_val.array_value.size());
-    for (const auto& pt : ring_val.array_value) {
+    ring.reserve(ring_val.array_value->size());
+    for (const auto& pt : *ring_val.array_value) {
         double lon = 0, lat = 0;
         parse_coord(pt, lon, lat);
         ring.push_back({lon, lat});
@@ -197,15 +204,15 @@ void parse_geometry(const JsonValue& geom, std::vector<GeoPolygon>& polys) {
 
     if (type == "Polygon") {
         GeoPolygon poly;
-        for (const auto& ring_val : coords->array_value) {
+        for (const auto& ring_val : *coords->array_value) {
             poly.rings.emplace_back();
             parse_ring(ring_val, poly.rings.back());
         }
         polys.push_back(std::move(poly));
     } else if (type == "MultiPolygon") {
-        for (const auto& poly_val : coords->array_value) {
+        for (const auto& poly_val : *coords->array_value) {
             GeoPolygon poly;
-            for (const auto& ring_val : poly_val.array_value) {
+            for (const auto& ring_val : *poly_val.array_value) {
                 poly.rings.emplace_back();
                 parse_ring(ring_val, poly.rings.back());
             }
@@ -218,7 +225,7 @@ void parse_geometry(const JsonValue& geom, std::vector<GeoPolygon>& polys) {
 
 void parse_properties(const JsonValue& props, GeoPolygon& poly) {
     if (props.type != JsonValue::Type::Object) return;
-    for (const auto& [k, v] : props.object_value) {
+    for (const auto& [k, v] : *props.object_value) {
         std::string val;
         switch (v.type) {
         case JsonValue::Type::String: val = v.string_value; break;
@@ -248,7 +255,7 @@ bool parse_geojson(const std::string& text, GeoFeatureCollection& out,
             return false;
         }
         out.polygons.clear();
-        for (const auto& f : feats->array_value) {
+        for (const auto& f : *feats->array_value) {
             const JsonValue* geom = find(f, "geometry");
             const JsonValue* props = find(f, "properties");
             std::vector<GeoPolygon> polys;

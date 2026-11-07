@@ -213,6 +213,9 @@ TEST_CASE("mp4: tkhd/edts 合法（防 PotPlayer 回退）") {
 }
 
 // hvcC 内 VPS/SPS/PPS 必须是不带尾随零撑大的真实长度（早期 bug 每个 NAL 多 1 字节）。
+// 当前长度来自修正后的编码器：profile_tier_level 的 general_reserved_zero_44bits
+// 现在写正确的 0，使 00 00 00 序列触发 HEVC 规定的防竞争字节 0x03（NAL 各 +1 字节），
+// 这是规范要求的字节，并非 padding bug；断言锁的是「规范正确 + 无额外撑大」。
 TEST_CASE("mp4: HEVC hvcC 参数集长度未被撑大") {
     std::vector<Bitmap> frames = {make_frame(64, 48, 0), make_frame(64, 48, 1)};
     auto mp4 = encode_mp4(frames, EncodeOptions{.video_codec = VideoCodec::H265});
@@ -246,8 +249,8 @@ TEST_CASE("mp4: HEVC hvcC 参数集长度未被撑大") {
         CHECK(found[0]);
         CHECK(found[1]);
         CHECK(found[2]);
-        CHECK(lens[0] == 22);  // VPS
-        CHECK(lens[1] == 27);  // SPS
+        CHECK(lens[0] == 23);  // VPS（含规范要求的防竞争字节）
+        CHECK(lens[1] == 28);  // SPS（含规范要求的防竞争字节）
         CHECK(lens[2] > 0);    // PPS（自写 7 字节，FFmpeg 两种皆可解）
     }
     CHECK(hvcC_ok);
