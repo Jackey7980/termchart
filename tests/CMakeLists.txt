@@ -101,6 +101,7 @@ add_executable(termchart_tests
     unit/image/test_bmp.cpp
     unit/image/test_stb_image.cpp
     unit/image/test_cabac.cpp
+    unit/image/test_intra_prediction.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp

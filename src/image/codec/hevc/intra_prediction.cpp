@@ -4,8 +4,6 @@
 // 与解码端（ffmpeg）完全一致。
 #include "intra_prediction.hpp"
 
-#include <cstring>
-
 namespace termchart::image::codec::hevc {
 namespace {
 
@@ -33,25 +31,40 @@ void predict_planar(int n, const std::uint8_t* top, const std::uint8_t* left,
 
 void predict_dc(int n, const std::uint8_t* top, const std::uint8_t* left,
                 bool has_top, bool has_left, std::uint8_t* dst) {
-    const int log2n = log2_of(n);
-    int dc;
-    if (has_top && has_left) {
-        int sum = 0;
-        for (int i = 0; i < n; ++i) sum += top[i] + left[i];
-        dc = (sum + n) >> (log2n + 1);
-    } else if (has_top) {
-        int sum = 0;
-        for (int i = 0; i < n; ++i) sum += top[i];
-        dc = (sum + (n >> 1)) >> log2n;
-    } else if (has_left) {
-        int sum = 0;
-        for (int i = 0; i < n; ++i) sum += left[i];
-        dc = (sum + (n >> 1)) >> log2n;
+    // HEVC 8.4.4.2.2 参考样本替代：某一侧不可用时，用另一侧第一个可用样本
+    // 填充该侧；两侧都不可用时用 1 << (bitDepth-1) = 128。
+    // 替代后的样本【同样参与 dcVal 的双侧求和】，不能退化成单侧平均
+    // （那样 dcVal 会偏，且重建误差会沿预测链传播）。
+    std::uint8_t t[32] = {}, l[32] = {};
+    if (!has_top && !has_left) {
+        for (int i = 0; i < n; ++i) t[i] = l[i] = 128;
+    } else if (!has_top) {
+        for (int i = 0; i < n; ++i) { t[i] = left[0]; l[i] = left[i]; }
+    } else if (!has_left) {
+        for (int i = 0; i < n; ++i) { t[i] = top[i]; l[i] = top[0]; }
     } else {
-        dc = 128;  // 1 << (bitDepth - 1)
+        for (int i = 0; i < n; ++i) { t[i] = top[i]; l[i] = left[i]; }
     }
-    std::memset(dst, 0, static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
-    for (int i = 0; i < n * n; ++i) dst[i] = static_cast<std::uint8_t>(dc);
+
+    // HEVC 8.4.4.2.5：dcVal = (Σ p[x][-1] + Σ p[-1][y] + nTbS) >> (k+1)，k=log2(nTbS)。
+    const int log2n = log2_of(n);
+    int sum = 0;
+    for (int i = 0; i < n; ++i) sum += t[i] + l[i];
+    const int dc = (sum + n) >> (log2n + 1);
+
+    // cIdx==0 && nTbS<32 时的 DC 首行/首列边界滤波。常数参考下它是恒等变换
+    // （flat128 逐位一致），非平坦参考下必须与解码端一致，否则编码端重建
+    // 与 ffmpeg 解码发散，并沿帧内预测参考链逐 CU 累积。
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            int v;
+            if (x == 0 && y == 0)     v = (l[0] + 2 * dc + t[0] + 2) >> 2;
+            else if (y == 0)          v = (t[x] + 3 * dc + 2) >> 2;
+            else if (x == 0)          v = (l[y] + 3 * dc + 2) >> 2;
+            else                       v = dc;
+            dst[y * n + x] = static_cast<std::uint8_t>(v);
+        }
+    }
 }
 
 }  // namespace
