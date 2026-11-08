@@ -8598,6 +8598,14 @@ enum class VideoCodec {
     AV1,   // 自写 AV1（AVIF 容器用）—— 后续阶段
 };
 
+// 视频编码档位。Pcm 是一条完整独立的无损 I_PCM 路径，不参与真压缩档的分层
+// 拆分（image/codec/hevc/*），始终保留为可选档与字节级黄金回归基线。
+enum class VideoEncodeMode {
+    Pcm,    // I_PCM 无损档（默认；码流字节级稳定）
+    Intra,  // 阶段一：真帧内压缩（变换/量化 + 残差 CABAC）
+    Inter,  // 阶段二：帧间预测 + 参考帧管理
+};
+
 // 该视频码流是否已实现（encode_mp4 等能否真正产出该码流）。AV1 编码器尚未落地 → false。
 // 供调用方在编码前预检：宁可显式失败，也不要"请求 AV1 却拿到 H.264 文件"这类静默降级。
 [[nodiscard]] TERMCHART_API bool is_video_codec_supported(VideoCodec codec) noexcept;
@@ -8610,6 +8618,10 @@ struct EncodeOptions {
     int delay_ms = 100;     // 每帧显示时长（GIF；覆盖 fps 推算）。
     VideoCodec video_codec = VideoCodec::H264;  // MP4/AVIF 内部码流。
     int gop = 0;            // 0 = 全 I 帧（baseline intra）；>0 时启用帧间（后续阶段）。
+    VideoEncodeMode video_mode = VideoEncodeMode::Pcm;  // 默认走 I_PCM 档，保证既有码流字节级不变。
+    // 真压缩档（Intra）的 slice QP，合法区间 [0,51]（越界夹到边界）。
+    // 默认 26 ⇒ slice_qp_delta=0，与既有码流字节级一致；Pcm 档忽略本字段。
+    int video_qp = 26;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。
@@ -8809,7 +8821,9 @@ TERMCHART_API std::string encode_h264_annexb(std::span<const Bitmap> frames, con
 
 namespace termchart::image {
 
-// 输出 Annex-B 字节流：VPS + SPS + PPS + 每帧一个 IDR slice（I_PCM CTU）。空输入返回空串。
+// 按 EncodeOptions::video_mode 分派档位。默认 Pcm：输出完整独立的 I_PCM 码流
+// （VPS + SPS + PPS + 每帧一个 IDR slice），字节级稳定，供 diag_hevc.py 做黄金回归。
+// Intra/Inter 为真压缩档（阶段一/二）保留，未落地时返回空串，不静默降级。
 TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
