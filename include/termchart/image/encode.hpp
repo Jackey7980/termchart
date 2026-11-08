@@ -58,6 +58,9 @@ struct EncodeOptions {
     VideoCodec video_codec = VideoCodec::H264;  // MP4/AVIF 内部码流。
     int gop = 0;            // 0 = 全 I 帧（baseline intra）；>0 时启用帧间（后续阶段）。
     VideoEncodeMode video_mode = VideoEncodeMode::Pcm;  // 默认走 I_PCM 档，保证既有码流字节级不变。
+    // 真压缩档（Intra）的 slice QP，合法区间 [0,51]（越界夹到边界）。
+    // 默认 26 ⇒ slice_qp_delta=0，与既有码流字节级一致；Pcm 档忽略本字段。
+    int video_qp = 26;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。

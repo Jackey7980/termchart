@@ -456,7 +456,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 > 自包含，不参与 `image/codec/hevc/` 的分层重构；真压缩档另起路径，默认档位不变。
 
 **门禁 G0（每拆一个文件必跑）**：`python diag_hevc.py` 必须 6/6 GREEN，且
-`tc_hevc.265` = 20430 字节 / sha256 `10a4759a…`。任一破坏立即回退，
+`tc_hevc.265` = 20433 字节 / sha256 `5d4adef5…`。任一破坏立即回退，
 不许带着坏基线前进。6 条为：slice header 严格 IDR 语法、8×8 叶顺序、
 CABAC 引擎不变量、PCM 后重置、`dec_U[0:16] == enc_U[0:16]` 且 `Y[0] == 16`、
 FFmpeg 3 帧 0 error + 码流字节/sha 精确。

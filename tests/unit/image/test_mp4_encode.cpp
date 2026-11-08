@@ -250,7 +250,10 @@ TEST_CASE("mp4: HEVC hvcC 参数集长度未被撑大") {
         CHECK(found[1]);
         CHECK(found[2]);
         CHECK(lens[0] == 23);  // VPS（含规范要求的防竞争字节）
-        CHECK(lens[1] == 28);  // SPS（含规范要求的防竞争字节）
+        // SPS 长度随参数集内容增长，改 SPS 时必须同步复核此值：
+        //   27→28（c8c018a，防竞争字节）→31（f4ff604 conformance window +
+        //   17ef04d VUI 1:1 SAR）。增量均为规范字段，不是 padding。
+        CHECK(lens[1] == 31);  // SPS（含 conformance window / VUI / 防竞争字节）
         CHECK(lens[2] > 0);    // PPS（自写 7 字节，FFmpeg 两种皆可解）
     }
     CHECK(hvcC_ok);

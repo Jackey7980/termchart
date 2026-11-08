@@ -6,9 +6,14 @@ check_header_only.py —— 头文件自洽性校验（物理布局约束）
   - header-only 清单内的文件：不得存在同名 src/*.cpp；
   - 其余文件：必须存在同名 src/*.cpp（基类 cpp 放虚表锚点，也算实现单元）。
 
-对 src/**.cpp：不得出现清单外的孤儿实现（即有 cpp 无对应头文件），
-但**平台拆分实现**例外：src/term/terminal_posix.cpp 是 term/terminal.hpp 的
-POSIX 分支，母头存在即可（见 PLATFORM_SUFFIXES）。
+对 src/**.cpp：不得出现清单外的孤儿实现（即既无 include/ 公开头、也无
+src/ 同名私有头的 cpp）。三类合法例外：
+  - **私有实现单元**：存在同名 src/xxx.hpp 声明表但不对应 include/ 公开头，
+    例如 image/codec/hevc/*.cpp、image/codec/bitstream/*.cpp。自动判定，
+    无需逐条登记。
+  - **平台拆分实现**：src/term/terminal_posix.cpp ↔ term/terminal.hpp
+    （见 PLATFORM_SUFFIXES）。
+  - **无私有头的特殊实现**：见 SRC_INTERNAL_CXX。
 
 两类天然无需实现单元的头文件同样豁免：
   - detail/*：由 tools/gen_*.py 产出的横切数据表，纯 constexpr 数据；
@@ -29,16 +34,13 @@ HEADER_ONLY_TXT = ROOT / "cmake" / "header_only.txt"
 # 平台拆分实现的后缀：src/term/terminal_posix.cpp ↔ include/termchart/term/terminal.hpp
 PLATFORM_SUFFIXES = ("_posix", "_win32", "_darwin", "_linux", "_macos")
 
-# src/ 内部私有实现单元（有 src/xxx.hpp 私有声明表、不对应 include/ 公开头的
-# .cpp）。先例：src/term/platform_internal.hpp 系列；network/http_parse 是
-# 同类——把 HTTP 线格式解析做成纯函数 TU，测试直接 include 私有头咬分支；
-# network/dns_cache 同理：进程级 TTL 缓存是对 connect 路径的透明优化，
-# 不属于公开 API 面（公开面只有 socket.hpp 的选项与行为）。
-# network/proxy_* 四件套：代理探测链与隧道协议（私有头 proxy_internal.hpp
-# 声明，公开面只有 http.hpp 的 HttpOptions::proxy）。
+# 无同名 src/xxx.hpp 私有头的特殊实现单元（有私有头的由 main() 自动豁免）。
+# network/http_parse 与 network/dns_cache 有同名私有头，已由自动判定覆盖；
+# 下列 proxy_* / wasm 则没有同名头，需要显式登记：
+# proxy_* 四件套的声明集中在 proxy_internal.hpp（公开面只有 http.hpp 的
+# HttpOptions::proxy）；wasm/termchart_wasm 是 Emscripten 专用入口，仅为 WASM
+# 运行时暴露 C 出口，无公开头也无私有头。
 SRC_INTERNAL_CXX = (
-    "network/http_parse",
-    "network/dns_cache",
     "network/proxy_detect",
     "network/proxy_tunnel",
     "network/proxy_sys_win32",
@@ -97,6 +99,11 @@ def main() -> int:
         if c in header_set:
             continue
         if c in SRC_INTERNAL_CXX:
+            continue
+        # 私有实现单元：存在同名 src/xxx.hpp 声明表，只是不对应 include/
+        # 公开头。image/codec/** 下的 HEVC/H.264 编解码 TU 全属此类，
+        # 自动判定避免每新增一个 codec 文件都要回来补白名单。
+        if (SRC_ROOT / f"{c}.hpp").is_file():
             continue
         parent = platform_parent(c)
         if parent is not None and parent in header_set:

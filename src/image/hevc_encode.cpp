@@ -29,7 +29,7 @@ namespace {
 // ── 通用比特流基建（阶段 9 · A1）─────────────────────────────────────────
 // 位写入器 / 防竞争 / Annex-B / NAL 头已下沉到 image/codec/bitstream 与
 // image/codec/hevc/nal_unit。I_PCM 的编码逻辑仍自包含，只替换底层实现；
-// 门禁 G0（diag_hevc.py 6/6 + 20430B/sha）保证码流字节级不变。
+// 门禁 G0（diag_hevc.py 6/6 + 20433B/sha 5d4adef5）保证码流字节级不变。
 using codec::bitstream::BitWriter;
 using codec::hevc::make_nal;
 
@@ -127,6 +127,11 @@ using codec::hevc::kCtxSplitCuFlag;
 
 std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     codec::hevc::SliceHeader sh;
+    // SliceQpY = 26 + init_qp_minus26(=0) + slice_qp_delta + QpBdOffsetY(=0, 8bit)。
+    // 量化与 CABAC 上下文初始化都用 slice_qp，故 delta 必须同步写进码流，
+    // 否则解码端按 26 反量化、上下文也按 26 初始化，重建必然发散。
+    // 默认 26 ⇒ delta=0 ⇒ se(0)，与既有码流字节级一致。
+    sh.slice_qp_delta = slice_qp - 26;
     std::string rbsp = codec::hevc::write_slice_header(sh);
     CabacArith cabac;
     cabac.init();
@@ -247,7 +252,7 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     return rbsp;
 }
 
-std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames) {
+std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp) {
     if (frames.empty()) return std::string{};
     const int W = static_cast<int>(frames[0].width());
     const int H = static_cast<int>(frames[0].height());
@@ -274,10 +279,12 @@ std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames) {
     sps.pcm_enabled = false;                          // 关 PCM，走 CABAC 编码树
     sps.max_transform_hierarchy_depth_intra = 1;      // 允许 8x8 -> 4x4 一级分裂
     out += make_nal(33, codec::hevc::write_sps(sps));  // SPS
-    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));  // PPS
+    // 真压缩档关闭去块滤波（只改 PPS，slice header 零新增比特）：编码端不做 DBF，
+    // 解码端也不做，逐像素判据才成立。PCM 档仍传默认 Pps{}，位序列不变。
+    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{.disable_deblocking = true}));
     for (const auto& frame : frames) {
         const Yuv420 f = to_yuv(frame);
-        out += make_nal(19, build_intra_idr_slice(f, 26));  // IDR slice, QP = 26
+        out += make_nal(19, build_intra_idr_slice(f, qp));  // IDR slice
     }
     return out;
 }
@@ -325,8 +332,10 @@ std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptio
     switch (opts.video_mode) {
         case VideoEncodeMode::Pcm:
             return encode_hevc_pcm_annexb(frames);
-        case VideoEncodeMode::Intra:
-            return encode_hevc_intra_annexb(frames);
+        case VideoEncodeMode::Intra: {
+            const int qp = std::clamp(opts.video_qp, 0, 51);
+            return encode_hevc_intra_annexb(frames, qp);
+        }
         case VideoEncodeMode::Inter:
             // 阶段二才落地；显式返回空串，不静默降级成 PCM。
             return std::string{};
