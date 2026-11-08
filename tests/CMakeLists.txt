@@ -61,6 +61,7 @@ add_executable(termchart_tests
 
     # ── gui ──（平行栈渲染核心）
     unit/gui/test_gui_font.cpp
+    unit/gui/test_gui_cells.cpp
     unit/gui/test_gui_scene_renderer.cpp
     unit/gui/test_gui_stack.cpp
     unit/gui/test_gui_metrics.cpp
@@ -99,6 +100,7 @@ add_executable(termchart_tests
     unit/image/test_ttf_font_outline.cpp
     unit/image/test_bmp.cpp
     unit/image/test_stb_image.cpp
+    unit/image/test_cabac.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp
