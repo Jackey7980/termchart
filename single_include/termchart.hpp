@@ -8600,10 +8600,11 @@ enum class VideoCodec {
 
 // 视频编码档位。Pcm 是一条完整独立的无损 I_PCM 路径，不参与真压缩档的分层
 // 拆分（image/codec/hevc/*），始终保留为可选档与字节级黄金回归基线。
+// Pcm / Intra 已落地；Inter 是阶段二占位，请求时显式返回空串，不静默降级。
 enum class VideoEncodeMode {
     Pcm,    // I_PCM 无损档（默认；码流字节级稳定）
-    Intra,  // 阶段一：真帧内压缩（变换/量化 + 残差 CABAC）
-    Inter,  // 阶段二：帧间预测 + 参考帧管理
+    Intra,  // 阶段一：真帧内压缩（变换/量化 + 残差 CABAC + 35 模式决策）
+    Inter,  // 阶段二占位：帧间预测 + 参考帧管理尚未实现（fail-loud）
 };
 
 // 该视频码流是否已实现（encode_mp4 等能否真正产出该码流）。AV1 编码器尚未落地 → false。
@@ -8812,10 +8813,12 @@ TERMCHART_API std::string encode_h264_annexb(std::span<const Bitmap> frames, con
 // hevc_encode.hpp —— 自写 HEVC（H.265, Main profile）编码器
 //
 // 零依赖：自己写 NAL/VPS/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx265/ffmpeg。
-// 当前实现与 h264_encode 同哲学的 **I_PCM 档**：每个 Coding Tree Unit 递归二分到 8x8
-// 叶，叶直接以 PCM 模式输出原始采样（无损、无变换/量化/熵编码），用最少的码流语法把
-// 整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧间预测 + 真正压缩作为第二阶段叠加，
-// 复用同一 NAL/容器骨架。
+// 三个档位：
+//   Pcm   —— I_PCM 无损档，字节级稳定，作为 diag_hevc.py 的黄金回归基线；
+//   Intra —— 阶段一真帧内压缩：35 种亮度模式逐 CU 决策 + 4x4 变换量化 + 残差 CABAC，
+//            三套系数扫描随模式切换，已通过 FFmpeg 软/硬解逐像素门禁；
+//   Inter —— 阶段二占位：帧间预测与参考帧管理尚未实现，请求该档**显式返回空串**，
+//            不静默降级到 Intra/Pcm（fail-loud 契约）。
 
 
 
@@ -8823,7 +8826,7 @@ namespace termchart::image {
 
 // 按 EncodeOptions::video_mode 分派档位。默认 Pcm：输出完整独立的 I_PCM 码流
 // （VPS + SPS + PPS + 每帧一个 IDR slice），字节级稳定，供 diag_hevc.py 做黄金回归。
-// Intra/Inter 为真压缩档（阶段一/二）保留，未落地时返回空串，不静默降级。
+// Intra 已落地；Inter 未落地时返回空串，不静默降级。
 TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
