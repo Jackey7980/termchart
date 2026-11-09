@@ -1,6 +1,7 @@
 #include "termchart/term/terminal.hpp"
 
 #include <cstdio>
+#include <cstdlib>  // std::getenv
 #include <string>
 
 #include "src/term/platform_internal.hpp"

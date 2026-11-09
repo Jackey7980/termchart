@@ -1,5 +1,6 @@
 #include "termchart/api/print.hpp"
 
+#include <cstdio>  // std::fwrite / std::FILE
 #include <string>
 
 #include "termchart/util/format.hpp"

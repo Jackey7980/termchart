@@ -188,7 +188,8 @@ jobs:
       - name: 配置
         run: cmake --preset wasm
       - name: 构建（含 wasm-ld 真链接，不是只编译 .o）
-        run: cmake --build build/wasm -j 2
+        # ninja -k 0：一次报出全部编译错误，避免每轮只冒一个头文件缺失
+        run: cmake --build build/wasm -j 2 -- -k 0
       - name: 产物校验
         run: |
           test -s build/wasm/termchart_wasm.wasm
