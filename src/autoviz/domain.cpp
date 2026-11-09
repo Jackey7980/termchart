@@ -2,6 +2,7 @@
 #include "termchart/autoviz/domain.hpp"
 
 #include <algorithm>
+#include <cmath>  // std::abs(double)：不能依赖 <algorithm> 的传递包含
 #include <vector>
 
 #include "termchart/math/stats.hpp"

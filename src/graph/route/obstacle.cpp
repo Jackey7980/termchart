@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>  // std::abs(long long)：llabs 不是 std 命名空间的标准名字
 #include <utility>
 #include <vector>
 
@@ -223,8 +224,8 @@ void repair_blocked_routes(Graph& graph, WireGrid& grid, int max_detour, BfsScra
         // 修复预算：直连曼哈顿距离 + 绕行余量；超预算（需绕整屏）即放弃，维持
         // best-effort 直线兜底（route_failed 仍为 true）。雷区3·坑位B。
         const std::size_t manh = static_cast<std::size_t>(
-            std::llabs(static_cast<long long>(route.front().x - route.back().x)) +
-            std::llabs(static_cast<long long>(route.front().y - route.back().y)));
+            std::abs(static_cast<long long>(route.front().x - route.back().x)) +
+            std::abs(static_cast<long long>(route.front().y - route.back().y)));
         const std::size_t max_cells =
             manh + static_cast<std::size_t>(std::max(0, max_detour)) * 64u + 128u;
         std::vector<Point> detour =
