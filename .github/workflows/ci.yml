@@ -173,3 +173,23 @@ jobs:
               print('PIL OK', f, im.size, im.mode)
           "
           ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 tc_webp.webp
+
+  wasm:
+    name: wasm (emscripten 真编译)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+      - name: 构建依赖（preset 用 ccache 作为 EM_COMPILER_WRAPPER）
+        run: sudo apt-get update && sudo apt-get install -y ccache ninja-build
+      - name: 配置
+        run: cmake --preset wasm
+      - name: 构建（含 wasm-ld 真链接，不是只编译 .o）
+        run: cmake --build build/wasm -j 2
+      - name: 产物校验
+        run: |
+          test -s build/wasm/termchart_wasm.wasm
+          ls -l build/wasm/termchart_wasm.wasm build/wasm/termchart_wasm.js

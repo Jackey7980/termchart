@@ -115,16 +115,22 @@
 > 触发点：67/68/69 三个示例从"文本格 + `?`"改为真 GeoJSON 栅格化时，暴露出"能出图但契约不严"的一批问题。
 > 逐条总览在 `docs/reference/backlog.md` 第六节，这里只记质量证据与改法。
 
-- [ ] **数据生成器没有回归测试**（最高优先）：`tools/topojson_to_geojson.py::stitch_arc` 曾同时错两处——
+- [x] **数据生成器没有回归测试**（最高优先）：`tools/topojson_to_geojson.py::stitch_arc` 曾同时错两处——
+  实证（2026-11-10）：`tools/tests/test_topojson_stitch.py` 3 用例全过（含负索引反向弧、
+  端到端夹具坐标范围），且 `.github/workflows/ci.yml` 的 guardrails 已调用该脚本。
   负索引用 `arcs[idx]`（Python 从尾部取数）、反向弧在差分解码**前** `reverse`（增量被当绝对值累加），
   产物是合法 JSON、坐标却在 `[-218°, -119°]`。这类错误**不会抛异常**，只能靠"形状像不像地球"发现。
   改法：`tests/` 下加最小 TopoJSON 夹具（含 1 条 `~idx` 反向弧）+ 用例，断言"feature 数不变、环闭合、
   坐标在 ±180/±90 内"；验收＝改回 `idx` 立即变红。
-- [ ] **公共 Options 里不能有死字段**：`show_graticule`（零消费者）、`width` / `height`（从未被读）写在
+- [x] **公共 Options 里不能有死字段**：`show_graticule`（零消费者）、`width` / `height`（从未被读）写在
+  实证（2026-11-10）：`include/termchart/chart/geo/geo_map.hpp` 已明确注释旧的
+  `width`/`height`/`show_graticule` 死字段已移除，公共 Options 不再含这些字段。
   `geo_map.hpp` 公共头里，用户设了毫无反应，类型系统也拦不住。建议加一条
   `tools/check_options.py`（扫 `include/**/*options*.hpp` / `*Options` 结构的字段名，检查是否在 `src/`
   出现），把"设了没用"变成 CI 可见。
-- [ ] **`bins` 语义在两条出口下不一致**：`draw()` 按级量化、`rasterize()` / `render_bitmap()` 连续映射，
+- [x] **`bins` 语义在两条出口下不一致**：`draw()` 按级量化、`rasterize()` / `render_bitmap()` 连续映射，
+  实证（2026-11-10）：`src/chart/geo/geo_map.cpp` 已抽出 `geo_bin_of` / `geo_bin_center`
+  单一真源，`draw` / `rasterize` / `render_bitmap` / 图例共用同一分级色。
   同一份数据换出口颜色就变。改法：抽出 `quantize(value, min, max, bins)` 三处共用。
 - [x] **`feature_names()` 输出去重**（2026-10-18）：MultiPolygon 拆成多个 entry，`--list` 原样输出成
   `Tianjin / Tianjin / Hebei ×4`（63 行）。已按首次出现顺序去重（35 行），用例
