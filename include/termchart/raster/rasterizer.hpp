@@ -35,6 +35,10 @@ struct RasterOptions {
     Color bg = Color::ansi16(0);    // 熄灭色
     bool invert = false;            // 反相（照片负片效果）
     double threshold = 0.5;         // 二进制子像素的开/关阈值
+    // 盲文水平桥接（目前只有盲文光栅器认这个开关，其余光栅器忽略）：一条横贯的细
+    // 笔画在每格只覆盖左半格（覆盖率不足阈值）时只点亮一个点，长直线在屏幕上呈虚线；
+    // 打开后相邻两格同行都亮左点时把右点也补上 ⇒ 横向连续（竖向不受影响）。
+    bool bridge_horizontal = true;
 };
 
 class Rasterizer {

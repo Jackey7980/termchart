@@ -21,6 +21,7 @@
 #include "termchart/image/bitmap.hpp"
 #include "termchart/image/encode.hpp"
 #include "termchart/image/hevc_encode.hpp"
+#include "termchart/image/mp4.hpp"
 
 namespace {
 

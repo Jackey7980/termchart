@@ -95,3 +95,14 @@ CMakeUserPresets.local.json
 
 # 并行 Agent 会话产物（不入库）
 .codebuddy/
+
+# 本地诊断沙箱：FFmpeg oracle 源码、一次性探针/门禁脚本与编译产物。
+# 这些资产不可再生（外网 fetch 曾 404），保留在工作树但不入库。
+/build_scratch/
+
+# 4K 硬解验证产物：文件留在本机供查看/播放，但不入库。
+/hd.4k.mp4
+
+# 一次性编码/解码中间产物（Y 平面比对、重建 dump、PCM 样本等）
+/*.yuv
+/*.nv12

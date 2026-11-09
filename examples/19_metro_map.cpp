@@ -27,6 +27,10 @@
 #include "termchart/layout/label_avoid.hpp"
 #include "termchart/render/renderer.hpp"
 #include "termchart/util/wcwidth.hpp"
+#include <cstdlib>
+#include <fstream>
+#include "termchart/gui/cells.hpp"
+#include "termchart/image/png_encode.hpp"
 
 namespace {
 
@@ -171,7 +175,7 @@ char32_t segment_char(Point a, Point b) {
 int main() {
     // 宽度按**标题与图例的显示宽度**取（CJK 每字 2 列），别按字符个数估——
     // 第一版取 48 列，标题直接被裁掉半行。
-    canvas::Canvas canvas(66, 19);
+    canvas::Canvas canvas(66, 21);
     const Style title_style = Style{}.set_fg(Color::ansi16(7)).set_attr(Attr::Bold);
     const Style text_style = Style{}.set_fg(Color::ansi16(7));
     const Style dim_style = Style{}.set_fg(Color::ansi16(8));
@@ -310,6 +314,17 @@ int main() {
     canvas.draw_text(Point{1.0, static_cast<double>(canvas.height()) - 1.0}, summary, dim_style);
 
     render::Renderer renderer;
+    // 位图出口（TERMCHART_PNG=out.png）：把终端画面原样存成 PNG。走库级的
+    // gui::render_cells_to_bitmap（字符网格 → 位图）：盲文按 Unicode 点阵画、半块按
+    // 字符语义画（半块热力图靠它表达数值）、其余走库内 5×7/TTF 字体。
+    if (const char* png_path = std::getenv("TERMCHART_PNG");
+        png_path != nullptr && *png_path != '\0') {
+        const termchart::image::Bitmap bmp =
+            termchart::gui::render_cells_to_bitmap(canvas.to_buffer(), termchart::gui::CellBitmapOptions{.cell_w = 6.0, .cell_h = 10.0});
+        const std::string png = termchart::image::encode_png(bmp);
+        std::ofstream out(png_path, std::ios::binary | std::ios::out);
+        out.write(png.data(), static_cast<std::streamsize>(png.size()));
+    }
     const Status status = api::write_stdout(renderer.render_full(canvas.to_buffer()));
     (void)api::flush_stdout();
     return status == ErrorCode::Ok ? 0 : 1;

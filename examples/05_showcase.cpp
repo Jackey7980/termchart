@@ -24,6 +24,10 @@
 #include "termchart/render/renderer.hpp"
 #include "termchart/term/size.hpp"
 #include "termchart/term/terminal.hpp"
+#include <cstdlib>
+#include <fstream>
+#include "termchart/gui/cells.hpp"
+#include "termchart/image/png_encode.hpp"
 
 namespace {
 
@@ -210,6 +214,17 @@ int main() {
     }
 
     termchart::render::Renderer renderer(terminal.caps().color_depth);
+    // 位图出口（TERMCHART_PNG=out.png）：把终端画面原样存成 PNG。走库级的
+    // gui::render_cells_to_bitmap（字符网格 → 位图）：盲文按 Unicode 点阵画、半块按
+    // 字符语义画（半块热力图靠它表达数值）、其余走库内 5×7/TTF 字体。
+    if (const char* png_path = std::getenv("TERMCHART_PNG");
+        png_path != nullptr && *png_path != '\0') {
+        const termchart::image::Bitmap bmp =
+            termchart::gui::render_cells_to_bitmap(canvas.to_buffer(), termchart::gui::CellBitmapOptions{.cell_w = 6.0, .cell_h = 10.0});
+        const std::string png = termchart::image::encode_png(bmp);
+        std::ofstream out(png_path, std::ios::binary | std::ios::out);
+        out.write(png.data(), static_cast<std::streamsize>(png.size()));
+    }
     const std::string bytes = renderer.render_full(canvas.to_buffer());
     if (termchart::api::write_stdout(bytes) != termchart::ErrorCode::Ok) return 1;
     if (termchart::api::write_stdout("\n") != termchart::ErrorCode::Ok) return 1;

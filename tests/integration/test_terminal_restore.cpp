@@ -81,7 +81,8 @@ TEST_CASE("integration: CI 下保留结构但去掉颜色") {
                        .colorterm = "",
                        .term_program = "",
                        .ci = false,
-                       .wt_session = ""},
+                       .wt_session = "",
+                       .color = ""},
         true);
     CHECK(caps.color_depth == ColorDepth::Ansi256);
     const TerminalCaps degraded = apply(caps, safe);
@@ -90,7 +91,9 @@ TEST_CASE("integration: CI 下保留结构但去掉颜色") {
 
 TEST_CASE("integration: dumb 终端退化为最小能力") {
     const TerminalCaps caps = detect(
-        CapEnvironment{.term = "dumb", .colorterm = "", .term_program = "", .ci = false, .wt_session = ""}, true);
+        CapEnvironment{.term = "dumb", .colorterm = "", .term_program = "", .ci = false,
+                       .wt_session = "", .color = ""},
+        true);
     CHECK(caps.color_depth == ColorDepth::None);
     CHECK(caps.image == ImageProtocolKind::None);
     CHECK_FALSE(caps.alt_screen);

@@ -24,6 +24,7 @@ CapEnvironment environment_snapshot() noexcept {
     env.colorterm = env_var("COLORTERM");
     env.term_program = env_var("TERM_PROGRAM");
     env.wt_session = env_var("WT_SESSION");
+    env.color = env_var("TERMCHART_COLOR");
     env.ci = std::getenv("CI") != nullptr;
     return env;
 }
@@ -54,7 +55,13 @@ std::string mouse_sequence(bool enable) noexcept {
 Terminal::Terminal(TerminalOptions options) noexcept : options_(options) {
     const bool tty = stdout_is_tty();
     const CapEnvironment env = environment_snapshot();
-    const DaemonSafeSettings safe = daemon_safe_for(tty, env.ci);
+    DaemonSafeSettings safe = daemon_safe_for(tty, env.ci);
+    // 显式颜色开关（TERMCHART_COLOR）：默认"非 tty ⇒ 无色"（日志不被污染的唯一保证），
+    // 但把输出重定向到 less -R / 写文件 / CI 制品时，用户明确要的就是颜色——
+    // 这时应当照给（档位仍由 caps 的优先级表决定）。
+    if (!env.color.empty()) {
+        safe.allow_color = true;
+    }
     options_ = apply(options_, safe);
     caps_ = apply(detect(env, tty), safe);
 }

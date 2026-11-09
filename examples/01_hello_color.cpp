@@ -13,6 +13,7 @@
 #include "termchart/render/renderer.hpp"
 #include "termchart/term/caps.hpp"
 #include "termchart/term/terminal.hpp"
+#include "termchart/color/rgba.hpp"
 
 namespace {
 
@@ -28,7 +29,12 @@ termchart::CellBuffer build_buffer(termchart::ColorDepth depth) {
     }
 
     termchart::Style hint;
-    hint.set_fg(termchart::Color::rgb(143, 165, 190));
+    // 终端 SGR 无 alpha 通道：半透明前景须先压平到背景色再上屏。
+    // RGBA(182,143,190,128) 与背景混合 → 不透明前景（blend 在 color 层）。
+    const termchart::Rgb bg = termchart::Rgb{30, 30, 36};
+    const termchart::Rgb flat =
+        termchart::color::blend(termchart::color::Rgba{225, 72, 0, 1}, bg); // rgba(255, 72, 0, 1) 半透明前景
+    hint.set_bg(termchart::Color::rgb(flat)).set_fg(termchart::Color::rgb(flat));
     const std::string second = "hello, colored terminal";
     for (std::size_t i = 0; i < second.size(); ++i) {
         buffer.at(static_cast<std::uint32_t>(i), 1) =
@@ -44,7 +50,8 @@ termchart::CellBuffer build_buffer(termchart::ColorDepth depth) {
 
 int main() {
     // RAII：异常退出（含 return 之外的路径）也会恢复终端。
-    termchart::term::Terminal terminal;
+    termchart::term::Terminal terminal(termchart::term::TerminalOptions{
+        .alt_screen = false, .hide_cursor = false});
     const termchart::Status entered = terminal.enter();
     if (entered != termchart::ErrorCode::Ok) {
         std::fprintf(stderr, "无法进入终端模式: %s\n", termchart::describe(entered));

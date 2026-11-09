@@ -32,6 +32,13 @@ struct CapEnvironment {
     // 真彩色宿主的可靠信号（原生 Windows 会话里 TERM 往往为空）。**放在末尾**，
     // 以免破坏既有按位置初始化 {term, colorterm, term_program, ci} 的调用点。
     std::string_view wt_session;
+    // TERMCHART_COLOR：显式颜色开关（最高优先级，见 docs/reference/terminal_capabilities.md）。
+    //   always/force      非 tty 也发颜色（重定向到 less -R / 写文件 / CI 制品时用）
+    //   truecolor/24bit   同上，并强制 24 位色
+    //   256 / 16          同上，并强制对应档位
+    //   none/never/off    禁色
+    //   空（未设置）       走常规探测
+    std::string_view color;
 };
 
 struct TerminalCaps {

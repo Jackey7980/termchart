@@ -517,7 +517,7 @@ void chroma_mb(FrameEnc& f, int mbx, int mby, ChromaMb& out) {
             }
             std::vector<uint8_t>& tcg = (c == 0) ? f.tc_u : f.tc_v;
             const size_t gi =
-                static_cast<size_t>(mby * 2 + (blk >> 1)) * f.cbw + mbx * 2 + (blk & 1);
+                static_cast<size_t>(mby * 2 + (blk >> 1)) * static_cast<size_t>(f.cbw) + static_cast<size_t>(mbx * 2) + (blk & 1);
             tcg[gi] = static_cast<uint8_t>(out.tc_ac[c][blk]);
         }
     }
@@ -543,13 +543,17 @@ constexpr CbpCodeTable kCbp;
 // nC：取左、上相邻块的 TotalCoeff 平均（缺一侧用另一侧，都缺则 0）。
 int nc_of(const std::vector<uint8_t>& tc, int stride, int bx, int by) {
     const bool has_l = bx > 0, has_t = by > 0;
+
+    const size_t stride_t = static_cast<size_t>(stride); 
+    const size_t bx_t = static_cast<size_t>(bx); 
+
     if (has_l && has_t) {
-        const int a = tc[static_cast<size_t>(by) * stride + bx - 1];
-        const int b = tc[static_cast<size_t>(by - 1) * stride + bx];
+        const int a = tc[static_cast<size_t>(by) * stride_t + bx_t - 1];
+        const int b = tc[static_cast<size_t>(by - 1) * stride_t + bx_t];
         return (a + b + 1) >> 1;
     }
-    if (has_l) return tc[static_cast<size_t>(by) * stride + bx - 1];
-    if (has_t) return tc[static_cast<size_t>(by - 1) * stride + bx];
+    if (has_l) return tc[static_cast<size_t>(by) * stride_t + bx_t - 1];
+    if (has_t) return tc[static_cast<size_t>(by - 1) * stride_t + bx_t];
     return 0;
 }
 
@@ -584,7 +588,7 @@ std::string build_slice(FrameEnc& f, int idr_id) {
                 for (int i = 0; i < 2 && !(cbpy & (1 << q)); ++i) {
                     for (int j = 0; j < 2; ++j) {
                         const size_t gi =
-                            static_cast<size_t>(mby * 4 + by0 + i) * f.bw + mbx * 4 + bx0 + j;
+                            static_cast<size_t>(mby * 4 + by0 + i) * static_cast<size_t>(f.bw) + static_cast<size_t>(mbx * 4 + bx0 + j);
                         if (f.tc_y[gi] != 0) {
                             cbpy |= 1 << q;
                             break;
@@ -609,15 +613,19 @@ std::string build_slice(FrameEnc& f, int idr_id) {
                 const int lbx = (i4 & 1) + ((i4 >> 2) & 1) * 2;
                 const int lby = ((i4 >> 1) & 1) + (i4 >> 3) * 2;
                 const int bx = mbx * 4 + lbx, by = mby * 4 + lby;
-                const int mode = f.mode_y[static_cast<size_t>(by) * f.bw + bx];
+
+                const size_t bw_t = static_cast<size_t>(f.bw);
+                const size_t bx_t = static_cast<size_t>(bx);
+
+                const int mode = f.mode_y[static_cast<size_t>(by) * bw_t + bx_t];
                 // 规范 8.3.1.2.1：左/上任一邻居不可用（解码端 cache 中为 -1，
                 // min<0）时 predIntra4x4PredMode 直接取 DC(2)，不能把缺失值
                 // 当成 2 再参与 min，否则 pm 与解码端不同，rem 编码整体错位。
                 const bool has_l = bx > 0, has_t = by > 0;
                 const int pa =
-                    has_l ? f.mode_y[static_cast<size_t>(by) * f.bw + bx - 1] : 2;
+                    has_l ? f.mode_y[static_cast<size_t>(by) * bw_t + bx_t - 1] : 2;
                 const int pb =
-                    has_t ? f.mode_y[static_cast<size_t>(by - 1) * f.bw + bx] : 2;
+                    has_t ? f.mode_y[static_cast<size_t>(by - 1) * bw_t + bx_t] : 2;
                 const int pm = (has_l && has_t) ? std::min(pa, pb) : 2;
                 // 规范 8.3.1.2：rem_intra4x4_pred_mode 的 3 bit 只覆盖「除 pm 外的
                 // 8 个模式」，mode == pm 无法用 rem 表达，必须走 prev flag=1。

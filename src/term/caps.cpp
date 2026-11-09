@@ -16,7 +16,25 @@ bool is_known_256cxx_term(std::string_view term) noexcept {
 }  // namespace
 
 ColorDepth color_depth_for(const CapEnvironment& env) noexcept {
-    // 1) COLORTERM 显式声明，优先级最高。
+    // 0) TERMCHART_COLOR 显式开关：优先级最高（"显式环境变量 > TERM 名称 > 默认"）。
+    //    always/force 不改档位，只表示"非 tty 也要颜色"（由 terminal.cpp 解除兜底）。
+    if (!env.color.empty()) {
+        if (contains(env.color, "truecolor") || contains(env.color, "24bit")) {
+            return ColorDepth::TrueColor;
+        }
+        if (contains(env.color, "256")) {
+            return ColorDepth::Ansi256;
+        }
+        if (contains(env.color, "16")) {
+            return ColorDepth::Ansi16;
+        }
+        if (contains(env.color, "none") || contains(env.color, "never") ||
+            contains(env.color, "off")) {
+            return ColorDepth::None;
+        }
+        // always / force / auto：档位仍按下面的探测走。
+    }
+    // 1) COLORTERM 显式声明，优先级次之。
     if (contains(env.colorterm, "truecolor") || contains(env.colorterm, "24bit")) {
         return ColorDepth::TrueColor;
     }
