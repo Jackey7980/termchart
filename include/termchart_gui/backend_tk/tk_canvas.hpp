@@ -16,6 +16,12 @@ public:
     virtual ~TkCanvas() = default;
 
     virtual void clear(Rgb bg) = 0;
+
+    // 跟随窗口尺寸调整绘制表面（重分配内部位图）。原生后端在 resizeEvent 里调，
+    // 使画布缓冲与控件树排版区域同尺寸，避免"按窗口尺寸排版却画进固定大小缓冲"
+    // 引起的越界写、堆损坏（表现为拖大窗口/高 DPI 下延迟崩溃）。
+    virtual void resize(std::uint32_t width, std::uint32_t height) = 0;
+
     virtual void fill_rect(const Rect& rect, Rgb color) = 0;
     virtual void stroke_rect(const Rect& rect, Rgb color, double width) = 0;
     virtual void draw_text(double x, double y, std::string_view text, Rgb color) = 0;

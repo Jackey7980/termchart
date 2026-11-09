@@ -73,6 +73,10 @@ public:
     // 适用「应用自持 process_events 循环」模式（见 qt_demo）。
     void show() noexcept;
 
+    // 每帧回调：run_loop 用 QTimer 周期调用，供应用接入自持事件泵（抽干事件 + 重绘）。
+    // 见 qt_demo——把"抽干原生事件并路由到控件树"的逻辑挂在这里，由 exec() 循环驱动。
+    void set_frame_callback(std::function<void()> cb) noexcept;
+
 private:
     std::unique_ptr<Impl> impl_;
 };

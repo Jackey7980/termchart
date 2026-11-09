@@ -17,6 +17,8 @@
 #include <QWidget>
 #include <QWheelEvent>
 #include <QtGlobal>
+#include <QTimer>
+#include <cstring>
 
 namespace termchart_gui_qt {
 namespace {
@@ -81,15 +83,20 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
         const termchart_gui::Bitmap& px = canvas_.pixels();
-        // Format_RGBA8888：内存布局 RGBA 与 Bitmap(channels=4) 一致。
-        // Bitmap 行按通道紧致对齐（row_bytes = w * channels），正好可直接当
-        // QImage 的 bytesPerLine 用。QImage 引用外部缓冲、不拷贝，生命周期覆盖
-        // paintEvent 全程即可。
-        const auto* data = reinterpret_cast<const uchar*>(px.data());
-        const QImage image(data, static_cast<int>(px.width()), static_cast<int>(px.height()),
-                           static_cast<int>(px.row_bytes()), QImage::Format_RGBA8888);
+        const int w = static_cast<int>(px.width());
+        const int h = static_cast<int>(px.height());
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        // 拷贝到独立 QImage：不别名外部缓冲，避免与 Bitmap 生命周期 / Qt 内部格式
+        // 转换耦合（直接引用外部 const 缓冲在部分平台/格式下会触发堆异常）。
+        QImage image(w, h, QImage::Format_RGBA8888);
+        const std::size_t rb = static_cast<std::size_t>(px.row_bytes());
+        for (int y = 0; y < h; ++y) {
+            std::memcpy(image.scanLine(y), px.data() + static_cast<std::size_t>(y) * rb, rb);
+        }
+        QPainter painter(this);
         painter.drawImage(QPoint{0, 0}, image);
     }
 
@@ -167,7 +174,10 @@ protected:
         termchart_gui::Event ev{};
         ev.type = termchart_gui::EventType::KeyPress;
         ev.key = e->key();
-        ev.text = e->text().toStdString();
+        // 同样绕开 toStdString 的 std::string ABI 错配：Qt 端只给 UTF-8 裸缓冲，
+        // 由本端（GCC 15.2）按自身 ABI 构造 std::string。
+        const QByteArray ktext = e->text().toUtf8();
+        ev.text = std::string(ktext.constData(), static_cast<std::size_t>(ktext.size()));
         ev.modifiers = modifiers_of(e->modifiers());
         if (event_sink_) {
             event_sink_(std::move(ev));
@@ -196,7 +206,12 @@ public:
 
     void set_title(std::string title) override {
         if (widget_ != nullptr) {
-            widget_->setWindowTitle(QString::fromStdString(title));
+            // 用 const char* 而非 fromStdString：本项目以 GCC 15.2 构建，Qt 6.8.3
+            // mingw_64 以 GCC 13.1 构建，二者 std::string ABI/运行时不一致时，
+            // fromStdString 会把本端 std::string 按对方布局错读，构造出坏指针，
+            // QString 析构即触发 RtlFreeHeap 堆损坏崩溃。走 UTF-8 裸缓冲区无 ABI 负担。
+            widget_->setWindowTitle(
+                QString::fromUtf8(title.data(), static_cast<int>(title.size())));
         }
     }
     void resize(std::uint32_t w, std::uint32_t h) override {
@@ -227,6 +242,7 @@ struct QtBackend::Impl {
     std::unique_ptr<CanvasWidget> widget;
     bool running = false;
     bool quit_requested = false;
+    std::function<void()> frame_cb;  // run_loop 的 QTimer 每帧调用
 
     std::mutex queue_mutex;
     std::deque<termchart_gui::Event> queue;
@@ -260,9 +276,15 @@ QtBackend::QtBackend(std::uint32_t width, std::uint32_t height, std::string titl
 
     impl->canvas = std::make_unique<termchart_gui::BitmapCanvas>(width, height);
     impl->widget = std::make_unique<CanvasWidget>(*impl->canvas);
-    impl->widget->setWindowTitle(QString::fromStdString(title));
+    impl->widget->setWindowTitle(
+        QString::fromUtf8(title.data(), static_cast<int>(title.size())));
     impl->widget->resize(static_cast<int>(width), static_cast<int>(height));
     impl->widget->set_render_hook([impl = impl.get()](std::uint32_t w, std::uint32_t h) {
+        // 先让画布缓冲跟随窗口尺寸重分配，再回调应用——否则控件树按 (w,h) 排版
+        // 却画进固定大小的缓冲会越界写、堆损坏（拖大窗口/DPI 下延迟崩溃）。
+        if (impl->canvas != nullptr) {
+            impl->canvas->resize(w, h);
+        }
         if (impl->render_hook) {
             impl->render_hook(w, h);
         }
@@ -317,14 +339,31 @@ void QtBackend::present() {
     }
 }
 
-void QtBackend::run_loop(termchart_gui::EventLoop& loop) {
-    (void)loop;  // Qt 的消息泵即循环；loop 的 post/定时器语义由应用自行桥接
-    if (impl_->widget != nullptr) {
-        impl_->widget->show();
+void QtBackend::set_frame_callback(std::function<void()> cb) noexcept {
+    if (impl_ != nullptr) {
+        impl_->frame_cb = std::move(cb);
     }
+}
+
+void QtBackend::run_loop(termchart_gui::EventLoop& loop) {
+    // Qt 的消息泵即循环；loop 的 post/定时器语义由应用经 set_frame_callback 桥接：
+    // 这里用 QTimer 每帧（~8ms）调用 frame_cb，由应用抽干原生事件并路由到控件树/重绘。
+    (void)loop;
+    if (impl_ == nullptr || impl_->widget == nullptr) {
+        return;
+    }
+    impl_->widget->show();
     impl_->running = true;
     impl_->quit_requested = false;
+    QTimer ticker;
+    QObject::connect(&ticker, &QTimer::timeout, [&]() {
+        if (impl_->frame_cb) {
+            impl_->frame_cb();
+        }
+    });
+    ticker.start(8);
     QApplication::exec();
+    ticker.stop();
     impl_->running = false;
 }
 

@@ -21,6 +21,7 @@
 #include "termchart_gui/widget_tree/mount.hpp"
 #include "termchart_gui/widget_tree/progress_bar.hpp"
 #include "termchart_gui/widget_tree/slider.hpp"
+#include "termchart_gui/native_loop/loop.hpp"
 #include "termchart_gui_qt/qt_backend.hpp"
 
 int main(int argc, char** argv) {
@@ -57,7 +58,7 @@ int main(int argc, char** argv) {
 
     Mount mount(root, backend);
     mount.paint_all();  // paint_all 内含 present()（清屏→重排→绘制→上屏）
-    backend.show();     // Qt 必须显式 show() 才弹窗（Win32/Tk 构造即可见，Qt 不）
+    // Qt 窗口在交互模式由 run_loop() 显式 show()；smoke 模式保持离屏。
 
     // 尺寸变化同步重渲染（与 Win32 同款钩子语义：Qt 的 resizeEvent 里就地回调）。
     backend.set_render_hook([&](std::uint32_t w, std::uint32_t h) {
@@ -93,14 +94,17 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // 交互窗口：交给 Qt 自持 exec() 循环（run_loop 内部用 QTimer 每帧驱动）。
+    // 每帧回调抽干原生事件并路由到控件树，状态变化则重绘——与 Win32/Tk 手动泵循环
+    // 同语义，但 Qt 必须走 exec() 才是规范、稳定的事件循环。
     bool running = true;
-    while (running) {
-        backend.process_events();
+    backend.set_frame_callback([&]() {
         const bool dirty = drain(running);
         if (dirty) {
             mount.paint_all();
         }
-        std::this_thread::sleep_for(frame_pause);
-    }
+    });
+    HeadlessEventLoop loop;
+    backend.run_loop(loop);
     return 0;
 }

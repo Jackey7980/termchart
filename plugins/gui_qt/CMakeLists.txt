@@ -69,3 +69,49 @@ endif()
 set_target_properties(qt_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples"
 )
+
+# ---- 回归测试（仅在本插件被构建时存在）----
+# Qt 运行时不在版本库内（LGPL 动态链接、二进制体积大，不 vendoring）。测试环境由本文件
+# 注入，确保可复现且不依赖调用方的全局 PATH：
+#  - 把 Qt 的 bin 目录提到 PATH 最前，使其自带 libstdc++ 优先于其它 MinGW，规避 GCC
+#    版本错配导致的 STATUS_ENTRYPOINT_NOT_FOUND（0xC0000139）；
+#  - 设 QT_QPA_PLATFORM=offscreen 与插件路径，便于无显示器 CI 复现。
+# 二进制如何可复现地获取见 docs/guide/gui_qt.md 与 tools/setup_qt_ucrt.ps1。
+get_target_property(_qt_core_loc ${TERMCHART_QT_VERSION_LABEL}::Core LOCATION)
+get_filename_component(_qt_bin_dir "${_qt_core_loc}" DIRECTORY)
+# Qt 插件目录布局因发行方而异：官方 Qt.io 装到 <prefix>/plugins（与 bin 同级），
+# MSYS2（UCRT）装到 <prefix>/share/qt6/plugins。两种都试，挑真实含 platforms 子目录的。
+get_filename_component(_qt_prefix "${_qt_bin_dir}/.." ABSOLUTE)
+set(_qt_plugins_candidates
+    "${_qt_prefix}/plugins"
+    "${_qt_prefix}/share/qt6/plugins"
+    "${_qt_prefix}/lib/qt6/plugins")
+set(_qt_plugins_dir "")
+foreach(_cand IN LISTS _qt_plugins_candidates)
+    if(EXISTS "${_cand}/platforms")
+        set(_qt_plugins_dir "${_cand}")
+        break()
+    endif()
+endforeach()
+if(_qt_plugins_dir STREQUAL "")
+    # 兜底：沿用历史推测，避免配置期直接失败（运行期若缺 offscreen 插件会自行报错）。
+    set(_qt_plugins_dir "${_qt_prefix}/plugins")
+endif()
+
+add_executable(qt_backend_test test/test_qt_backend.cpp)
+target_link_libraries(qt_backend_test PRIVATE termchart_gui_qt)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(qt_backend_test PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+
+# 注意：测试 PATH 只放 Qt 的 bin（内含 Qt DLL 与配套 libstdc++），**不**继承调用方的全局
+# PATH——否则可能把其它 MinGW/旧版（msvcrt）Qt 的 bin 一并带进来，导致加载错版 Qt6Core
+# 而回到「UCRT exe 混 msvcrt Qt」的堆损坏（0xC0000374）。Qt 运行所需系统 DLL 由 OS 直接解析，
+# 无需额外 PATH。
+add_test(NAME qt_backend_test COMMAND qt_backend_test)
+set_tests_properties(qt_backend_test PROPERTIES
+    ENVIRONMENT "PATH=${_qt_bin_dir};QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins_dir}")
+
+add_test(NAME qt_demo_smoke COMMAND qt_demo --smoke)
+set_tests_properties(qt_demo_smoke PROPERTIES
+    ENVIRONMENT "PATH=${_qt_bin_dir};QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins_dir}")

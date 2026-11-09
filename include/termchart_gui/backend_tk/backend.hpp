@@ -46,6 +46,9 @@ public:
 
     void clear(Rgb bg) override { bmp_.fill(bg.r, bg.g, bg.b, 255); }
 
+    // 跟随窗口尺寸重分配内部位图（见 TkCanvas::resize）。
+    void resize(std::uint32_t w, std::uint32_t h) override { bmp_.resize(w, h, 4); }
+
     void fill_rect(const Rect& r, Rgb color) override {
         const int ix = floor_to_int(r.x);
         const int iy = floor_to_int(r.y);

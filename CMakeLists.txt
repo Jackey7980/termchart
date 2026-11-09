@@ -110,6 +110,12 @@ target_include_directories(termchart_gui INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(termchart_gui INTERFACE termchart::termchart)
 
+# 测试框架必须在所有含 add_test 的子目录（含可选 GUI 插件，其回归测试也用 add_test）
+# 之前开启；否则子目录里的 add_test 会被静默忽略。
+if(TERMCHART_BUILD_TESTS)
+    enable_testing()
+endif()
+
 # 原生 Win32 GUI 后端（可选插件，默认关）：接上即可开真实窗口；不进核心零依赖构建。
 if(TERMCHART_BUILD_GUI_WIN32 AND WIN32)
     add_subdirectory(plugins/gui_win32)
@@ -149,7 +155,6 @@ endif()
 
 # ── 测试与示例 ────────────────────────────────────────────────────────────
 if(TERMCHART_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()
 
