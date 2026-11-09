@@ -39,10 +39,11 @@ enum class VideoCodec {
 
 // 视频编码档位。Pcm 是一条完整独立的无损 I_PCM 路径，不参与真压缩档的分层
 // 拆分（image/codec/hevc/*），始终保留为可选档与字节级黄金回归基线。
+// Pcm / Intra 已落地；Inter 是阶段二占位，请求时显式返回空串，不静默降级。
 enum class VideoEncodeMode {
     Pcm,    // I_PCM 无损档（默认；码流字节级稳定）
-    Intra,  // 阶段一：真帧内压缩（变换/量化 + 残差 CABAC）
-    Inter,  // 阶段二：帧间预测 + 参考帧管理
+    Intra,  // 阶段一：真帧内压缩（变换/量化 + 残差 CABAC + 35 模式决策）
+    Inter,  // 阶段二占位：帧间预测 + 参考帧管理尚未实现（fail-loud）
 };
 
 // 该视频码流是否已实现（encode_mp4 等能否真正产出该码流）。AV1 编码器尚未落地 → false。

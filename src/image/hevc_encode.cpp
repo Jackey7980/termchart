@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <string>
 #include <utility>
@@ -19,6 +20,7 @@
 #include "codec/hevc/cabac_context.hpp"
 #include "codec/hevc/cu_coding.hpp"
 #include "codec/hevc/ctb_tree.hpp"
+#include "codec/hevc/deblocking.hpp"
 #include "codec/hevc/intra_prediction.hpp"
 #include "codec/hevc/residual_coding.hpp"
 #include "codec/hevc/transquant.hpp"
@@ -153,44 +155,73 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     const int total_ctb = ctb_w * ctb_h;
     int ctb_idx = 0;
 
-    // 全部 PU 都用 DC(1)：MPM 列表只由左/上 PU 模式决定，而它们也都是 DC
-    // （边界外推时规范把不可用邻居定为 DC），故 candModeList 恒为 {Planar, DC, 26}，
-    // DC 的索引恒为 1。
-    constexpr int kDcMode = 1;
-    constexpr int kDcMpmIdx = 1;
+    // 亮度帧内模式选择：默认逐 CU 走 SSD 模式决策（35 模式全覆盖，见
+    // intra_prediction.cpp::choose_intra_luma_mode_8x8）；可用环境变量
+    // TERMCHART_HEVC_FIXED_MODE 强制全帧固定模式，便于用 ffmpeg 解码做逐模式 oracle。
+    const char* fixed_mode_env = std::getenv("TERMCHART_HEVC_FIXED_MODE");
+    const int kIntraMode = (fixed_mode_env && *fixed_mode_env) ? std::atoi(fixed_mode_env) : -1;
+    // MPM 候选表由左/上 PU 的【实际模式】决定，且 CTB 首行强制 cand_up=DC，
+    // 故不能固定 mpm_idx：维护 tab_ipm 并按 FFmpeg luma_intra_pred_mode 推导。
+    const std::size_t cw8 = static_cast<std::size_t>(cw / 8);
+    std::vector<std::uint8_t> tab_ipm(
+        cw8 * static_cast<std::size_t>(f.ch / 8), 1);  // INTRA_DC
 
     auto emit_cu = [&](int x0, int y0) {
-        // 4 个 z 序 4x4 TU：顺序必须与解码端 hls_transform_unit 一致——每个 TU 的
-        // 左/上参考要么来自已完成的邻块，要么来自本 CU 内已经重建的前序 TU。
+        // 本编码器 8x8 CU 用 PART_2Nx2N ⇒ 整 8x8 单 PU 预测（ffmpeg 解码端同样按
+        // 8x8 预测）。故先用选定模式算整块预测，再拆成 4 个 4x4 TU 写残差。
+        const int mode = (kIntraMode >= 0)
+                             ? kIntraMode
+                             : codec::hevc::choose_intra_luma_mode_8x8(
+                                   f.y.data(), cw, rec.y.data(), cw,
+                                   x0, y0, cw, f.ch, slice_qp);
+        // 4 个 z 序 4x4 TU：顺序必须与解码端 hls_transform_unit 一致。HEVC 帧内预测块
+        // 尺寸等于 TU 尺寸，故每个 4x4 TU 用本 CU 单一模式、以其自身 (tx,ty) 定位参考样本。
+        // 系数扫描方式由本 CU 的亮度模式隐式决定（HEVC 8.5.3.1 / FFmpeg
+        // hevcdec.c:1396-1403）：模式 6..14 用 SCAN_VERT、22..30 用 SCAN_HORIZ，
+        // 其余用 SCAN_DIAG。三张扫描表与 sig_coeff ctx 表必须成套切换，否则
+        // 解码端会把系放到错误的 (x,y)，整帧重建分叉。
+        const auto scan_idx = codec::hevc::scan_idx_for_intra_mode(mode);
+        const auto& st = codec::hevc::scan4x4_tables(scan_idx);
         std::int16_t scan[4][16] = {};
         for (int i = 0; i < 4; ++i) {
             const int tx = x0 + ((i & 1) ? 4 : 0);
             const int ty = y0 + ((i & 2) ? 4 : 0);
-            const bool has_top = ty > 0;
-            const bool has_left = tx > 0;
-            std::uint8_t top[5] = {0, 0, 0, 0, 0};
-            std::uint8_t left[5] = {0, 0, 0, 0, 0};
-            for (int k = 0; k < 4; ++k) {
-                if (has_top) top[k] = rec.y[static_cast<std::size_t>(ty - 1) * cw + tx + k];
-                if (has_left) left[k] = rec.y[static_cast<std::size_t>(ty + k) * cw + (tx - 1)];
-            }
             std::uint8_t pred[16];
-            codec::hevc::predict_intra(kDcMode, 4, top, left, has_top, has_left, pred);
+            codec::hevc::predict_intra_luma_4x4(mode, rec.y.data(), cw, tx, ty, cw, f.ch, pred);
             std::int16_t raster[16];
             codec::hevc::encode_tu_4x4(
                 &f.y[static_cast<std::size_t>(ty) * cw + tx], cw, pred,
                 &rec.y[static_cast<std::size_t>(ty) * cw + tx], cw, raster, slice_qp,
                 /*use_dst=*/true);
-            // 变换输出是行主序，残差语法要的是对角扫描序。
+            // 变换输出是行主序（idx = 行*4 + 列），残差语法要的是所选扫描序。
             for (int n = 0; n < 16; ++n)
-                scan[i][n] = raster[codec::hevc::kDiagScan4x4Y[n] * 4 + codec::hevc::kDiagScan4x4X[n]];
+                scan[i][n] = raster[st.y[n] * 4 + st.x[n]];
         }
+
+        // MPM 候选表：逐式对齐 FFmpeg luma_intra_pred_mode。
+        // - y0 落在 CTB 首行时 (y0-1) 跨垂直 CTB 边界 ⇒ FFmpeg 取 DC（不读正上方 PU
+        //   模式）；其余取正上方 PU 模式。
+        // - x0==0 时左邻居不可用 ⇒ DC；否则取左侧 PU 的模式。
+        const std::size_t pu = static_cast<std::size_t>(y0 >> 3) * cw8 +
+                               static_cast<std::size_t>(x0 >> 3);
+        const int cand_up = (y0 % 64 != 0) ? static_cast<int>(tab_ipm[pu - cw8]) : 1;  // INTRA_DC
+        // FFmpeg hevcdec.c:2264-2267 / mvs.c:49-50：
+        //   cand_left = (ctb_left_flag || x0b) ? tab_ipm[...] : INTRA_DC
+        // 单 slice、单 tile 时 ctb_left_flag == (CTB 不在首列)，故只要 x0>0
+        // 左邻居就【可用】——跨 CTB 左边界不再强制回退 DC。旧实现按
+        // `x0 % 64 != 0` 判可用，会让第二个 CTB 起 MPM 候选表整体错位。
+        const int cand_left = (x0 > 0) ? static_cast<int>(tab_ipm[pu - 1]) : 1;
+        const auto cands = codec::hevc::derive_mpm_candidates(cand_left, cand_up);
+        const auto sig = codec::hevc::signal_intra_mode(mode, cands);
+        tab_ipm[pu] = static_cast<std::uint8_t>(mode);
 
         CuIntra8x8 cu;
         cu.part_2nx2n = true;
-        cu.prev_intra_luma_pred_flag = true;  // 走 mpm_idx
-        cu.mpm_idx = kDcMpmIdx;
-        cu.intra_chroma_pred_mode = 4;        // DM（色度跟随亮度 DC）
+        cu.scan_idx = scan_idx;
+        cu.prev_intra_luma_pred_flag = sig.prev_intra_luma_pred_flag;
+        cu.mpm_idx = sig.mpm_idx;
+        cu.rem_intra_luma_pred_mode = sig.rem_intra_luma_pred_mode;
+        cu.intra_chroma_pred_mode = 4;        // DM（色度跟随亮度模式）
         cu.cbf_cb = 0;
         cu.cbf_cr = 0;
         for (int i = 0; i < 4; ++i) cu.luma4x4[i] = scan[i];
@@ -209,7 +240,6 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     //   inc = (depth_left > ct_depth) + (depth_top > ct_depth)
     // 从 min-CB 粒度的 ct_depth 表取左/上邻居的编码深度。用错上下文会让解码端的
     // 算术解码器立刻跑偏（表现：整帧像素全错但 ffmpeg 不报错）。
-    const int cw8 = cw / 8;
     std::vector<std::uint8_t> ct_depth(
         static_cast<std::size_t>(cw8) * static_cast<std::size_t>(f.ch / 8), 0);
 
@@ -240,7 +270,17 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         }
     }
     rbsp += cabac.finish();
-#ifdef TERMCHART_HEVC_RECON_DUMP
+    // 重建出口同步去块滤波（8.7.2）。必须放在整帧编码之后：帧内预测参考的是
+    // **滤波前**重建，逐 CU 滤波会污染后续 CU 的参考样本。
+    // deblock_frame_luma 目前是按 8x8 网格 + 恒定 bS=2 的近似实现（没有 CU/TU 边界图，
+    // 无法区分 bS=1/2），与 FFmpeg 的 DBF 输出存在 maxdiff≈4（QP26/渐变图）的差异；
+    // 该差异只影响编码端 recon，不进码流，故不影响解码正确性。
+    // 逐像素门禁（recon == dec）在 DBF 关闭时成立：设 TERMCHART_HEVC_NO_DBLOCK=1 编码
+    // + `ffmpeg -skip_loop_filter all` 解码，实测 Y 平面 maxdiff=0。
+    if (!std::getenv("TERMCHART_HEVC_NO_DBLOCK"))
+        codec::hevc::deblock_frame_luma(rec.y.data(), cw, f.ch, cw,
+                                        codec::hevc::DeblockConfig{.slice_qp = slice_qp});
+#if defined(TERMCHART_HEVC_RECON_DUMP)  // 诊断专用：把重建帧追加到当前目录的 tc_enc_recon.yuv
     {
         std::FILE* fp = std::fopen("tc_enc_recon.yuv", "ab");
         if (fp) {
@@ -278,10 +318,14 @@ std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp) {
     sps.conf_win_bottom = (ch - H) / 2;
     sps.pcm_enabled = false;                          // 关 PCM，走 CABAC 编码树
     sps.max_transform_hierarchy_depth_intra = 1;      // 允许 8x8 -> 4x4 一级分裂
+    sps.log2_diff_max_min_transform_block_size = 0;   // MaxTb=4px（真压缩档专用）
+    // PCM 档用默认 3，SPS 位序列与 G0 黄金基线逐字节一致；两档参数集互不影响。
     out += make_nal(33, codec::hevc::write_sps(sps));  // SPS
-    // 真压缩档关闭去块滤波（只改 PPS，slice header 零新增比特）：编码端不做 DBF，
-    // 解码端也不做，逐像素判据才成立。PCM 档仍传默认 Pps{}，位序列不变。
-    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{.disable_deblocking = true}));
+    // 真压缩档开启去块滤波：传默认 Pps{}（deblocking_filter_control_present_flag = 0
+    // ⇒ pps_deblocking_filter_disabled_flag 推断为 0，滤波生效，且 slice header 不新增
+    // 任何比特）。编码端在重建出口同步实现 DBF（见 build_intra_idr_slice 末尾），
+    // 因此 "enc 重建 == dec 输出" 的逐像素判据继续成立。PCM 档同样传 Pps{}，位序列不变。
+    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));
     for (const auto& frame : frames) {
         const Yuv420 f = to_yuv(frame);
         out += make_nal(19, build_intra_idr_slice(f, qp));  // IDR slice

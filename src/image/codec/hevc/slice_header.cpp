@@ -35,7 +35,11 @@ std::string write_slice_header(const SliceHeader& h) {
     // slice_loop_filter_across_slices_enabled_flag 由解码端推断（不读）；
     // sample_adaptive_offset_enabled_flag=0 ⇒ 无 slice_sao_*_flag；
     // cabac_init_present_flag=0 ⇒ 无 cabac_init_flag；
-    // deblocking_filter_control_present_flag=0 ⇒ 无 slice_deblocking_filter_disabled_flag；
+    // deblocking：PPS 的 deblocking_filter_override_enabled_flag 恒为 0 ⇒
+    // deblocking_filter_override_flag 被推断为 0 ⇒ 不写 slice_deblocking_filter_disabled_flag
+    // 与 slice_beta/tc_offset_div2（HEVC 7.3.6.1；ffmpeg hevcdec 同构）。
+    // 故无论 PPS 的 deblocking_filter_control_present_flag 是 0（PCM 档）还是 1
+    // （真压缩档，decoder 继承 PPS 的 disabled=1），本条 slice header 都是零新增比特。
     // pps_slice_chroma_qp_offsets_present_flag=0 ⇒ 无 slice_cb/cr_qp_offset。
     // 因此 slice_type 之后本配置下解码端实际只再读一个字段：
     w.se(h.slice_qp_delta);

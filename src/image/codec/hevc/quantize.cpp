@@ -17,8 +17,8 @@ namespace {
 constexpr std::uint8_t kLevelScale[6] = {40, 45, 51, 57, 64, 72};
 constexpr int kBitDepth = 8;
 constexpr int kLog2TrafoSize = 2;                       // 4x4
-constexpr int kShift = kBitDepth + kLog2TrafoSize - 5;  // = 5
-constexpr int kScaleM = 16;                             // 无缩放矩阵
+constexpr int kShift = kBitDepth + kLog2TrafoSize - 5;   // 8bit 4x4 → 5
+constexpr int kScaleM = 16;                             // LevelScale（默认 4x4 缩放表全 16）
 
 }  // namespace
 
@@ -26,8 +26,8 @@ int quant_4x4(const std::int32_t* coeff, std::int16_t* level, int qp) {
     qp = std::clamp(qp, 0, 51);
     const int rem = qp % 6;
     const int div = qp / 6;
-    // 逆量化分母：deq ≈ level * (scale * scale_m) / 2^shift = level * den / 2
-    // 故 level ≈ coeff * 2 / den。
+    // 前向量化是逆量化的舍入逆：deq(level) = level * scale * 16 / 2^5 = level * den / 2，
+    // 故 level = round(coeff * 2 / den)。
     const std::int64_t den = static_cast<std::int64_t>(kLevelScale[rem]) << div;
     int nonzero = 0;
     for (int k = 0; k < 16; ++k) {
@@ -54,7 +54,7 @@ void dequant_4x4(const std::int16_t* level, std::int32_t* coeff, int qp) {
 }
 
 double quant_step(int qp) {
-    // 有效步长（变换域 deq/level）= scale*scale_m/2^shift = den / 2。
+    // 有效步长（变换域 deq/level）= scale*scale_m/2^shift = den * 16 / 32 = den / 2。
     qp = std::clamp(qp, 0, 51);
     const int rem = qp % 6;
     const int div = qp / 6;

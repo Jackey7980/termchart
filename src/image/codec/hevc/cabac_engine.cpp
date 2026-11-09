@@ -31,6 +31,9 @@
 
 namespace termchart::image::codec::hevc {
 
+// I_PCM 档专用：上下文编号沿用旧的自定义表（init()）。真压缩档不经本引擎，
+// 走 CabacArith + CabacContext::init_hevc()。若这里改用 init_hevc，PCM 码流的
+// 算术编码初始状态会变，ffmpeg 解出的 PCM 样本整体错位（G0 立刻破）。
 void CabacEncoder::init_contexts(int slice_qp) { contexts_.init(slice_qp); }
 
 void CabacEncoder::encode_bin(int ctx_idx, int bin) { seg_.push_back({ctx_idx, bin}); }

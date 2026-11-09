@@ -60,6 +60,14 @@
 | `src/image/codec/hevc/slice_header.cpp` | 仅注释更新：说明 `override_enabled=0` ⇒ slice header 零新增比特 |
 | `docs/reference/hevc_encoder_handoff.md` / `ROADMAP.md` | §5 改写为实测结论；G0 字节数/sha 口径校正为 20433 / `5d4adef5…` |
 
+**后续状态（2026-11-09）**：`hevc_encode.cpp` 现传 `Pps{}`（解码端开滤波），并在
+`build_intra_idr_slice` 出口调 `deblock_frame_luma`（`src/image/codec/hevc/deblocking.cpp`，
+近似实现：只滤亮度、bS 恒 2、单 tc）。实测 recon vs 默认解码 Y 平面 maxdiff≈4
+（QP26 / 128×64 渐变图）；`TERMCHART_HEVC_NO_DBLOCK=1` 编码 + `-skip_loop_filter all`
+解码时 maxdiff=0，该组合才是"预测 / 变换 / 量化 / CABAC / 重建"的干净逐像素门禁。
+§5.2 的"开关去块解码像素逐字节相同"只在 checker 图成立：grad 图 8 对齐的台阶边界
+满足 `d < beta`，会被滤波改动（差 4）。
+
 **验证**：`diag_hevc.py` 仍 6/6 GREEN、`tc_hevc.265` = 20433 B / sha `5d4adef5…`
 （PCM 档位零影响）；六形态 Intra 复测结果与 §3 表格逐位相同（去块开关对像素无影响）。
 

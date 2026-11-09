@@ -2,6 +2,7 @@
 #include "residual_coding.hpp"
 
 #include <cstdlib>
+#include <utility>
 
 #include "cabac_context.hpp"
 
@@ -15,6 +16,39 @@ const std::uint8_t kDiagScan4x4Inv[4][4] = {
 const std::uint8_t kSigCoeffCtxMap4x4[16] = {
     0, 2, 1, 6, 3, 4, 7, 6, 4, 5, 7, 8, 5, 8, 8, 8,
 };
+
+// SCAN_HORIZ / SCAN_VERT 的 4x4 表逐项取自 FFmpeg cabac.c:346-358 与 :1228-1267。
+namespace {
+const std::uint8_t kHorizScanX[16] = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+const std::uint8_t kHorizScanY[16] = {0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3};
+const std::uint8_t kVertScanX[16] = {0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3};
+const std::uint8_t kVertScanY[16] = {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3};
+const std::uint8_t kHorizScanInv[4][4] = {
+    {0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 10, 11}, {12, 13, 14, 15},
+};
+const std::uint8_t kVertScanInv[4][4] = {
+    {0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15},
+};
+// FFmpeg cabac.c:1339-1359 的 ctx_idx_map[scan_idx][0..15]（log2_trafo_size==2 行）。
+const std::uint8_t kSigCtxHoriz[16] = {0, 1, 4, 5, 2, 3, 4, 5, 6, 6, 8, 8, 7, 7, 8, 8};
+const std::uint8_t kSigCtxVert[16] = {0, 2, 6, 7, 1, 3, 6, 7, 4, 4, 8, 8, 5, 5, 8, 8};
+
+const Scan4x4Tables kTables[3] = {
+    {kDiagScan4x4X, kDiagScan4x4Y, kSigCoeffCtxMap4x4, kDiagScan4x4Inv, false},
+    {kHorizScanX, kHorizScanY, kSigCtxHoriz, kHorizScanInv, false},
+    {kVertScanX, kVertScanY, kSigCtxVert, kVertScanInv, true},
+};
+}  // namespace
+
+ScanIdx scan_idx_for_intra_mode(int mode) {
+    if (mode >= 6 && mode <= 14) return kScanVert;
+    if (mode >= 22 && mode <= 30) return kScanHoriz;
+    return kScanDiag;
+}
+
+const Scan4x4Tables& scan4x4_tables(ScanIdx idx) {
+    return kTables[idx == kScanHoriz ? 1 : (idx == kScanVert ? 2 : 0)];
+}
 
 namespace {
 
@@ -67,7 +101,7 @@ void level_base(int m, int first_gt1, const int* gt1, int gt2, int nb,
 
 }  // namespace
 
-std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok) {
+std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanIdx scan_idx) {
     if (ok) *ok = true;
     int last = -1;
     for (int n = 15; n >= 0; --n)
@@ -75,9 +109,13 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok) {
     std::vector<Bin> o;
     if (last < 0) return o;  // cbf=0，调用方不进入本函数
 
-    const int lx = kDiagScan4x4X[last], ly = kDiagScan4x4Y[last];
+    const auto& st = scan4x4_tables(scan_idx);
+    const int cx = st.x[last], cy = st.y[last];
     // last_significant_coeff_x/y_prefix：4x4 时 ctx_shift=0、ctx_offset=0、max=3，
-    // prefix<=3 无 suffix，unary 编码。
+    // prefix<=3 无 suffix，unary 编码。SCAN_VERT 时解码端会 FFSWAP(x,y)
+    // （FFmpeg cabac.c:1222-1223），故编码端必须预先交换写入顺序。
+    const int lx = st.swap_last_xy ? cy : cx;
+    const int ly = st.swap_last_xy ? cx : cy;
     for (int i = 0; i < lx; ++i) o.push_back({kCtxLastSigCoeffX + i, 1});
     if (lx < 3) o.push_back({kCtxLastSigCoeffX + lx, 0});
     for (int i = 0; i < ly; ++i) o.push_back({kCtxLastSigCoeffY + i, 1});
@@ -92,7 +130,7 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok) {
     if (last >= 1) {
         for (int n = last - 1; n > 0; --n) {
             const int sig = coeff[n] != 0 ? 1 : 0;
-            o.push_back({kCtxSigCoeffFlag + kSigCoeffCtxMap4x4[n], sig});
+            o.push_back({kCtxSigCoeffFlag + st.ctx_map[n], sig});
             if (sig) idx[nb++] = n;
         }
         const int sig0 = coeff[0] != 0 ? 1 : 0;
@@ -163,8 +201,9 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok) {
 }
 
 bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff,
-                         std::size_t* consumed) {
+                         std::size_t* consumed, ScanIdx scan_idx) {
     for (int i = 0; i < 16; ++i) coeff[i] = 0;
+    const auto& st = scan4x4_tables(scan_idx);
     Reader r{bins, count};
     int lx = 0, ly = 0, v = 0;
     while (lx < 3) {
@@ -177,14 +216,15 @@ bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff
         if (!v) break;
         ++ly;
     }
-    const int last = kDiagScan4x4Inv[ly][lx];
+    if (st.swap_last_xy) std::swap(lx, ly);  // 与编码端预交换对偶
+    const int last = st.inv[ly][lx];
 
     int idx[16] = {};
     int nb = 1;
     idx[0] = last;
     if (last >= 1) {
         for (int n = last - 1; n > 0; --n) {
-            if (!r.decision(kCtxSigCoeffFlag + kSigCoeffCtxMap4x4[n], v)) return false;
+            if (!r.decision(kCtxSigCoeffFlag + st.ctx_map[n], v)) return false;
             if (v) idx[nb++] = n;
         }
         if (!r.decision(kCtxSigCoeffFlag, v)) return false;

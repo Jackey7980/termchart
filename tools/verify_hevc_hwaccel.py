@@ -154,7 +154,9 @@ def main() -> int:
                         continue
                     src = (tmp / f"{tag}.265.yuv").read_bytes()[:W * H]
                     fsw, fhw = tmp / f"{tag}_sw.yuv", tmp / f"{tag}_hw.nv12"
-                    rs = run([ff, "-y", "-loglevel", "error", "-skip_loop_filter", "all",
+                    # DBF 已在 PPS 中启用：去块滤波是码流语义的一部分，软解参考必须
+                    # 与硬解走同一套滤波，不能再加 -skip_loop_filter。
+                    rs = run([ff, "-y", "-loglevel", "error",
                               "-i", str(f265), "-f", "rawvideo", "-pix_fmt", "yuv420p",
                               str(fsw)])
                     if rs.returncode or not fsw.exists():

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "cabac_syntax.hpp"
+#include "residual_coding.hpp"  // ScanIdx
 
 namespace termchart::image::codec::hevc {
 
@@ -27,7 +28,9 @@ struct CuIntra8x8 {
     int intra_chroma_pred_mode = 4;    // 0..4
     int cbf_cb = 0;                    // 当前只支持 0（色度残差未实现）
     int cbf_cr = 0;
-    // 4 个 z 序 4x4 亮度量化 level（含符号，按对角扫描序）；nullptr 视为全零。
+    // 4 个 z 序 4x4 亮度量化 level（含符号，按 scan_idx 对应的扫描序）；
+    // nullptr 视为全零。扫描方式由本 CU 的亮度模式决定，必须传给残差语法层。
+    ScanIdx scan_idx = kScanDiag;
     const std::int16_t* luma4x4[4] = {nullptr, nullptr, nullptr, nullptr};
 };
 
@@ -48,8 +51,11 @@ struct CuIntra8x8Decoded {
 
 // shape 提供不由 bin 决定的 SPS 开关。
 struct CuIntra8x8Shape {
+    // MaxTb=4x4（本 SPS 配置）时解码端不读 split_transform_flag，
+    // 该字段仅保留历史语义，解码不再消费它。
     bool emit_split_transform_flag = true;
     bool emit_chroma_cbf = true;
+    ScanIdx scan_idx = kScanDiag;  // 不由 bin 决定，由 CU 的亮度模式推导
 };
 
 bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Shape& shape,

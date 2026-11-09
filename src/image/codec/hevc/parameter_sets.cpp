@@ -78,8 +78,15 @@ std::string write_sps(const Sps& sps) {
     // CTB = 64（MinCb=8, MaxCb=8+diff3=64）；log2_min_cb_minus3=0、diff_max_min=3。
     w.ue(0);      // log2_min_luma_coding_block_size_minus3
     w.ue(3);      // log2_diff_max_min_luma_coding_block_size
-    w.ue(0);      // log2_min_luma_transform_block_size_minus2
-    w.ue(3);      // log2_diff_max_min_luma_transform_block_size
+    w.ue(0);      // log2_min_luma_transform_block_size_minus2  (→ 4px)
+    // MaxTrafoSize 按档位分离，绝不写死：
+    // - I_PCM 档用默认 3（MaxTb=32）：G0 黄金基线 20433B/sha 逐字节锁死，改这里即破。
+    // - 真压缩档显式设 0（MaxTb=4px）：亮度 TU 恒为 4x4，8x8 CU 必须分裂成 4 个
+    //   4x4 TU。此时解码端在 8x8 根节点**不读** split_transform_flag（隐式 split=1），
+    //   编码端也不能写该 bin（见 cu_coding.cpp::encode_cu_intra_8x8）；若仍按 32
+    //   写，ffmpeg 会把后续 bin 当作 8x8 单 TU 语法解析，整帧解码错位。
+    w.ue(static_cast<unsigned>(sps.log2_diff_max_min_transform_block_size));
+
     w.ue(0);      // max_transform_hierarchy_depth_inter
     w.ue(static_cast<unsigned>(sps.max_transform_hierarchy_depth_intra));  // max_transform_hierarchy_depth_intra
     w.u(0, 1);    // scaling_list_enabled_flag
@@ -117,7 +124,7 @@ std::string write_sps(const Sps& sps) {
     return w.finish();
 }
 
-std::string write_pps(const Pps&) {
+std::string write_pps(const Pps& pps) {
     BitWriter w;
     w.ue(0);      // pps_pic_parameter_set_id
     w.ue(0);      // pps_seq_parameter_set_id
@@ -141,7 +148,14 @@ std::string write_pps(const Pps&) {
     w.u(0, 1);    // tiles_enabled_flag
     w.u(0, 1);    // entropy_coding_sync_enabled_flag
     w.u(0, 1);    // pps_loop_filter_across_slices_enabled_flag
-    w.u(0, 1);    // deblocking_filter_control_present_flag
+    if (pps.disable_deblocking) {
+        w.u(1, 1);    // deblocking_filter_control_present_flag
+        w.u(0, 1);    // deblocking_filter_override_enabled_flag（0 ⇒ slice 不读 override）
+        w.u(1, 1);    // pps_deblocking_filter_disabled_flag（1 ⇒ 解码端不做去块滤波）
+        // disabled=1 时 pps_beta/tc_offset_div2 不出现在码流里，推断为 0（7.3.2.3）。
+    } else {
+        w.u(0, 1);    // deblocking_filter_control_present_flag（G0 基线口径）
+    }
     w.u(0, 1);    // pps_scaling_list_data_present_flag
     w.u(0, 1);    // lists_modification_present_flag
     w.ue(0);      // log2_parallel_merge_level_minus2

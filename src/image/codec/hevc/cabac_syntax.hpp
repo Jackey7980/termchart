@@ -62,7 +62,7 @@ void put_mpm_idx(std::vector<Bin>& out, int idx);                 // 0..2
 void put_rem_intra_luma_pred_mode(std::vector<Bin>& out, int mode);  // 0..31
 void put_intra_chroma_pred_mode(std::vector<Bin>& out, int mode);     // 0..4
 void put_cbf_luma(std::vector<Bin>& out, int trafo_depth, int value);
-void put_cbf_cb_cr(std::vector<Bin>& out, int trafo_depth, int value);
+void put_cbf_cb_cr(std::vector<Bin>& out, int c_idx, int trafo_depth, int value);
 void put_split_transform_flag(std::vector<Bin>& out, int log2_trafo_size, int value);
 
 bool get_split_cu_flag(BinCursor& c, int ctx_inc, int& value);
@@ -72,7 +72,7 @@ bool get_mpm_idx(BinCursor& c, int& idx);
 bool get_rem_intra_luma_pred_mode(BinCursor& c, int& mode);
 bool get_intra_chroma_pred_mode(BinCursor& c, int& mode);
 bool get_cbf_luma(BinCursor& c, int trafo_depth, int& value);
-bool get_cbf_cb_cr(BinCursor& c, int trafo_depth, int& value);
+bool get_cbf_cb_cr(BinCursor& c, int c_idx, int trafo_depth, int& value);
 bool get_split_transform_flag(BinCursor& c, int log2_trafo_size, int& value);
 
 // ── CU 内元素的组合顺序（按 FFmpeg libavcodec/hevc/hevcdec.c 逐行核对）──

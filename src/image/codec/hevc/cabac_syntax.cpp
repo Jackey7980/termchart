@@ -93,11 +93,16 @@ void put_intra_chroma_pred_mode(std::vector<Bin>& out, int mode) {
 }
 
 void put_cbf_luma(std::vector<Bin>& out, int trafo_depth, int value) {
-    // ff_hevc_cbf_luma_decode: GET_CABAC(CBF_LUMA_OFFSET + !trafo_depth)
+    // 解码端为 GET_CABAC(CBF_LUMA_OFFSET + !trafo_depth)
+    // → 根（trafoDepth==0）用 ctx 41，子层（trafoDepth>0）用 ctx 40。
+    // 必须与 get_cbf_luma 同式：两侧 ctx 不一致会让算术状态自该 bin 起与解码端分叉。
     out.push_back({kCtxCbfLuma + (trafo_depth ? 0 : 1), value});
 }
 
-void put_cbf_cb_cr(std::vector<Bin>& out, int trafo_depth, int value) {
+void put_cbf_cb_cr(std::vector<Bin>& out, int c_idx, int trafo_depth, int value) {
+    // 解码端为 GET_CABAC(CBF_CB_CR_OFFSET + trafo_depth)：cb 与 cr 共用同一 ctxInc，
+    // 且只随 trafoDepth 变化（该语法元素共 5 个 ctx，正好覆盖 trafoDepth 0..4）。
+    (void)c_idx;
     out.push_back({kCtxCbfCbCr + trafo_depth, value});
 }
 
@@ -156,7 +161,8 @@ bool get_cbf_luma(BinCursor& c, int trafo_depth, int& value) {
     return c.decision(kCtxCbfLuma + (trafo_depth ? 0 : 1), value);
 }
 
-bool get_cbf_cb_cr(BinCursor& c, int trafo_depth, int& value) {
+bool get_cbf_cb_cr(BinCursor& c, int c_idx, int trafo_depth, int& value) {
+    (void)c_idx;
     return c.decision(kCtxCbfCbCr + trafo_depth, value);
 }
 
@@ -175,8 +181,8 @@ std::vector<Bin> encode_cu_intra_bins(const CuIntraBins& p) {
     if (p.emit_split_transform_flag)
         put_split_transform_flag(out, p.log2_trafo_size, p.split_transform_flag ? 1 : 0);
     if (p.emit_chroma_cbf) {
-        put_cbf_cb_cr(out, p.trafo_depth, p.cbf_cb);
-        put_cbf_cb_cr(out, p.trafo_depth, p.cbf_cr);
+        put_cbf_cb_cr(out, 1, p.trafo_depth, p.cbf_cb);
+        put_cbf_cb_cr(out, 2, p.trafo_depth, p.cbf_cr);
     }
     put_cbf_luma(out, p.trafo_depth, p.cbf_luma);
     return out;
@@ -207,9 +213,9 @@ bool decode_cu_intra_bins(BinCursor& c, const CuIntraBins& shape, CuIntraBins* o
         out->split_transform_flag = (v != 0);
     }
     if (shape.emit_chroma_cbf) {
-        if (!get_cbf_cb_cr(c, shape.trafo_depth, v)) return false;
+        if (!get_cbf_cb_cr(c, 1, shape.trafo_depth, v)) return false;
         out->cbf_cb = v;
-        if (!get_cbf_cb_cr(c, shape.trafo_depth, v)) return false;
+        if (!get_cbf_cb_cr(c, 2, shape.trafo_depth, v)) return false;
         out->cbf_cr = v;
     }
     if (!get_cbf_luma(c, shape.trafo_depth, v)) return false;

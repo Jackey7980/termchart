@@ -18,9 +18,9 @@
 | G1 分层 | `python tools/check_layers.py` | exit 0，禁止边/收窄边/层号无新增豁免 | PASS |
 | G2 头自洽 | `python tools/check_header_only.py` | exit 0 | PASS |
 | G3 生成物 | `cmake --build --preset ninja --target check_all` | 分层/自洽/生成物/451 头独立编译全过 | PASS |
-| G4 全量测试 | `ctest --preset ninja` | 全绿，报告写具体数字 | 92/92 |
-| G5 **工业级硬解** | `python tools/verify_hevc_hwaccel.py` | 64/64（4 尺寸 × 4 QP × 4 形态）硬解真实启用，Y 平面与软解 **maxdiff=0**；`slice_qp_delta=qp-26`；`pcm_enabled_flag=0` | 64/64 PASS |
-| G6 体积 | `build_scratch/exit_criteria` / QP 扫描 | 64×64 比 I_PCM 降 ≥80%；QP 22/26/30/34 体积与 PSNR 单调 | 97.06%；单调成立 |
+| G4 全量测试 | `ctest --preset ninja` | 全绿，报告写具体数字 | 91/91（doctest 1418 用例 / 238946 断言） |
+| G5 **工业级硬解** | `python tools/verify_hevc_hwaccel.py` | 64/64（4 尺寸 × 4 QP × 4 形态）硬解真实启用，Y 平面与软解 **maxdiff=0**；`slice_qp_delta=qp-26`；`pcm_enabled_flag=0` | 64/64 PASS，hardware=ACTIVE |
+| G6 体积 | QP 扫描 | 64×64 比 I_PCM 降 ≥80%；QP 22/26/30/34 体积与 PSNR 单调 | ≥80% 达成；1111→748→564→421 B / 43.54→39.14→36.47→34.32 dB |
 
 **G5 的硬解不得静默回退**：门禁用 `-hwaccel_output_format` 强制硬件帧格式，
 请求硬解却回退到软解会直接失败。CI 无 GPU 时必须显式 `--no-hw` 并报告
@@ -62,16 +62,16 @@ I_PCM 档保持自包含、`diag_hevc.py` 字节级锁死，未被拆分污染�
 
 ### 2.2 阶段 B（真帧内压缩）—— 出口判据全部达成
 
-| 判据（ROADMAP:484 / 清单三） | 实测 |
+| 判据（ROADMAP:484 / 清单三） | 2026-11-09 实测 |
 | --- | --- |
 | FFmpeg 0 error | rc=0 |
-| PSNR > 35 dB（固定 QP=26） | 40.28 dB（grad）；8 形态 39.21~63.76 dB |
-| 64×64 体积比 I_PCM 降 ≥80% | 6353 B → 187 B，**降 97.06%** |
-| QP 22/26/30/34 体积单调 | 971 → 716 → 504 → 346 B |
-| QP 22/26/30/34 PSNR 单调 | 43.75 → 40.28 → 37.24 → 34.48 dB |
+| PSNR > 35 dB（固定 QP=26） | **39.14 dB**（grad / 128×64 / 默认开 DBF + 模式决策）；固定 DC 时代 38.40 dB，关 DBF 时代 40.28 dB 是另一口径，不可混用 |
+| 64×64 体积比 I_PCM 降 ≥80% | 6353 B → 187 B，**降 97.06%**（固定 DC 基线）；模式决策后体积略增但降幅仍 >90% |
+| QP 22/26/30/34 体积单调 | 1111 → 748 → 564 → 421 B |
+| QP 22/26/30/34 PSNR 单调 | 43.54 → 39.14 → 36.47 → 34.32 dB |
 | 关 PCM 后码流无 `pcm_flag` | `trace_headers`：`pcm_enabled_flag=0` |
-| 编码端重建 == ffmpeg 解码 | 8 形态 `maxdiff=0 / 0 of 8192` 逐位一致 |
-| **工业级硬解** | d3d11va 真实启用，64/64 组 Y 平面与软解逐位一致 |
+| 编码端重建 == ffmpeg 解码 | **35/35 模式** 与 **256×128 多 CTB 模式决策** 均 `maxdiff=0`（`NO_DBLOCK=1` + `-skip_loop_filter all` 的干净路径） |
+| **工业级硬解** | d3d11va 真实启用，64/64 组 Y 平面与软解逐位一致，worst Y-PSNR 32.33 dB |
 
 **根因修复记录**（避免重复踩）：编码端重建与解码端发散的真因是
 `predict_dc` 缺 HEVC 8.4.4.2.2 参考样本替代与 8.4.4.2.5 首行/首列边界滤波；
@@ -79,13 +79,44 @@ I_PCM 档保持自包含、`diag_hevc.py` 字节级锁死，未被拆分污染�
 `tests/unit/image/test_intra_prediction.cpp`（81 断言）锁死，oracle 取自
 ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 
-### 2.3 尚未落地（本路线要推进的部分）
+### 2.3 真实缺口（2026-11-09 代码 + 实测）
 
-- 帧内预测**只有 DC 一种模式**（`kDcMode=1` 硬编码），`predict_planar` 已实现但未接入决策；
-  35 种角度模式、8×8 TU、`transform_skip` 均未实现。
-- 阶段二（P 帧 / DPB / Merge / AMVP / 1⁄4 像素插值）：7 个模块文件为零。
-- 阶段三（DBF / SAO / RDO / 码率控制）：4 个模块文件为零。
-- `EncodeOptions::video_qp` 已可配置，但 MP4 封装路径尚未暴露 QP。
+**帧内预测本身已做完**：`predict_intra_luma_4x4` 覆盖 0..34 全部 35 个模式，
+`choose_intra_luma_mode_8x8` 按真实 TU 次序逐 CU 做 SSD 模式决策，三套系数扫描
+随模式切换。以下仍是缺口，按优先级登记：
+
+| 编号 | 缺口 | 证据 / 现状 |
+| --- | --- | --- |
+| P0-5 | 跨 CTB 行的 **top-right 扩展参考** | 256×128 下固定模式实测 `mode 0 / 2..9` 的 `recon != ffmpeg dec`（FFmpeg 侧读 CTB 边缘/emulated edge 填充，编码端 `rec` 无同语义）。默认模式决策已排除这 10 个模式，保证任意尺寸逐像素一致；`TERMCHART_HEVC_FIXED_MODE` 逐模式 oracle 仍可复现。修好后应放开候选集并重跑 35 模式 × 多尺寸门禁。 |
+| P1 | 8×8 / 16×16 / 32×32 TU、`transform_skip` | SPS `log2_diff_max_min_transform_block_size = 0`（MaxTb=4px）；`transform.cpp` 只有 4×4 DCT-II / DST-VII。 |
+| P1 | 色度预测与色度残差 | `cbf_cb/cr` 恒 0、`rec.u/v` 恒 128、语法写 `intra_chroma_pred_mode=4`(DM)。彩色内容会丢色度。 |
+| P3 | DBF 精确化 | `deblocking.cpp` 是 bS 恒 2、仅亮度、单 tc 的近似，与 FFmpeg 差 maxdiff≈4（只影响编码端 recon，不进码流）；SAO 在 SPS 中关闭。 |
+| P2 | 阶段二 | `inter_prediction` / `motion_estimate` / `dpb` / `sao` / `rd_optimization` / `bitstream_control` **全仓库 0 实现文件**；`VideoEncodeMode::Inter` 显式返回空串（fail-loud 契约，不是半成品）。"P 帧功能清理"的结论是：没有可清理的代码，需要的是把该占位语义写进公开头并锁定（已完成）。 |
+| P4 | MP4 路径 QP | `EncodeOptions::video_qp` 已可配置，但 `encode_mp4` 尚未透传。 |
+
+### 2.4 本轮修复记录（2026-11-09，均为真 bug）
+
+1. **系数扫描随模式切换**（根因）：FFmpeg `hevcdec.c:1396-1403` 由亮度模式隐式选
+   `SCAN_VERT`(6..14) / `SCAN_HORIZ`(22..30) / `SCAN_DIAG`；旧实现固定 DIAG，
+   18 个模式的系数位置全错位，固定模式解码 PSNR 掉到 8~16 dB。新增 3 套扫描表、
+   各自的 `sig_coeff` ctx 映射，以及 SCAN_VERT 的 `last_significant_coeff_x/y` 交换。
+2. **MPM 左邻居跨 CTB 边界**：`hevcdec.c:2264-2267` 用 `ctb_left_flag || x0b`，
+   `x0>0` 即左邻居可用；旧实现在 `x0%64==0` 强制回退 DC，第二个 CTB 起候选表错位。
+3. **`rem_intra_luma_pred_mode` 求逆**：prev=0 分支解码端先把候选表**升序排序**再递增，
+   旧实现按未排序表求逆，315 组合中错 7 个。
+4. **DC 边界滤波**：FFmpeg `pred_template.c:451-457` 只有一条 `3*dc+2` 无条件公式，
+   旧实现有"单侧不可用则 `(x+dc+1)>>1`"的错误分支；`predict_dc` 与
+   `predict_intra_luma_4x4` 两条路径现已统一。
+5. **I_PCM 黄金基线复原**：真压缩档把 SPS 的 MaxTb 改成 4px、`CabacEncoder` 改用
+   `init_hevc()`，误伤了 PCM 档（4/6 GREEN、20427 B、色度全 128）。改为按档位分离
+   `Sps::log2_diff_max_min_transform_block_size`（PCM=3 / Intra=0）并让
+   `CabacEncoder::init_contexts` 回到 `init()`，G0 恢复 **6/6 GREEN / 20433 B**。
+6. **模式决策接入 + 候选裁剪**：逐 CU 模拟「预测→量化→逆量化重建」选 SSD 最小；
+   为避免 P0-5 破坏多 CTB 一致性，默认排除 mode 0/2..9，仍有 25 个可用模式，
+   QP26 PSNR 38.40→39.14 dB。
+
+**新增回归**：`tests/unit/image/test_hevc_scan.cpp`（扫描表双射、模式→扫描映射边界、
+3 套扫描的残差语法往返、模式决策确定性与越界回退）。
 
 ---
 
@@ -94,14 +125,19 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 > 纪律：每项开工前跑 G0~G5 建立基线；完工后全跑一遍。任何一项让
 > `diag_hevc.py` 不再是 6/6 或让 I_PCM 像素不再逐字节相等，立即回退该项。
 
-### P0 — 帧内预测模式扩展（阶段一收尾，优先）
+### P0 — 帧内预测模式扩展（阶段一收尾）
+
+> **P0-1 ~ P0-4 已于 2026-11-09 全部落地**（见 §2.4）：35 模式全覆盖、三套系数
+> 扫描、MPM 与 rem 求逆修正、逐 CU SSD 模式决策。下表保留为原始验收口径，
+> 当前唯一未完成项是新增的 P0-5。
 
 | 步骤 | 文件 | 内容 | 验收 |
 | --- | --- | --- | --- |
 | P0-1 | `intra_prediction.{hpp,cpp}` | 补 Planar 已实现的接入；加角度 10(H)/26(V) 与参考样本平滑（8.4.4.2.2 的 1:1:1 滤波与 `strong_intra_smoothing`）；参考不可用时按规范替代 | 单测：固定 top/left 逐像素对拍 FFmpeg 解码结果 |
 | P0-2 | `cabac_syntax.cpp` | MPM 推导按 8.4.4.2.3 实现（左/上 PU 模式、`candModeList`），`prev_intra_luma_pred_flag` / `mpm_idx` / `rem_intra_luma_pred_mode` 真正按选中模式写 | 单测：3 种 MPM 分支的 bin 序列 |
 | P0-3 | `ctb_tree.cpp` / `hevc_encode.cpp` | 维护 `tab_ipm`（每 PU 的模式），CTB 边界按 FFmpeg `_hevcdec.c:2276` 把 `cand_up` 强制 DC | G5 全矩阵 + 8 形态逐位一致 |
-| P0-4 | `hevc_encode.cpp` | 简单模式决策（SATD 或 SAD 选 DC/Planar/H/V），替换 `kDcMode` 硬编码 | 同 PSNR 下体积下降，或同体积 PSNR 提升 |
+| P0-4 | `intra_prediction.cpp` / `hevc_encode.cpp` | 逐 CU SSD 模式决策（模拟完整重建链），替换 `kDcMode` 硬编码 | **已达成**：QP26 PSNR 38.40→39.14 dB，QP 扫描体积/PSNR 仍单调 |
+| P0-5 | `intra_prediction.cpp` / `residual_coding.cpp` | 对齐跨 CTB 行 top-right 扩展参考（FFmpeg 帧缓冲 / emulated edge 语义），修好后放开默认决策里被排除的 mode 0/2..9 | 256×128 + 640×384 下 35/35 固定模式与模式决策均 `recon == dec` maxdiff=0；G5 64/64 保持 |
 
 **风险**：MPM 是"共同误解"高发区 —— 编码端与 ffmpeg 用同一份误解时自往返全过、
 外部解码全错。P0-2 必须用 `trace_headers` 逐字段核对模式 bin，不能只跑自测。
@@ -189,12 +225,23 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
 ## 5. 执行顺序与回退纪律
 
 ```
-P0（帧内多模式）  → P1（8×8 TU / transform_skip）
+[已完成] P0-1~P0-4：35 模式 + 三套扫描 + MPM 修正 + SSD 模式决策
    ↓
-P2（I + P + P）   → P3（DBF / SAO / RDO）
+P0-5（跨 CTB top-right 扩展参考）→ 放开 mode 0/2..9，35 模式 × 多尺寸全绿
    ↓
-P4（MP4 QP 透传 / 文档 / ROADMAP）
+P1（色度预测/残差 → 8×8 TU → transform_skip）
+   ↓
+P2（DPB → ME → inter_prediction → I+P+P；G5 扩成 3 帧序列硬解）
+   ↓
+P3（DBF 精确 bS + 色度通路 → SAO → RDO / 码率控制）
+   ↓
+P4（MP4 QP 透传 / 文档 / ROADMAP 勾选）
 ```
+
+> 纪律补充：P 帧（阶段二）**未开工且无半成品**。`VideoEncodeMode::Inter`
+> 是显式 fail-loud 占位，不要在 P0-5 / P1 未收口前把帧间分支塞进编码树；
+> 每加一个模式或尺寸，先跑 `verify_modes_recon.py` 的 `recon == dec` 逐像素门禁，
+> 再跑 G5 硬解矩阵。
 
 每一步的开工/完工检查固定为：
 
