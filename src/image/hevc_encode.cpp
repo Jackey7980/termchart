@@ -127,6 +127,17 @@ using codec::hevc::CuIntra8x8;
 using codec::hevc::kBypassCtx;
 using codec::hevc::kCtxSplitCuFlag;
 
+// HEVC 8.6.1 / FFmpeg cabac.c:1122-1163：4:2:0 色度 QP 由亮度 QP 经 qPi→qPc
+// 映射得到（本编码器 PPS/slice 的 cb/cr_qp_offset 与 cu_qp_offset 均为 0，
+// QpBdOffset=0，故 qp_i == qp_y）。亮度与色度反量化步长不同，不能共用 QP。
+static int chroma_qp_from_luma(int qp_y) {
+    if (qp_y < 30) return qp_y;
+    if (qp_y > 43) return qp_y - 6;
+    static const int kQpC[] = {29, 30, 31, 32, 33, 33, 34, 34,
+                               35, 35, 36, 36, 37, 37};  // qp_i 30..43
+    return kQpC[qp_y - 30];
+}
+
 std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     codec::hevc::SliceHeader sh;
     // SliceQpY = 26 + init_qp_minus26(=0) + slice_qp_delta + QpBdOffsetY(=0, 8bit)。
@@ -198,6 +209,33 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
                 scan[i][n] = raster[st.y[n] * 4 + st.x[n]];
         }
 
+        // 色度：8x8 亮度 CU → 4x4 U + 4x4 V（4:2:0）。DM 模式下色度预测模式
+        // 等于亮度模式；FFmpeg hevcdec.c:1484-1506 在 blk_idx==3 处仍传【亮度】
+        // 坐标 xBase/yBase 做邻居可用性判定，POS 则按 >>1 采样色度重建平面。
+        // 色度变换固定 DCT-II（use_dst=false）、QP 走 qPi→qPc、c_idx>0 不做
+        // DC 首行/首列滤波 —— 三处差异由 predict_intra_luma_4x4 的 chroma 参数处理。
+        const int cstride = cw / 2;
+        const int cqp = chroma_qp_from_luma(slice_qp);
+        const int cx = x0 / 2, cy = y0 / 2;
+        const std::size_t coff = static_cast<std::size_t>(cy) * cstride + cx;
+        std::int16_t cscan[2][16] = {};
+        int chroma_cbf[2] = {0, 0};
+        for (int c = 0; c < 2; ++c) {
+            const std::uint8_t* csrc = (c ? f.v : f.u).data();
+            std::uint8_t* crec = (c ? rec.v : rec.u).data();
+            std::uint8_t pred[16];
+            codec::hevc::predict_intra_luma_4x4(
+                mode, rec.y.data(), cw, x0, y0, cw, f.ch, pred,
+                codec::hevc::ChromaPredPlane{crec, cstride});
+            std::int16_t raster[16];
+            codec::hevc::encode_tu_4x4(csrc + coff, cstride, pred, crec + coff,
+                                        cstride, raster, cqp, /*use_dst=*/false);
+            for (int n = 0; n < 16; ++n) {
+                cscan[c][n] = raster[st.y[n] * 4 + st.x[n]];
+                if (cscan[c][n] != 0) chroma_cbf[c] = 1;
+            }
+        }
+
         // MPM 候选表：逐式对齐 FFmpeg luma_intra_pred_mode。
         // - y0 落在 CTB 首行时 (y0-1) 跨垂直 CTB 边界 ⇒ FFmpeg 取 DC（不读正上方 PU
         //   模式）；其余取正上方 PU 模式。
@@ -222,9 +260,11 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         cu.mpm_idx = sig.mpm_idx;
         cu.rem_intra_luma_pred_mode = sig.rem_intra_luma_pred_mode;
         cu.intra_chroma_pred_mode = 4;        // DM（色度跟随亮度模式）
-        cu.cbf_cb = 0;
-        cu.cbf_cr = 0;
+        cu.cbf_cb = chroma_cbf[0];
+        cu.cbf_cr = chroma_cbf[1];
         for (int i = 0; i < 4; ++i) cu.luma4x4[i] = scan[i];
+        cu.chroma4x4[0] = cscan[0];
+        cu.chroma4x4[1] = cscan[1];
         const auto bins = codec::hevc::encode_cu_intra_8x8(cu);
         for (const auto& b : bins) {
             if (b.ctx == kBypassCtx) cabac.encode_bypass(b.val);
@@ -280,12 +320,20 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     if (!std::getenv("TERMCHART_HEVC_NO_DBLOCK"))
         codec::hevc::deblock_frame_luma(rec.y.data(), cw, f.ch, cw,
                                         codec::hevc::DeblockConfig{.slice_qp = slice_qp});
-#if defined(TERMCHART_HEVC_RECON_DUMP)  // 诊断专用：把重建帧追加到当前目录的 tc_enc_recon.yuv
+#if defined(TERMCHART_HEVC_RECON_DUMP)  // 诊断专用：重建帧追加到当前目录
     {
         std::FILE* fp = std::fopen("tc_enc_recon.yuv", "ab");
         if (fp) {
             std::fwrite(rec.y.data(), 1, rec.y.size(), fp);
             std::fclose(fp);
+        }
+        // 色度另写一份，避免改变 tc_enc_recon.yuv 的「末 N 字节 = Y 平面」口径
+        // （verify_modes_recon.py 依赖它）。DBF 只滤亮度，故 U/V 始终是滤波前重建。
+        std::FILE* cp = std::fopen("tc_enc_chroma.yuv", "ab");
+        if (cp) {
+            std::fwrite(rec.u.data(), 1, rec.u.size(), cp);
+            std::fwrite(rec.v.data(), 1, rec.v.size(), cp);
+            std::fclose(cp);
         }
     }
 #endif

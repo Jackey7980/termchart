@@ -22,7 +22,6 @@ std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
     // prev_intra_luma_pred_flag / mpm_idx|rem），当前只实现 PART_2Nx2N。
     // 写出去会被解码端按 4 套 PU 语法读，序列必然错位，故显式拒绝。
     if (!cu.part_2nx2n) return {};
-    if (cu.cbf_cb != 0 || cu.cbf_cr != 0) return {};  // 色度残差未实现
 
     std::vector<Bin> out;
     put_part_mode_intra(out, cu.part_2nx2n);
@@ -39,8 +38,8 @@ std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
     //
     // 色度 cbf 在根节点、且位于分裂递归**之前**读出：
     // log2_trafo_size=3 > 2 故此处读 cbf_cb/cbf_cr；子层 4x4 不再读色度 cbf。
-    put_cbf_cb_cr(out, 1, 0, 0);  // cbf_cb（ctx 42 + 0）
-    put_cbf_cb_cr(out, 2, 0, 0);  // cbf_cr（ctx 42 + 0，与 cb 共用 ctxInc）
+    put_cbf_cb_cr(out, 1, 0, cu.cbf_cb);  // 根节点 trafo_depth=0 → ctx 42
+    put_cbf_cb_cr(out, 2, 0, cu.cbf_cr);
 
     // 四个 4x4 叶子 TU（trafoDepth=1）：cbf_luma 用 ctx 40。
     for (int i = 0; i < 4; ++i) {
@@ -49,6 +48,19 @@ std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
         if (!nz) continue;
         bool ok = true;
         const auto rb = encode_residual_4x4(cu.luma4x4[i], &ok, cu.scan_idx);
+        if (!ok || rb.empty()) return {};
+        out.insert(out.end(), rb.begin(), rb.end());
+    }
+
+    // FFmpeg hevcdec.c:1484-1506：亮度 TU 为 4x4（MaxTb=4）时，色度残差在
+    // blk_idx==3 的那个 transform_unit 内、亮度残差之后依次写 U(c_idx=1) / V(c_idx=2)。
+    // 色度 intra_pred 不产生 bin，故这里只追加两个 residual_coding 的 bin 序列。
+    for (int c = 0; c < 2; ++c) {
+        const int cbf = c ? cu.cbf_cr : cu.cbf_cb;
+        if (!cbf) continue;
+        if (!block_nonzero(cu.chroma4x4[c])) return {};  // cbf=1 却全零是非法码流
+        bool ok = true;
+        const auto rb = encode_residual_4x4(cu.chroma4x4[c], &ok, cu.scan_idx, c + 1);
         if (!ok || rb.empty()) return {};
         out.insert(out.end(), rb.begin(), rb.end());
     }
@@ -96,6 +108,15 @@ bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Sha
         std::size_t used = 0;
         if (!decode_residual_4x4(c.current(), c.remaining(), out->luma[i], &used,
                                  shape.scan_idx)) return false;
+        c.advance(used);
+    }
+
+    for (int ch = 0; ch < 2; ++ch) {
+        const int cbf = ch ? out->cbf_cr : out->cbf_cb;
+        if (!cbf) continue;
+        std::size_t used = 0;
+        if (!decode_residual_4x4(c.current(), c.remaining(), out->chroma[ch], &used,
+                                 shape.scan_idx, ch + 1)) return false;
         c.advance(used);
     }
     if (consumed) *consumed = c.consumed();

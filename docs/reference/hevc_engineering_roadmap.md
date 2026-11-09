@@ -18,9 +18,10 @@
 | G1 分层 | `python tools/check_layers.py` | exit 0，禁止边/收窄边/层号无新增豁免 | PASS |
 | G2 头自洽 | `python tools/check_header_only.py` | exit 0 | PASS |
 | G3 生成物 | `cmake --build --preset ninja --target check_all` | 分层/自洽/生成物/451 头独立编译全过 | PASS |
-| G4 全量测试 | `ctest --preset ninja` | 全绿，报告写具体数字 | 91/91（doctest 1418 用例 / 238946 断言） |
+| G4 全量测试 | `ctest --preset ninja` | 全绿，报告写具体数字 | 91/91（doctest 1421 用例 / 239157 断言） |
 | G5 **工业级硬解** | `python tools/verify_hevc_hwaccel.py` | 64/64（4 尺寸 × 4 QP × 4 形态）硬解真实启用，Y 平面与软解 **maxdiff=0**；`slice_qp_delta=qp-26`；`pcm_enabled_flag=0` | 64/64 PASS，hardware=ACTIVE |
-| G6 体积 | QP 扫描 | 64×64 比 I_PCM 降 ≥80%；QP 22/26/30/34 体积与 PSNR 单调 | ≥80% 达成；1111→748→564→421 B / 43.54→39.14→36.47→34.32 dB |
+| G6 体积 | QP 扫描 | 64×64 比 I_PCM 降 ≥80%；QP 22/26/30/34 体积与 PSNR 单调 | ≥80% 达成；1432→924→703→498 B / 43.55→39.08→36.42→34.32 dB（含色度残差） |
+| G7 **色度** | `build_scratch/verify_chroma.py` | 5 形态 × 4 QP：编码端 recon U/V == ffmpeg dec U/V **maxdiff=0**；彩色图 U/V PSNR ≥37 dB | 20/20 PASS |
 
 **G5 的硬解不得静默回退**：门禁用 `-hwaccel_output_format` 强制硬件帧格式，
 请求硬解却回退到软解会直接失败。CI 无 GPU 时必须显式 `--no-hw` 并报告
@@ -62,15 +63,16 @@ I_PCM 档保持自包含、`diag_hevc.py` 字节级锁死，未被拆分污染�
 
 ### 2.2 阶段 B（真帧内压缩）—— 出口判据全部达成
 
-| 判据（ROADMAP:484 / 清单三） | 2026-11-09 实测 |
+| 判据（ROADMAP:484 / 清单三） | 2026-11-10 实测（含色度残差） |
 | --- | --- |
 | FFmpeg 0 error | rc=0 |
 | PSNR > 35 dB（固定 QP=26） | **39.08 dB**（grad / 128×64 / 默认开 DBF + 35 模式决策）；固定 DC 时代 38.40 dB、关 DBF 时代 40.28 dB 是另一口径，不可混用 |
 | 64×64 体积比 I_PCM 降 ≥80% | 6353 B → 187 B，**降 97.06%**（固定 DC 基线）；模式决策后体积略增但降幅仍 >90% |
-| QP 22/26/30/34 体积单调 | 1114 → 744 → 579 → 419 B |
+| QP 22/26/30/34 体积单调 | 1432 → 924 → 703 → 498 B |
 | QP 22/26/30/34 PSNR 单调 | 43.55 → 39.08 → 36.42 → 34.32 dB |
 | 关 PCM 后码流无 `pcm_flag` | `trace_headers`：`pcm_enabled_flag=0` |
 | 编码端重建 == ffmpeg 解码 | 128×64 / 256×128 / 640×384 三尺寸下 **35/35 模式** 与 **多 CTB 模式决策** 均 `maxdiff=0`（`NO_DBLOCK=1` + `-skip_loop_filter all` 的干净路径） |
+| **色度 U/V** | 编码端 recon 与 ffmpeg 解码逐像素一致（5 形态 × 4 QP 全 `maxdiff=0`）；彩色 grad / hstep 图 U/V PSNR **37.9~50.6 dB** |
 | **工业级硬解** | d3d11va 真实启用，64/64 组 Y 平面与软解逐位一致，worst Y-PSNR 32.33 dB |
 
 **根因修复记录**（避免重复踩）：编码端重建与解码端发散的真因是
@@ -79,7 +81,7 @@ I_PCM 档保持自包含、`diag_hevc.py` 字节级锁死，未被拆分污染�
 `tests/unit/image/test_intra_prediction.cpp`（81 断言）锁死，oracle 取自
 ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 
-### 2.3 真实缺口（2026-11-09 代码 + 实测）
+### 2.3 真实缺口（2026-11-10 代码 + 实测）
 
 **帧内预测本身已做完**：`predict_intra_luma_4x4` 覆盖 0..34 全部 35 个模式，
 `choose_intra_luma_mode_8x8` 按真实 TU 次序逐 CU 做 SSD 模式决策，三套系数扫描
@@ -89,12 +91,12 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | --- | --- | --- |
 | ~~P0-5~~ **已修（2026-11-10）** | 跨 CTB 行的 **bottom-left 扩展参考** | 根因是 `end_of_tiles_y` 被误当成整帧高度：FFmpeg `hevcdec.c:2753` 它是**当前 CTB 行底部**，故每个 CTB 行最后一行的 TU 关闭 bottom-left 扩展（`mvs.c:58`）。编码端按 `pic_h` 判定会读下一 CTB 行尚未编码的 `rec` 区。改为按 `min(((y0>>6)<<6)+64, pic_h)` 判定后，35 模式在 128×64 / 256×128 / 640×384 全部 `recon == dec` maxdiff=0，默认模式决策已**放开此前排除的 mode 0/2..9**。注：此前文档写的「top-right」是误判——坏的是用 L 参考的 2..9，用 T 参考的 26..34 一直正常。 |
 | P1 | 8×8 / 16×16 / 32×32 TU、`transform_skip` | SPS `log2_diff_max_min_transform_block_size = 0`（MaxTb=4px）；`transform.cpp` 只有 4×4 DCT-II / DST-VII。 |
-| P1 | 色度预测与色度残差 | `cbf_cb/cr` 恒 0、`rec.u/v` 恒 128、语法写 `intra_chroma_pred_mode=4`(DM)。彩色内容会丢色度。 |
+| ~~P1~~ **已完成（2026-11-10）** | 色度预测与色度残差 | DM 模式色度预测（复用亮度 35 模式逻辑 + `c_idx` 语义）、4×4 色度 DCT-II、`qPi→qPc` 色度 QP、`cbf_cb/cr` 与 U/V 残差 CABAC（`c_idx>0` 固定 ctx 偏移）全部落地。5 形态 × 4 QP 的 `recon U/V == ffmpeg dec U/V` maxdiff=0，彩色图 U/V PSNR 37.9~50.6 dB。 |
 | P3 | DBF 精确化 | `deblocking.cpp` 是 bS 恒 2、仅亮度、单 tc 的近似，与 FFmpeg 差 maxdiff≈4（只影响编码端 recon，不进码流）；SAO 在 SPS 中关闭。 |
 | P2 | 阶段二 | `inter_prediction` / `motion_estimate` / `dpb` / `sao` / `rd_optimization` / `bitstream_control` **全仓库 0 实现文件**；`VideoEncodeMode::Inter` 显式返回空串（fail-loud 契约，不是半成品）。"P 帧功能清理"的结论是：没有可清理的代码，需要的是把该占位语义写进公开头并锁定（已完成）。 |
 | P4 | MP4 路径 QP | `EncodeOptions::video_qp` 已可配置，但 `encode_mp4` 尚未透传。 |
 
-### 2.4 本轮修复记录（2026-11-09，均为真 bug）
+### 2.4 本轮修复记录（2026-11-09 ~ 11-10，均为真 bug）
 
 1. **系数扫描随模式切换**（根因）：FFmpeg `hevcdec.c:1396-1403` 由亮度模式隐式选
    `SCAN_VERT`(6..14) / `SCAN_HORIZ`(22..30) / `SCAN_DIAG`；旧实现固定 DIAG，
@@ -125,9 +127,17 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
    「分配整帧 + 整帧 memcpy」（4K 约 12 MB × 32640 CU ≈ 390 GB），是 564 秒/帧的主因。
    改为复用持久缓冲、每次只同步预测真正会读的 9×9 邻域窗口（窗口外 `POS()` 从不访问），
    语义逐位不变；实测 **39.1 秒/帧**，码流 62 KB，d3d11va 与软解 Y 平面仍 maxdiff=0。
+9. **色度预测与色度残差（2026-11-10）**：此前 `cbf_cb/cr` 恒 0、`rec.u/v` 恒 128，
+   彩色内容全变灰度。按 FFmpeg `hevcdec.c:1484-1506` 在第 4 个亮度 TU（blk_idx==3）
+   之后写 U/V 残差，`cabac.c` 的 `c_idx>0` 上下文偏移（last_sig +15、sig_coeff +27、
+   greater1 +16、greater2 +4），色度用 DCT-II 与 `qPi→qPc` QP。预测侧踩到两处
+   c_idx 专属语义：`pred_template.c:123-126` 的 `size_in_tbs` 色度为 2（亮度 1），
+   以及 `:515/:542` 的 mode 10/26 后处理仅亮度生效；修正后彩色图 U/V 从 21 dB
+   升到 38~50 dB，全 QP `recon U/V == dec U/V` maxdiff=0。
 
 **新增回归**：`tests/unit/image/test_hevc_scan.cpp`（扫描表双射、模式→扫描映射边界、
-3 套扫描的残差语法往返、模式决策确定性与越界回退）。
+3 套扫描的残差语法往返、模式决策确定性与越界回退、CTB 行底 bottom-left 关闭语义、
+色度残差 ctx 绝对偏移与往返、色度跳过亮度专属 DC 后处理）。
 
 ---
 
@@ -238,9 +248,10 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
 ```
 [已完成] P0-1~P0-4：35 模式 + 三套扫描 + MPM 修正 + SSD 模式决策
 [已完成] P0-5：CTB 行底 bottom-left 可用性对齐，放开 mode 0/2..9，三尺寸 35/35 全绿
-[已完成] 模式决策性能：4K 单帧 564 s → 39.1 s（14.4×），语义不变、硬解仍 maxdiff=0
+[已完成] 模式决策性能：4K 单帧 564 s → 41.8 s（13.5×，含色度残差），语义不变、硬解仍 maxdiff=0
+[已完成] 色度预测与色度残差：DM + DCT-II + c_idx CABAC，U/V 逐像素一致
    ↓
-P1（色度预测/残差 → 8×8 TU → transform_skip）
+P1（8×8 / 16×16 / 32×32 TU → transform_skip）
    ↓
 P2（DPB → ME → inter_prediction → I+P+P；G5 扩成 3 帧序列硬解）
    ↓

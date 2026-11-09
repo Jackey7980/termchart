@@ -152,8 +152,9 @@ IntraModeSignal signal_intra_mode(int target_mode, const MpmCandidates& cands) {
 
 void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                             int x0, int y0,
-                            int pic_w, int pic_h, std::uint8_t* dst) {
-    // 逐式对齐 FFmpeg hevc/pred_template.c 的 intra_pred(size=2, c_idx=0)。
+                            int pic_w, int pic_h, std::uint8_t* dst,
+                            ChromaPredPlane chroma) {
+    // 逐式对齐 FFmpeg hevc/pred_template.c 的 intra_pred(size=2)。
     // HEVC 的亮度帧内预测在 TU 粒度进行（PU 只携带模式）：8x8 CU 用
     // PART_2Nx2N 时整块单一亮度模式，但预测按 4 个 4x4 TU 各做一次，每个 TU
     // 用自身 (x0,y0) 定位参考样本。ffmpeg 解码端同构，故编码端预测与之逐字节一致
@@ -173,11 +174,21 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     // 本编码器单 slice 覆盖全帧，ctb_left/up_flag 等价于“CTB 不在首列/首行”，
     // 合并后 cand_left == (x0 > 0)、cand_up == (y0 > 0)（x0/y0 为图像坐标）。
     // 同一 CU 内先解出的 TU 已写回 rec，正是 ffmpeg 读到的重建样本。
+    const bool is_chroma = (chroma.rec != nullptr);
+    // 色度 TU：FFmpeg 对色度调用 ff_hevc_set_neighbour_available 时仍传【亮度】
+    // 坐标 xBase/yBase 与 nPbW=nPbH=8（4 色度像素 × 2），邻居判定用亮度 CTB 64；
+    // 但 POS 采样的是色度平面，坐标 /2、步长用色度 stride。
+    const int nb_w = is_chroma ? 2 * size : size;
+    const int nb_h = is_chroma ? 2 * size : size;
+    const int px = is_chroma ? (x0 >> 1) : x0;
+    const int py = is_chroma ? (y0 >> 1) : y0;
+    const int pw = is_chroma ? (pic_w >> 1) : pic_w;
+    const int ph = is_chroma ? (pic_h >> 1) : pic_h;
     const int x0b = x0 & 63, y0b = y0 & 63;
     const int na_left        = (x0 > 0);
     const int na_up          = (y0 > 0);
-    const int na_up_right    = (((x0b + size) == 64) ? (na_up && !y0b) : na_up) &&
-                               ((x0 + size) < pic_w);
+    const int na_up_right    = (((x0b + nb_w) == 64) ? (na_up && !y0b) : na_up) &&
+                               ((px + size) < pw);
     // end_of_tiles_y 是【当前 CTB 行的底部】，不是整帧高度：
     //   FFmpeg hevcdec.c:2753  lc->end_of_tiles_y = FFMIN(y_ctb + ctb_size, sps->height)
     //   FFmpeg mvs.c:58       cand_bottom_left = ((y0+nPbH) >= end_of_tiles_y) ? 0 : cand_left
@@ -186,10 +197,14 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     // 恰好一致，多 CTB 行时编码端会读到 rec 的未编码区，与 FFmpeg 的填充值分叉，
     // 表现为 mode 0/2..9（依赖 L[4..] 的正角度模式）整帧重建错位。
     const int ctb_bottom = std::min(((y0 >> 6) << 6) + 64, pic_h);
-    const int na_bottom_left = ((y0 + size) >= ctb_bottom) ? 0 : na_left;
+    const int na_bottom_left = ((y0 + nb_h) >= ctb_bottom) ? 0 : na_left;
 
-    const int tb_mask = 15;        // (1<<(log2_ctb(6)-log2_min_tb(2)))-1
-    const int size_in_tbs = 1;     // size(=4) >> log2_min_tb_size(=2)
+    const int tb_mask = 15;        // (1<<(log2_ctb(6)-log2_min_tb(2)))-1（亮度坐标）
+    // FFmpeg pred_template.c:123-126：size_in_tbs = (size << hshift) >> log2_min_tb。
+    // 4:2:0 色度 hshift/vshift 均为 1 ⇒ 色度为 2、亮度为 1。该值参与
+    // cand_up_right / cand_bottom_left 的 z-scan 可用性比较，色度沿用 1 会让
+    // 角度模式的扩展参考在若干 CU 之后与解码端分叉。
+    const int size_in_tbs = is_chroma ? 2 : 1;
     auto zscan = [](int x, int y) {
         int z = 0;
         for (int i = 0; i < 4; ++i) {
@@ -213,13 +228,16 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     int cand_up_right    = na_up_right && (cur_tb_addr > z_up_right);
     int cand_bottom_left = na_bottom_left && (cur_tb_addr > z_bottom_left);
 
-    const int top_right_size   = std::min(x0 + size2, pic_w) - (x0 + size);
-    const int bottom_left_size = std::min(y0 + size2, pic_h) - (y0 + size);
+    const int top_right_size   = std::min(px + size2, pw) - (px + size);
+    const int bottom_left_size = std::min(py + size2, ph) - (py + size);
 
     // POS 按 TU 位置 (x0,y0) 采样重建平面 rec（含负偏移），与 ffmpeg 的
     // src[(x) + stride*(y)] 同义；扩展参考同样用 TU 位置，不跨 CU。
-    const std::uint8_t* src = rec + static_cast<std::size_t>(y0) * stride + x0;
-    const auto POS = [&](int x, int y) -> int { return src[x + y * stride]; };
+    const int plane_stride = is_chroma ? chroma.stride : stride;
+    const std::uint8_t* src = is_chroma
+        ? chroma.rec + static_cast<std::size_t>(py) * plane_stride + px
+        : rec + static_cast<std::size_t>(y0) * stride + x0;
+    const auto POS = [&](int x, int y) -> int { return src[x + y * plane_stride]; };
 
     if (cand_up_left) { L[-1] = POS(-1, -1); T[-1] = L[-1]; }
     if (cand_up)
@@ -276,9 +294,11 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
             for (int x = 0; x < size; ++x) put(x, y, dc);
         // 亮度且 nTbS < 32 时无条件做首行/首列边界滤波（FFmpeg pred_template.c:451-457
         // 与 HEVC 8.4.4.2.5 的 both-available 分支同式）；与“是否图像边界”无关。
-        put(0, 0, (L[0] + 2 * dc + T[0] + 2) >> 2);
-        for (int x = 1; x < size; ++x) put(x, 0, (T[x] + 3 * dc + 2) >> 2);
-        for (int y = 1; y < size; ++y) put(0, y, (L[y] + 3 * dc + 2) >> 2);
+        if (!is_chroma) {
+            put(0, 0, (L[0] + 2 * dc + T[0] + 2) >> 2);
+            for (int x = 1; x < size; ++x) put(x, 0, (T[x] + 3 * dc + 2) >> 2);
+            for (int y = 1; y < size; ++y) put(0, y, (L[y] + 3 * dc + 2) >> 2);
+        }
     } else {  // 角度模式 2..34
         static const int ap[] = {32, 26, 21, 17, 13, 9, 5, 2, 0, -2, -5, -9, -13, -17, -21,
                                  -26, -32, -26, -21, -17, -13, -9, -5, -2, 0, 2, 5, 9, 13,
@@ -308,7 +328,9 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                 else
                     for (int x = 0; x < size; ++x) put(x, y, ref[x + idx + 1]);
             }
-            if (mode == 26)
+            // FFmpeg pred_template.c:515：mode 26 的首列后处理带 c_idx==0，
+            // 色度不做（与 DC 首行/首列滤波、mode 10 同属亮度专属）。
+            if (mode == 26 && !is_chroma)
                 for (int y = 0; y < size; ++y)
                     put(0, y, std::clamp(T[0] + ((L[y] - L[-1]) >> 1), 0, 255));
         } else {  // 水平类（参考 left）
@@ -329,7 +351,8 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                 else
                     for (int y = 0; y < size; ++y) put(x, y, ref[y + idx + 1]);
             }
-            if (mode == 10)
+            // FFmpeg pred_template.c:542：mode 10 的首行后处理同样仅 c_idx==0。
+            if (mode == 10 && !is_chroma)
                 for (int x = 0; x < size; ++x)
                     put(x, 0, std::clamp(L[0] + ((T[x] - T[-1]) >> 1), 0, 255));
         }

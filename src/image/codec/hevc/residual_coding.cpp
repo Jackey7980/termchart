@@ -101,8 +101,17 @@ void level_base(int m, int first_gt1, const int* gt1, int gt2, int nb,
 
 }  // namespace
 
-std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanIdx scan_idx) {
+std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok,
+                                     ScanIdx scan_idx, int c_idx) {
     if (ok) *ok = true;
+    // FFmpeg cabac.c / log2_trafo_size==2 的色度上下文偏移（c_idx>0）：
+    //   last_significant_coeff_x/y_prefix ctx_offset 15（亮度 0）
+    //   significant_coeff_flag scf_offset 27、greater1 +16、greater2 +4
+    const int d_last = c_idx ? 15 : 0;
+    const int d_sig  = c_idx ? 27 : 0;
+    const int d_gt1  = c_idx ? 16 : 0;
+    const int d_gt2  = c_idx ? 4 : 0;
+
     int last = -1;
     for (int n = 15; n >= 0; --n)
         if (coeff[n] != 0) { last = n; break; }
@@ -116,10 +125,10 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanId
     // （FFmpeg cabac.c:1222-1223），故编码端必须预先交换写入顺序。
     const int lx = st.swap_last_xy ? cy : cx;
     const int ly = st.swap_last_xy ? cx : cy;
-    for (int i = 0; i < lx; ++i) o.push_back({kCtxLastSigCoeffX + i, 1});
-    if (lx < 3) o.push_back({kCtxLastSigCoeffX + lx, 0});
-    for (int i = 0; i < ly; ++i) o.push_back({kCtxLastSigCoeffY + i, 1});
-    if (ly < 3) o.push_back({kCtxLastSigCoeffY + ly, 0});
+    for (int i = 0; i < lx; ++i) o.push_back({kCtxLastSigCoeffX + d_last + i, 1});
+    if (lx < 3) o.push_back({kCtxLastSigCoeffX + d_last + lx, 0});
+    for (int i = 0; i < ly; ++i) o.push_back({kCtxLastSigCoeffY + d_last + i, 1});
+    if (ly < 3) o.push_back({kCtxLastSigCoeffY + d_last + ly, 0});
 
     // significant_coeff_flag：单 CG，last 位置隐含为 1 不写。
     int idx[16] = {};
@@ -130,11 +139,11 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanId
     if (last >= 1) {
         for (int n = last - 1; n > 0; --n) {
             const int sig = coeff[n] != 0 ? 1 : 0;
-            o.push_back({kCtxSigCoeffFlag + st.ctx_map[n], sig});
+            o.push_back({kCtxSigCoeffFlag + d_sig + st.ctx_map[n], sig});
             if (sig) idx[nb++] = n;
         }
         const int sig0 = coeff[0] != 0 ? 1 : 0;
-        o.push_back({kCtxSigCoeffFlag, sig0});  // decode_0 用 93 + scf_offset(0)
+        o.push_back({kCtxSigCoeffFlag + d_sig, sig0});  // 色度 +27
         if (sig0) idx[nb++] = 0;
     }
 
@@ -144,7 +153,7 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanId
     const int m8 = nb < 8 ? nb : 8;
     for (int m = 0; m < m8; ++m) {
         const int f = abs_level(coeff[idx[m]]) > 1 ? 1 : 0;
-        o.push_back({kCtxCoeffAbsGreater1 + gctx, f});
+        o.push_back({kCtxCoeffAbsGreater1 + d_gt1 + gctx, f});
         gt1[m] = f;
         if (f) mask |= 1 << m;
         gctx = next_greater1_ctx(gctx, f);
@@ -155,7 +164,7 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanId
     int gt2 = 0;
     if (first_gt1 >= 0) {
         gt2 = abs_level(coeff[idx[first_gt1]]) > 2 ? 1 : 0;
-        o.push_back({kCtxCoeffAbsGreater2, gt2});
+        o.push_back({kCtxCoeffAbsGreater2 + d_gt2, gt2});
     }
 
     // sign_data_hiding_flag=0：每个 significant 系数一个 bypass 符号位。
@@ -201,18 +210,26 @@ std::vector<Bin> encode_residual_4x4(const std::int16_t* coeff, bool* ok, ScanId
 }
 
 bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff,
-                         std::size_t* consumed, ScanIdx scan_idx) {
+                         std::size_t* consumed, ScanIdx scan_idx, int c_idx) {
     for (int i = 0; i < 16; ++i) coeff[i] = 0;
+    // FFmpeg cabac.c / log2_trafo_size==2 的色度上下文偏移（c_idx>0）：
+    //   last_significant_coeff_x/y_prefix ctx_offset 15（亮度 0）
+    //   significant_coeff_flag scf_offset 27、greater1 +16、greater2 +4
+    const int d_last = c_idx ? 15 : 0;
+    const int d_sig  = c_idx ? 27 : 0;
+    const int d_gt1  = c_idx ? 16 : 0;
+    const int d_gt2  = c_idx ? 4 : 0;
+
     const auto& st = scan4x4_tables(scan_idx);
     Reader r{bins, count};
     int lx = 0, ly = 0, v = 0;
     while (lx < 3) {
-        if (!r.decision(kCtxLastSigCoeffX + lx, v)) return false;
+        if (!r.decision(kCtxLastSigCoeffX + d_last + lx, v)) return false;
         if (!v) break;
         ++lx;
     }
     while (ly < 3) {
-        if (!r.decision(kCtxLastSigCoeffY + ly, v)) return false;
+        if (!r.decision(kCtxLastSigCoeffY + d_last + ly, v)) return false;
         if (!v) break;
         ++ly;
     }
@@ -224,10 +241,10 @@ bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff
     idx[0] = last;
     if (last >= 1) {
         for (int n = last - 1; n > 0; --n) {
-            if (!r.decision(kCtxSigCoeffFlag + st.ctx_map[n], v)) return false;
+            if (!r.decision(kCtxSigCoeffFlag + d_sig + st.ctx_map[n], v)) return false;
             if (v) idx[nb++] = n;
         }
-        if (!r.decision(kCtxSigCoeffFlag, v)) return false;
+        if (!r.decision(kCtxSigCoeffFlag + d_sig, v)) return false;
         if (v) idx[nb++] = 0;
     }
 
@@ -235,7 +252,7 @@ bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff
     int gctx = 1, mask = 0;
     const int m8 = nb < 8 ? nb : 8;
     for (int m = 0; m < m8; ++m) {
-        if (!r.decision(kCtxCoeffAbsGreater1 + gctx, v)) return false;
+        if (!r.decision(kCtxCoeffAbsGreater1 + d_gt1 + gctx, v)) return false;
         gt1[m] = v;
         if (v) mask |= 1 << m;
         gctx = next_greater1_ctx(gctx, v);
@@ -244,7 +261,7 @@ bool decode_residual_4x4(const Bin* bins, std::size_t count, std::int16_t* coeff
     for (int m = 0; m < m8; ++m)
         if (mask & (1 << m)) { first_gt1 = m; break; }
     int gt2 = 0;
-    if (first_gt1 >= 0 && !r.decision(kCtxCoeffAbsGreater2, gt2)) return false;
+    if (first_gt1 >= 0 && !r.decision(kCtxCoeffAbsGreater2 + d_gt2, gt2)) return false;
 
     int sign[16] = {};
     for (int m = 0; m < nb; ++m)

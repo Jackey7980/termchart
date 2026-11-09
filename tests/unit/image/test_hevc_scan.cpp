@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "src/image/codec/hevc/cabac_context.hpp"
 #include "src/image/codec/hevc/intra_prediction.hpp"
 #include "src/image/codec/hevc/residual_coding.hpp"
 
@@ -124,4 +125,46 @@ TEST_CASE("hevc: bottom-left extension is disabled at each CTB row bottom") {
     predict_intra_luma_4x4(2, rec.data(), kStride, 8, 60, kStride, kH, b);
 
     for (int i = 0; i < 16; ++i) CHECK(a[i] == b[i]);
+}
+
+TEST_CASE("hevc: chroma residual uses c_idx>0 CABAC offsets and round-trips") {
+    // FFmpeg cabac.c：4x4 色度 TU 的 last_sig x/y 用 ctx_offset=15（亮度 0）。
+    // 只测自往返不够（两侧一起错也会过），必须同时锁绝对 ctx 值。
+    for (const auto& p : kPatterns) {
+        for (int c_idx : {1, 2}) {
+            bool ok = false;
+            const auto bins = encode_residual_4x4(p.data(), &ok, kScanDiag, c_idx);
+            CHECK(ok);
+            CHECK_FALSE(bins.empty());
+            CHECK(bins.front().ctx >= kCtxLastSigCoeffX + 15);
+            CHECK(bins.front().ctx <= kCtxLastSigCoeffX + 15 + 3);
+            std::int16_t back[16] = {};
+            std::size_t used = 0;
+            CHECK(decode_residual_4x4(bins.data(), bins.size(), back, &used,
+                                      kScanDiag, c_idx));
+            CHECK(used == bins.size());
+            for (int i = 0; i < 16; ++i) CHECK(back[i] == p[i]);
+        }
+        // 同一份系数：亮度首 bin 不能误用色度偏移
+        const auto luma = encode_residual_4x4(p.data(), nullptr, kScanDiag, 0);
+        const auto chroma = encode_residual_4x4(p.data(), nullptr, kScanDiag, 1);
+        CHECK(luma.front().ctx == chroma.front().ctx - 15);
+    }
+}
+
+TEST_CASE("hevc: chroma prediction skips luma-only DC post-filter") {
+    // FFmpeg pred_template.c 的 DC 首行/首列 3*dc+2 与 mode 10/26 后处理
+    // 都带 c_idx==0 条件。色度参考非平坦时，整块输出必须恒等于 dc。
+    constexpr int kStride = 16;
+    std::vector<std::uint8_t> plane(kStride * kStride, 128);
+    for (int x = 0; x < kStride; ++x)
+        plane[static_cast<std::size_t>(kStride) + x] = 200;  // 色度参考行 y=1
+    for (int y = 0; y < kStride; ++y)
+        plane[static_cast<std::size_t>(y) * kStride + 1] = 60;  // 参考列 x=1
+    plane[static_cast<std::size_t>(kStride) + 1] = 100;
+    std::uint8_t dst[16] = {};
+    predict_intra_luma_4x4(1, plane.data(), kStride, 4, 4,
+                           kStride * 2, kStride * 2, dst,
+                           ChromaPredPlane{plane.data(), kStride});
+    for (int i = 1; i < 16; ++i) CHECK(dst[i] == dst[0]);
 }

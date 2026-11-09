@@ -27,10 +27,21 @@ void predict_intra(int mode, int n, const std::uint8_t* top,
 // 每个 TU 用 PU 模式、以其自身 (x0,y0) 定位参考样本；邻居可用性也按 TU 原点求值
 // （FFmpeg hls_transform_unit → ff_hevc_set_neighbour_available(lc, x0, y0,
 // trafo_size, trafo_size)），同 CU 内先解出的 TU 已写回 rec，是合法参考源。
+// 色度预测复用同一套参考样本构造/35 模式逻辑：x0,y0,pic_w,pic_h 仍传【亮度】
+// 坐标与尺寸（FFmpeg ff_hevc_set_neighbour_available 对色度也传 xBase/yBase 与
+// 亮度 CTB 尺度），POS 则按 >>1 采样独立的色度重建平面；色度 c_idx>0 不做
+// DC 首行/首列边界滤波（pred_template.c 条件为 c_idx==0 && nTbS<32）。
+struct ChromaPredPlane {
+    const std::uint8_t* rec = nullptr;  // nullptr ⇒ 走亮度路径
+    int stride = 0;
+};
+
 // rec 为帧内预测用的【滤波前重建】平面，stride 为行距（字节）。
+// 末尾 chroma 默认为空 ⇒ 亮度路径行为逐位不变。
 void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                             int x0, int y0,
-                            int pic_w, int pic_h, std::uint8_t* dst);
+                            int pic_w, int pic_h, std::uint8_t* dst,
+                            ChromaPredPlane chroma = {});
 
 // HEVC 8.4.4.2.3 / FFmpeg hevcdec.c:luma_intra_pred_mode 的 MPM 候选表推导。
 // cand_left / cand_up 为左、上 PU 的帧内模式；不可用时由调用方传 INTRA_DC(1)。

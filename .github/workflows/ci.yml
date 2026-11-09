@@ -58,7 +58,9 @@ jobs:
 
   macos:
     name: macos (clang)
-    runs-on: macos-14
+    # macos-14 在本仓库账户下连续多次「0 步骤即 cancelled」（job 从未分配 runner），
+    # 改用当前 GitHub 默认标签，让第三个工具链哨兵真正跑起来。
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: 配置
