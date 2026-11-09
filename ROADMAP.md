@@ -13,11 +13,13 @@
 3. **规格以 `结构.md` 为准**：本文件只回答"什么时候做、按什么顺序做"，不重复回答"做成什么样"。文件清单、层号、依赖、职责一律查 `结构.md`。
 4. **生成物禁手改**：`结构.md` 附一/附四、`docs/reference/module_matrix.md`、`single_include/`、`tests/golden/` 全部由脚本生成，改了生成器必须重跑。
 5. **修订流程**：调整计划走 PR，在本文件顶部 `CHANGELOG` 记录一行，不直接改勾选状态以外的东西。
+6. **勾选清单是阶段规划快照**：历史阶段 0–8 的多数 `[ ]` 已由后续修订记录覆盖（见 CHANGELOG 与 `docs/reference/backlog.md`）。2026-11-10 按文件实证补勾 10 项，其余保留待核；判断「做没做」以代码 + CHANGELOG 最新行 + 子文档为准，不要按未勾选数量推断进度。
 
 ### 修订记录
 
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
+| 2026-11-10 | **修掉 P0-5 真 bug + 4K 模式决策提速 + 历史勾选真值补勾**。① **P0-5 根因**：FFmpeg `hevcdec.c:2753` 的 `end_of_tiles_y` 是**当前 CTB 行底部**，`mvs.c:58` 据此在每个 CTB 行最后一行关闭 bottom-left 扩展；编码端旧代码按整帧高度判定，读了下一 CTB 行尚未编码的重建区，导致 `mode 0/2..9` 在多 CTB 行尺寸下 `recon != dec`。改为按 CTB 行底判定后，128×64 / 256×128 / 640×384 三尺寸 **35/35 模式与模式决策均 maxdiff=0**，默认模式决策**放开此前排除的 10 个模式**；此前文档误写成「top-right」已更正为 bottom-left。② **4K 性能**：`choose_intra_luma_mode_8x8` 原本每 CU 整帧分配 + 整帧 memcpy（12 MB × 32640 CU ≈ 390 GB），改为复用持久缓冲、只同步预测会读的 9×9 邻域窗口（窗口外 `POS()` 从不访问，语义逐位不变），**564 s → 39.1 s（14.4×）**，码流 62049 B，d3d11va 与软解 Y 平面仍 maxdiff=0。③ 按文件实证补勾 10 项历史规划条目（dsl/interaction/widget/app/plugin/chart 子目录/示例/单头生成器/Doxyfile/gui 头），并在「如何使用」新增第 6 条说明勾选清单是阶段规划快照；阶段 9 的 C/D 仍如实未勾。**验证**：G0 6/6、G5 硬解 64/64、QP 扫描体积 1114→744→579→419 B 与 PSNR 43.55→39.08→36.42→34.32 dB 双单调、doctest 全绿、ctest 91/91、check_all 全绿。 | 9 |
 | 2026-11-09 | **阶段 9 真值同步 + CI 联网复核 + AV1 交接边界**。① 把阶段 9 的 A1–A4（拆基建/参数集/CABAC/ctb_tree）与 B1–B3 及出口按代码实证勾选：35 角度模式、三套系数扫描、逐 CU SSD 模式决策、标准 4K d3d11va 硬解均已落地；C（P 帧）/D（DBF·SAO·RDO）保持未勾选，真实缺口见 `hevc_engineering_roadmap.md` §2.3。② 联网复核最新 CI：**ci 工作流 8 job 中 7 success + `macos (clang)` cancelled**（整条 run 因此显示 cancelled，不是编译失败；`guardrails (py3.12)` 已转绿）；docs 工作流 build success / deploy failure，日志明确为 **GitHub Pages 未启用（404 Not Found）**，纯仓库设置，与代码无关。③ **AV1 由用户亲自开启**：本轮不写任何 AV1 实现，`VideoCodec::AV1` 继续 `is_video_codec_supported=false` + `encode_mp4` 返回空串的 fail-loud 契约（单测锁住），只备好交接材料（AV1 规范 OBU 头 / `leb128()` 章节、本机 ffmpeg 具备 libaom-av1 等真实编码器可作 oracle）。④ 历史阶段 0–8 的勾选清单仍滞后于代码，本次只同步阶段 9 已实证项，不越界改其它条目。 | 9 |
 | 2026-11-09 | **HEVC 阶段一收口：35 种帧内模式全通、模式决策落地、I_PCM 黄金基线复原**。① 补齐帧内模式→系数扫描的隐式映射（FFmpeg `hevcdec.c:1396-1403`：模式 6..14 用 SCAN_VERT、22..30 用 SCAN_HORIZ，其余 DIAG），三套扫描表 + `significant_coeff_flag` ctx 表 + `last_significant_coeff_x/y` 交换成套切换；② 修 MPM 左邻居跨 CTB 边界误判（`ctb_left_flag || x0b`，`x0>0` 即可用）；③ 修 `rem_intra_luma_pred_mode` 求逆（prev=0 分支候选表先升序排序）；④ 修 DC 首行/首列边界滤波（无条件 `3*dc+2` 式）与通用 `predict_intra` 语义；⑤ 参数集按档位分离（`log2_diff_max_min_transform_block_size`：PCM=3 / Intra=0）、`CabacEncoder::init_contexts` 复原用 `init()`，**G0 回到 6/6 GREEN**（20433 B / sha `5d4adef5…` / `dec_U[0:16]` 逐字节相等 / `Y[0]==16` / FFmpeg 3 帧 0 error）；⑥ 新增逐 CU SSD 模式决策（35 模式按真实 TU 次序模拟重建链），QP26 Y-PSNR 38.40→39.14 dB；默认候选集暂排除 mode 0 / 2..9（跨 CTB 行 top-right 扩展参考未与 FFmpeg 帧缓冲对齐，登记为 P0-5）；⑦ `Inter` 档核实无任何实现，保持显式返回空串的 fail-loud 契约并同步公开头注释。**验证**：G0 6/6、G5 硬解 64/64（hardware=ACTIVE，worst Y-PSNR 32.33 dB）、35/35 模式 `recon == dec` maxdiff=0、256×128 多 CTB 模式决策 `recon == dec`、QP 22/26/30/34 体积与 PSNR 单调、doctest **1418 用例 / 238946 断言 0 失败**、ctest **91/91**、`check_all` 全绿（451 头独立编译 / 生成物一致 / 分层通过）。 | 9 |
 | 2026-11-07 | **新增 HEVC 编码器演进路线（阶段 9）**：I_PCM 保留为显式档位、不参与分层拆分。新增 `VideoEncodeMode{Pcm,Intra,Inter}`（默认 `Pcm`），`encode_hevc_pcm_annexb` 自包含；`diag_hevc.py` 钉死 6 条严格验收（逐字节 `dec_U[0:16]==enc_U[0:16]`、`Y[0]==16`、FFmpeg 3 帧 0 error、码流 20430B / sha 精确），**6/6 GREEN**。H.264 侧同步修正帧内 CAVLC 码流语法与重建一致性（intra CBP 表、TrailingOnes、level 遍历范围、8×8 象限块序、DC 边界预测等）：16 组分辨率 FFmpeg 0 error、纯色 MAE 0、渐变亮度 Y-MAE < 2。**进度口径**：阶段 9 条目暂不勾选——单测与 `check_headers.sh` 未补，按「勾选即完成」四条件执行。 | 9、16 |
@@ -341,10 +343,10 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [ ] `dsl/` 全套：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff` `dsl_registry`
+- [x] `dsl/` 全套：`parser_base` `lexer` `ast` `mermaid` `mermaid_flow` `mermaid_sequence` `mermaid_class` `mermaid_state` `graphviz_dot` `plantuml` `d2` `table_markdown` `csv_sniff` `dsl_registry`
   > 已落地（2026-10-12，**14/14 全部**）：以上 14 个文件齐备。图产出方言经 `dsl_registry` 登记 6 个（flowchart / class / state / dot / plantuml / d2），`mermaid_sequence` 与表格类（`table_markdown` / `csv_sniff`）因产物不是图模型而**刻意不登记**（各有独立类型：`AstSequence`、`document::TableModel`）。
   > 并行分工：`mermaid_*` 三方言与 lexer/parser_base/ast/registry 由主线会话完成；`graphviz_dot` + `plantuml`、`table_markdown` + `csv_sniff` 由两个并行工作包完成，接口契约由 `ast.hpp` / `parser_base.hpp` / `lexer.hpp` 冻结，两包只新增自己的文件（收口时才动 `dsl_registry.cpp` 与 `tests/CMakeLists.txt`）。
-- [ ] `interaction/` 深化：`tooltip` `crosshair` `highlight` `zoom` `pan` `select` `brush` `legend_toggle` `immediate`
+- [x] `interaction/` 深化：`tooltip` `crosshair` `highlight` `zoom` `pan` `select` `brush` `legend_toggle` `immediate`
   > 九件全部落地（2026-10-12 收口）：`tooltip` `crosshair` `zoom` `pan` 此前已有；本轮补齐 `highlight`（高亮放大）`select`（框选）`brush`（刷选）`legend_toggle`（图例切换）`immediate`（即时模式绑定），各配单测。
 - [x] `examples/21_hover_tooltip.cpp` `22_zoom_pan.cpp` `30_legend_toggle.cpp` `33_mermaid_flowchart.cpp`
   > 四个示例全部存在且进 ctest（21/22 已有，30/33 本轮新增）。
@@ -374,11 +376,11 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
   > `bitmap` 的合成原语与 `convert` 是规格清单外的补充：GUI 侧要缩放/叠加/上传纹理，终端侧的 sixel 缩略与 PNG 拼版同样需要；`convert` 是"图片 → 盲文/密度预览"的唯一实现（Rec.601 亮度，alpha 乘进结果，透明像素在场里是 0 而不是黑斑）。
   > 取舍：`png_encode` 不引入 zlib，用 stored（未压缩）deflate 块换取"零依赖 + 完全合规"，体积约 +0.03%；将来接真 deflate 只换内部实现。已用 Python 参考 zlib 独立校验：IDAT 解压字节数、滤波字节、逐 chunk CRC、`size=` 声明全部吻合。
 - [x] `protocol/`：`protocol`（基类）`sixel`（量化+调色板+RLE）`kitty_graphics`（原始 RGBA+base64 分块）**`iterm2_inline`**（PNG + base64 + OSC 1337）`halfblock_image`（真彩半块）`fallback`（Kitty > Iterm2 > Sixel > HalfBlock > None）`detect`（环境探测，含 WezTerm/Konsole/iTerm 与手动覆盖开关）
-- [ ] `widget/`：`widget` `container` `vbox` `hbox` `grid_layout` `dock` `panel` `border` `scroll` `styles` `style_sheet` `theme` `theme_dark` `theme_light` `theme_mono` `immediate_widget` `reactive`
-- [ ] `app/`：`app` `loop` `animation` `config` `post` `immediate_app` `headless`
-- [ ] `plugin/`：`plugin` `loader` `dynamic` `manifest`
+- [x] `widget/`：`widget` `container` `vbox` `hbox` `grid_layout` `dock` `panel` `border` `scroll` `styles` `style_sheet` `theme` `theme_dark` `theme_light` `theme_mono` `immediate_widget` `reactive`
+- [x] `app/`：`app` `loop` `animation` `config` `post` `immediate_app` `headless`
+- [x] `plugin/`：`plugin` `loader` `dynamic` `manifest`
 - [ ] `api/` 收尾：`quick_line` `quick_bar` `quick_spark` `quick_table` `termchart_full.hpp`
-- [ ] `examples/24_theme_switching.cpp` `25_animation.cpp` `26_realtime_stream.cpp` `27_background_thread.cpp` `39_headless_render.cpp` `40_immediate_mode.cpp` `41_reactive_dashboard.cpp`
+- [x] `examples/24_theme_switching.cpp` `25_animation.cpp` `26_realtime_stream.cpp` `27_background_thread.cpp` `39_headless_render.cpp` `40_immediate_mode.cpp` `41_reactive_dashboard.cpp`
 - [x] `examples/38_image_sixel.cpp`（Bitmap → 探测 → 选协议 → 写 stdout）
 - [x] `tests/unit/protocol/*` `image/*`；`widget/*` `test_plugin.cpp` `test_capability.cpp` 待补
 - [ ] `tests/integration/test_app_loop.cpp` `test_thread_post.cpp` `test_resize.cpp`
@@ -403,14 +405,14 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [ ] `chart/cartesian/` 补齐剩余 16 个：`bubble` `candlestick` `boxplot` `violin` `contour` `step` `errorbar` `waterfall` `gantt` `dumbbell` `ridgeline` `parallel` `mosaic` `qq` `bullet` `streamgraph`
+- [x] `chart/cartesian/` 补齐剩余 16 个：`bubble` `candlestick` `boxplot` `violin` `contour` `step` `errorbar` `waterfall` `gantt` `dumbbell` `ridgeline` `parallel` `mosaic` `qq` `bullet` `streamgraph`
 - [ ] `chart/polar/`（8）/ `statistical/`（11）/ `hierarchical/`（6）/ `financial/`（7）/ `flow/`（2）/ `geo/`（4）/ `text/`（4）/ `indicator/`（5）
 - [ ] `graph/diagrams/` 补齐剩余 15 个
 - [ ] `graph/layout/` `metro` `cluster`；`graph/route/` `bundling`
-- [ ] 单头文件生成：`gen_single_header.py` + `single_include/`（去重、拓扑排序、匿名命名空间隔离）
+- [x] 单头文件生成：`gen_single_header.py` + `single_include/`（去重、拓扑排序、匿名命名空间隔离）
 - [ ] `docs/` 全套：顶层 + `design/`（18）+ `guide/`（18）+ `charts/`（10）+ `graph/`（8）+ `reference/`（10）+ `contrib/`（5）
 - [ ] `tools/gen_golden.py` / `gen_gallery.py` / `gen_api_docs.py` / `gen_colormap.py`
-- [ ] `Doxyfile` + `mkdocs.yml`
+- [x] `Doxyfile` + `mkdocs.yml`
 - [ ] `.github/workflows/`：release / docs / sanitizers / fuzzing / license
 - [ ] `examples/` 补齐剩余（05–13、18–19、23、28、29、31、42–54 + `single/`）
 - [ ] `LICENSES/` + `assets/`（**`assets/colormaps/turbo.dat` 已落地**；maps、logo、banner 待补）
@@ -435,7 +437,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 - [ ] 复用层：`render/scene_renderer` `render/style_map`（Scene → tk canvas primitives）
 - [ ] 重写层：`widget_tree/`（node/widget/container/mount/reconcile）、`native_loop/`（loop/event/dispatcher/invalidate/timer）、`layout/`（layout/constraint/flex/grid）、`backend_tk/`（backend/tk_window/tk_canvas/tk_event_map）
-- [ ] `gui.hpp` `version.hpp` `fwd.hpp`
+- [x] `gui.hpp` `version.hpp` `fwd.hpp`
 
 #### 关键约束
 
@@ -484,8 +486,8 @@ slice_header → parameter_sets → nal_unit → ep_nal → bit_writer
       （8×8 TU / `transform_skip` 仍未做，见 `hevc_engineering_roadmap.md` §2.3 P1）
 - [x] B2 `transquant` 残差/重建；`intra_prediction` 参考样本填充、边界平滑，**35 角度模式全实现**
 - [x] B3 `cabac_syntax` 补 `cbf_luma/cb/cr`、`last_sig_coeff_x/y`、`coeff_abs_level_*` 与 `residual_coding` bin 序列
-- [x] **出口**：FFmpeg 0 error、PSNR 39.14 dB > 35 dB（QP=26）；64×64 图体积比 I_PCM 降 97.06%；
-      QP 22/26/30/34 体积 1111→748→564→421 B 与 PSNR 43.54→39.14→36.47→34.32 dB 双单调；
+- [x] **出口**：FFmpeg 0 error、PSNR 39.08 dB > 35 dB（QP=26）；64×64 图体积比 I_PCM 降 97.06%；
+      QP 22/26/30/34 体积 1114→744→579→419 B 与 PSNR 43.55→39.08→36.42→34.32 dB 双单调；
       `trace_headers` 确认 `pcm_enabled_flag=0`；G5 硬解 64/64、标准 4K d3d11va 与软解逐字节一致
 
 **C. 阶段二：P 帧与参考帧管理**

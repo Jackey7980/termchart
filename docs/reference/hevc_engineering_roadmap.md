@@ -65,12 +65,12 @@ I_PCM 档保持自包含、`diag_hevc.py` 字节级锁死，未被拆分污染�
 | 判据（ROADMAP:484 / 清单三） | 2026-11-09 实测 |
 | --- | --- |
 | FFmpeg 0 error | rc=0 |
-| PSNR > 35 dB（固定 QP=26） | **39.14 dB**（grad / 128×64 / 默认开 DBF + 模式决策）；固定 DC 时代 38.40 dB，关 DBF 时代 40.28 dB 是另一口径，不可混用 |
+| PSNR > 35 dB（固定 QP=26） | **39.08 dB**（grad / 128×64 / 默认开 DBF + 35 模式决策）；固定 DC 时代 38.40 dB、关 DBF 时代 40.28 dB 是另一口径，不可混用 |
 | 64×64 体积比 I_PCM 降 ≥80% | 6353 B → 187 B，**降 97.06%**（固定 DC 基线）；模式决策后体积略增但降幅仍 >90% |
-| QP 22/26/30/34 体积单调 | 1111 → 748 → 564 → 421 B |
-| QP 22/26/30/34 PSNR 单调 | 43.54 → 39.14 → 36.47 → 34.32 dB |
+| QP 22/26/30/34 体积单调 | 1114 → 744 → 579 → 419 B |
+| QP 22/26/30/34 PSNR 单调 | 43.55 → 39.08 → 36.42 → 34.32 dB |
 | 关 PCM 后码流无 `pcm_flag` | `trace_headers`：`pcm_enabled_flag=0` |
-| 编码端重建 == ffmpeg 解码 | **35/35 模式** 与 **256×128 多 CTB 模式决策** 均 `maxdiff=0`（`NO_DBLOCK=1` + `-skip_loop_filter all` 的干净路径） |
+| 编码端重建 == ffmpeg 解码 | 128×64 / 256×128 / 640×384 三尺寸下 **35/35 模式** 与 **多 CTB 模式决策** 均 `maxdiff=0`（`NO_DBLOCK=1` + `-skip_loop_filter all` 的干净路径） |
 | **工业级硬解** | d3d11va 真实启用，64/64 组 Y 平面与软解逐位一致，worst Y-PSNR 32.33 dB |
 
 **根因修复记录**（避免重复踩）：编码端重建与解码端发散的真因是
@@ -87,7 +87,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 
 | 编号 | 缺口 | 证据 / 现状 |
 | --- | --- | --- |
-| P0-5 | 跨 CTB 行的 **top-right 扩展参考** | 256×128 下固定模式实测 `mode 0 / 2..9` 的 `recon != ffmpeg dec`（FFmpeg 侧读 CTB 边缘/emulated edge 填充，编码端 `rec` 无同语义）。默认模式决策已排除这 10 个模式，保证任意尺寸逐像素一致；`TERMCHART_HEVC_FIXED_MODE` 逐模式 oracle 仍可复现。修好后应放开候选集并重跑 35 模式 × 多尺寸门禁。 |
+| ~~P0-5~~ **已修（2026-11-10）** | 跨 CTB 行的 **bottom-left 扩展参考** | 根因是 `end_of_tiles_y` 被误当成整帧高度：FFmpeg `hevcdec.c:2753` 它是**当前 CTB 行底部**，故每个 CTB 行最后一行的 TU 关闭 bottom-left 扩展（`mvs.c:58`）。编码端按 `pic_h` 判定会读下一 CTB 行尚未编码的 `rec` 区。改为按 `min(((y0>>6)<<6)+64, pic_h)` 判定后，35 模式在 128×64 / 256×128 / 640×384 全部 `recon == dec` maxdiff=0，默认模式决策已**放开此前排除的 mode 0/2..9**。注：此前文档写的「top-right」是误判——坏的是用 L 参考的 2..9，用 T 参考的 26..34 一直正常。 |
 | P1 | 8×8 / 16×16 / 32×32 TU、`transform_skip` | SPS `log2_diff_max_min_transform_block_size = 0`（MaxTb=4px）；`transform.cpp` 只有 4×4 DCT-II / DST-VII。 |
 | P1 | 色度预测与色度残差 | `cbf_cb/cr` 恒 0、`rec.u/v` 恒 128、语法写 `intra_chroma_pred_mode=4`(DM)。彩色内容会丢色度。 |
 | P3 | DBF 精确化 | `deblocking.cpp` 是 bS 恒 2、仅亮度、单 tc 的近似，与 FFmpeg 差 maxdiff≈4（只影响编码端 recon，不进码流）；SAO 在 SPS 中关闭。 |
@@ -115,6 +115,17 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
    为避免 P0-5 破坏多 CTB 一致性，默认排除 mode 0/2..9，仍有 25 个可用模式，
    QP26 PSNR 38.40→39.14 dB。
 
+7. **P0-5 根因修复（2026-11-10）**：`hevcdec.c:2753` 的 `end_of_tiles_y` 是**当前 CTB 行底部**
+   （`FFMIN(y_ctb + ctb_size, height)`），`mvs.c:58` 据此在每个 CTB 行最后一行关闭
+   bottom-left 扩展；编码端旧代码按整帧 `pic_h` 判定，读了下一 CTB 行尚未编码的 `rec`。
+   改为按 CTB 行底判定后，35 模式在 128×64 / 256×128 / 640×384 全部逐像素一致，
+   默认模式决策恢复全 35 模式（不再排除 mode 0/2..9）。此前文档把问题写成 top-right
+   是误判，已一并更正。
+8. **4K 模式决策性能（2026-11-10）**：`choose_intra_luma_mode_8x8` 原本每个 CU 都
+   「分配整帧 + 整帧 memcpy」（4K 约 12 MB × 32640 CU ≈ 390 GB），是 564 秒/帧的主因。
+   改为复用持久缓冲、每次只同步预测真正会读的 9×9 邻域窗口（窗口外 `POS()` 从不访问），
+   语义逐位不变；实测 **39.1 秒/帧**，码流 62 KB，d3d11va 与软解 Y 平面仍 maxdiff=0。
+
 **新增回归**：`tests/unit/image/test_hevc_scan.cpp`（扫描表双射、模式→扫描映射边界、
 3 套扫描的残差语法往返、模式决策确定性与越界回退）。
 
@@ -137,7 +148,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | P0-2 | `cabac_syntax.cpp` | MPM 推导按 8.4.4.2.3 实现（左/上 PU 模式、`candModeList`），`prev_intra_luma_pred_flag` / `mpm_idx` / `rem_intra_luma_pred_mode` 真正按选中模式写 | 单测：3 种 MPM 分支的 bin 序列 |
 | P0-3 | `ctb_tree.cpp` / `hevc_encode.cpp` | 维护 `tab_ipm`（每 PU 的模式），CTB 边界按 FFmpeg `_hevcdec.c:2276` 把 `cand_up` 强制 DC | G5 全矩阵 + 8 形态逐位一致 |
 | P0-4 | `intra_prediction.cpp` / `hevc_encode.cpp` | 逐 CU SSD 模式决策（模拟完整重建链），替换 `kDcMode` 硬编码 | **已达成**：QP26 PSNR 38.40→39.14 dB，QP 扫描体积/PSNR 仍单调 |
-| P0-5 | `intra_prediction.cpp` / `residual_coding.cpp` | 对齐跨 CTB 行 top-right 扩展参考（FFmpeg 帧缓冲 / emulated edge 语义），修好后放开默认决策里被排除的 mode 0/2..9 | 256×128 + 640×384 下 35/35 固定模式与模式决策均 `recon == dec` maxdiff=0；G5 64/64 保持 |
+| P0-5 **已完成** | `intra_prediction.cpp` | 按 `end_of_tiles_y`（当前 CTB 行底部）判 bottom-left 可用性，放开 mode 0/2..9 | **已达成**：三尺寸 35/35 + 模式决策 maxdiff=0；G5 64/64 保持 |
 
 **风险**：MPM 是"共同误解"高发区 —— 编码端与 ffmpeg 用同一份误解时自往返全过、
 外部解码全错。P0-2 必须用 `trace_headers` 逐字段核对模式 bin，不能只跑自测。
@@ -226,8 +237,8 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
 
 ```
 [已完成] P0-1~P0-4：35 模式 + 三套扫描 + MPM 修正 + SSD 模式决策
-   ↓
-P0-5（跨 CTB top-right 扩展参考）→ 放开 mode 0/2..9，35 模式 × 多尺寸全绿
+[已完成] P0-5：CTB 行底 bottom-left 可用性对齐，放开 mode 0/2..9，三尺寸 35/35 全绿
+[已完成] 模式决策性能：4K 单帧 564 s → 39.1 s（14.4×），语义不变、硬解仍 maxdiff=0
    ↓
 P1（色度预测/残差 → 8×8 TU → transform_skip）
    ↓

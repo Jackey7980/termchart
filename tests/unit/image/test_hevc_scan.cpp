@@ -101,3 +101,27 @@ TEST_CASE("hevc: intra mode decision is deterministic, in range, and content-awa
     CHECK(choose_intra_luma_mode_8x8(ramp.data(), kSize, ramp.data(), kSize,
                                      60, 16, kSize, kSize, 26) == 1);
 }
+
+TEST_CASE("hevc: bottom-left extension is disabled at each CTB row bottom") {
+    // FFmpeg hevcdec.c:2753 的 end_of_tiles_y = FFMIN(y_ctb + ctb_size, height)，
+    // mvs.c:58 据此在每个 CTB 行最后一行 TU 关闭 bottom-left 扩展。
+    // 因此 CTB 首行最后一个 TU（y0=60, size=4 => y0+4 == 64）的预测
+    // 绝不能受下一 CTB 行（y=64..71）重建内容的影响。
+    constexpr int kStride = 128;
+    constexpr int kH = 128;
+    std::vector<std::uint8_t> rec(static_cast<std::size_t>(kStride) * kH, 40);
+    std::uint8_t a[16] = {}, b[16] = {};
+
+    for (int y = 64; y < 72; ++y)
+        for (int x = 0; x < kStride; ++x)
+            rec[static_cast<std::size_t>(y) * kStride + x] = 200;
+    // mode 2 是正角度、用 L 参考，预测会读到 L[7]（bottom-left 扩展区）。
+    predict_intra_luma_4x4(2, rec.data(), kStride, 8, 60, kStride, kH, a);
+
+    for (int y = 64; y < 72; ++y)
+        for (int x = 0; x < kStride; ++x)
+            rec[static_cast<std::size_t>(y) * kStride + x] = 0;
+    predict_intra_luma_4x4(2, rec.data(), kStride, 8, 60, kStride, kH, b);
+
+    for (int i = 0; i < 16; ++i) CHECK(a[i] == b[i]);
+}

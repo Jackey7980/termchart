@@ -178,7 +178,15 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     const int na_up          = (y0 > 0);
     const int na_up_right    = (((x0b + size) == 64) ? (na_up && !y0b) : na_up) &&
                                ((x0 + size) < pic_w);
-    const int na_bottom_left = ((y0 + size) >= pic_h) ? 0 : na_left;
+    // end_of_tiles_y 是【当前 CTB 行的底部】，不是整帧高度：
+    //   FFmpeg hevcdec.c:2753  lc->end_of_tiles_y = FFMIN(y_ctb + ctb_size, sps->height)
+    //   FFmpeg mvs.c:58       cand_bottom_left = ((y0+nPbH) >= end_of_tiles_y) ? 0 : cand_left
+    // 即每个 CTB 行最后一行的 TU 都关掉 bottom-left 扩展，不读下一 CTB 行
+    // （那里在光栅解码顺序下尚未解码）。旧实现按整帧 pic_h 判定，单 CTB 行
+    // 恰好一致，多 CTB 行时编码端会读到 rec 的未编码区，与 FFmpeg 的填充值分叉，
+    // 表现为 mode 0/2..9（依赖 L[4..] 的正角度模式）整帧重建错位。
+    const int ctb_bottom = std::min(((y0 >> 6) << 6) + 64, pic_h);
+    const int na_bottom_left = ((y0 + size) >= ctb_bottom) ? 0 : na_left;
 
     const int tb_mask = 15;        // (1<<(log2_ctb(6)-log2_min_tb(2)))-1
     const int size_in_tbs = 1;     // size(=4) >> log2_min_tb_size(=2)
@@ -333,24 +341,29 @@ int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
                                int x0, int y0, int pic_w, int pic_h, int qp) {
     if (x0 < 0 || y0 < 0 || x0 + 8 > pic_w || y0 + 8 > pic_h) return 1;  // INTRA_DC
 
-    // 逐 TU 预测要读左/上/右上/左下邻域，故在完整重建平面的副本上模拟，
-    // 保证候选模式看到的「块外已重建样本」与最终编码一字不差。
-    std::vector<std::uint8_t> trial(static_cast<std::size_t>(pic_w) *
-                                    static_cast<std::size_t>(pic_h));
-    for (int y = 0; y < pic_h; ++y)
-        std::memcpy(&trial[static_cast<std::size_t>(y) * pic_w],
-                    &rec[static_cast<std::size_t>(y) * rec_stride],
-                    static_cast<std::size_t>(pic_w));
+    // 逐 TU 预测要读左/上/右上/左下邻域，故在重建平面的副本上模拟，保证候选模式
+    // 看到的「块外已重建样本」与最终编码一字不差。
+    //
+    // 性能：4K 下每个 CU 都「分配整帧 + 整帧 memcpy」约 12 MB × 32640 CU ≈ 390 GB，
+    // 是模式决策 564 秒/帧的主因。predict_intra_luma_4x4 的 POS() 读取范围严格落在
+    // (x0-1..x0+7, y0-1..y0+7) 这个 9x9 窗口内（左上角、上方 4 + top-right 4、
+    // 左侧 4 + bottom-left 4），窗口外的值从不参与预测。故改为复用持久缓冲，
+    // 只在尺寸变化时分配，每次调用仅同步该窗口；语义与整帧副本逐位相同。
+    static thread_local std::vector<std::uint8_t> trial;
+    const std::size_t total = static_cast<std::size_t>(pic_w) * static_cast<std::size_t>(pic_h);
+    if (trial.size() != total) trial.assign(total, 0);
+    for (int y = y0 - 1; y <= y0 + 7; ++y) {
+        if (y < 0 || y >= pic_h) continue;
+        for (int x = x0 - 1; x <= x0 + 7; ++x) {
+            if (x < 0 || x >= pic_w) continue;
+            trial[static_cast<std::size_t>(y) * pic_w + x] =
+                rec[static_cast<std::size_t>(y) * rec_stride + x];
+        }
+    }
 
     int best_mode = 1;
     long long best_ssd = 1LL << 60;
     for (int mode = 0; mode < 35; ++mode) {
-        // 跨 CTB 行时 mode 0(Planar) / 2..9 需要 top-right 扩展参考；实测在多 CTB
-        // 尺寸下这些模式的编码端重建与 FFmpeg 解码不一致（FFmpeg 侧读的是帧缓冲
-        // 的 CTB 边缘填充，编码器 rec 没有同样的边缘语义，见 P0-5）。
-        // 默认决策暂不选它们，保证任意尺寸下 enc-recon == dec 逐像素成立；
-        // 逐模式 oracle（TERMCHART_HEVC_FIXED_MODE）不受此限制。
-        if (mode == 0 || (mode >= 2 && mode <= 9)) continue;
         // 每个候选模式都从同一份「本 CU 尚未重建」的基准出发（只回滚本 CU 8x8）。
         for (int y = 0; y < 8; ++y)
             std::memcpy(&trial[static_cast<std::size_t>(y0 + y) * pic_w + x0],
