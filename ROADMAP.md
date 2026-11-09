@@ -18,6 +18,7 @@
 
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
+| 2026-11-09 | **阶段 9 真值同步 + CI 联网复核 + AV1 交接边界**。① 把阶段 9 的 A1–A4（拆基建/参数集/CABAC/ctb_tree）与 B1–B3 及出口按代码实证勾选：35 角度模式、三套系数扫描、逐 CU SSD 模式决策、标准 4K d3d11va 硬解均已落地；C（P 帧）/D（DBF·SAO·RDO）保持未勾选，真实缺口见 `hevc_engineering_roadmap.md` §2.3。② 联网复核最新 CI：**ci 工作流 8 job 中 7 success + `macos (clang)` cancelled**（整条 run 因此显示 cancelled，不是编译失败；`guardrails (py3.12)` 已转绿）；docs 工作流 build success / deploy failure，日志明确为 **GitHub Pages 未启用（404 Not Found）**，纯仓库设置，与代码无关。③ **AV1 由用户亲自开启**：本轮不写任何 AV1 实现，`VideoCodec::AV1` 继续 `is_video_codec_supported=false` + `encode_mp4` 返回空串的 fail-loud 契约（单测锁住），只备好交接材料（AV1 规范 OBU 头 / `leb128()` 章节、本机 ffmpeg 具备 libaom-av1 等真实编码器可作 oracle）。④ 历史阶段 0–8 的勾选清单仍滞后于代码，本次只同步阶段 9 已实证项，不越界改其它条目。 | 9 |
 | 2026-11-09 | **HEVC 阶段一收口：35 种帧内模式全通、模式决策落地、I_PCM 黄金基线复原**。① 补齐帧内模式→系数扫描的隐式映射（FFmpeg `hevcdec.c:1396-1403`：模式 6..14 用 SCAN_VERT、22..30 用 SCAN_HORIZ，其余 DIAG），三套扫描表 + `significant_coeff_flag` ctx 表 + `last_significant_coeff_x/y` 交换成套切换；② 修 MPM 左邻居跨 CTB 边界误判（`ctb_left_flag || x0b`，`x0>0` 即可用）；③ 修 `rem_intra_luma_pred_mode` 求逆（prev=0 分支候选表先升序排序）；④ 修 DC 首行/首列边界滤波（无条件 `3*dc+2` 式）与通用 `predict_intra` 语义；⑤ 参数集按档位分离（`log2_diff_max_min_transform_block_size`：PCM=3 / Intra=0）、`CabacEncoder::init_contexts` 复原用 `init()`，**G0 回到 6/6 GREEN**（20433 B / sha `5d4adef5…` / `dec_U[0:16]` 逐字节相等 / `Y[0]==16` / FFmpeg 3 帧 0 error）；⑥ 新增逐 CU SSD 模式决策（35 模式按真实 TU 次序模拟重建链），QP26 Y-PSNR 38.40→39.14 dB；默认候选集暂排除 mode 0 / 2..9（跨 CTB 行 top-right 扩展参考未与 FFmpeg 帧缓冲对齐，登记为 P0-5）；⑦ `Inter` 档核实无任何实现，保持显式返回空串的 fail-loud 契约并同步公开头注释。**验证**：G0 6/6、G5 硬解 64/64（hardware=ACTIVE，worst Y-PSNR 32.33 dB）、35/35 模式 `recon == dec` maxdiff=0、256×128 多 CTB 模式决策 `recon == dec`、QP 22/26/30/34 体积与 PSNR 单调、doctest **1418 用例 / 238946 断言 0 失败**、ctest **91/91**、`check_all` 全绿（451 头独立编译 / 生成物一致 / 分层通过）。 | 9 |
 | 2026-11-07 | **新增 HEVC 编码器演进路线（阶段 9）**：I_PCM 保留为显式档位、不参与分层拆分。新增 `VideoEncodeMode{Pcm,Intra,Inter}`（默认 `Pcm`），`encode_hevc_pcm_annexb` 自包含；`diag_hevc.py` 钉死 6 条严格验收（逐字节 `dec_U[0:16]==enc_U[0:16]`、`Y[0]==16`、FFmpeg 3 帧 0 error、码流 20430B / sha 精确），**6/6 GREEN**。H.264 侧同步修正帧内 CAVLC 码流语法与重建一致性（intra CBP 表、TrailingOnes、level 遍历范围、8×8 象限块序、DC 边界预测等）：16 组分辨率 FFmpeg 0 error、纯色 MAE 0、渐变亮度 Y-MAE < 2。**进度口径**：阶段 9 条目暂不勾选——单测与 `check_headers.sh` 未补，按「勾选即完成」四条件执行。 | 9、16 |
 | 2026-10-31 | **WebP 无损解码落地（`image` 缺口再收口）**。`decode_image` 的 WebP 分支改走**原生零依赖 VP8L 解码器** `image/webp_decode`（与 `encode_webp` 对称）：从码长独立复算 canonical 码（按位反转发射、按反转键查表），**不信编码器自己的码字**，规避"同错同过"；约束与 v1 编码器输出一一对应——**无 Predictor/ColorTransform/SubtractGreen/ColorIndex 变换、无色彩缓存、单一 htree group**；含变换的外部 WebP 仍回落 stb（可选依赖）或如实 `Unsupported`（fail-loud，不做猜着解）。公开 API `decode_webp(data,size)->Result<Bitmap>`。`tests/unit/image/test_webp_decode.cpp` 9 用例覆盖 4/3 通道回环、渐变全 256 值、容器损坏→`ParseError`、含变换→`Unsupported`；另更新 `test_stb_image`（WebP 已原生，移出"需 stb"断言）。**验证**：doctest 1365 用例 / 233147 断言 0 失败（含 WebP 编解码回环逐像素精确）；ctest 90 项中 89 通过、1 项 `example_33_mermaid_flowchart` Not Run（**预存、他人 mermaid/dsl 在途工作，与本次无关**）。**未做**：外部带变换 WebP 的本地解码（仍依赖 stb）、AVIF 编码/解码、WebP 体积优化（LZ77/变换）。 | 5、16 |
@@ -470,19 +471,22 @@ ctb_tree → intra / inter → transquant → transform / quantize
 slice_header → parameter_sets → nal_unit → ep_nal → bit_writer
 ```
 
-**A. 拆文件（依赖倒序，PCM 码流字节级不变）**
+**A. 拆文件（依赖倒序，PCM 码流字节级不变）** — 2026-11-09 按代码实证勾选
 
-- [ ] A1 拆基建：`bit_writer`、`ep_nal`、`nal_unit`，I_PCM 码流原样迁移
-- [ ] A2 拆 `parameter_sets`（VPS/SPS/PPS 改 `Sps{}`/`Pps{}` + `write()`）与 `slice_header`
-- [ ] A3 拆 `cabac_engine` / `cabac_context`（Table 9-37~9-40、init_values、状态转移）/ `cabac_syntax`
-- [ ] A4 拆 `ctb_tree`（`code_cu` 迁入；`split_cu_flag` 的 ctxInc = `(x0>0)+(y0>0)`）
+- [x] A1 拆基建：`bit_writer`、`ep_nal`、`nal_unit`，I_PCM 码流原样迁移
+- [x] A2 拆 `parameter_sets`（VPS/SPS/PPS 改 `Sps{}`/`Pps{}` + `write()`）与 `slice_header`
+- [x] A3 拆 `cabac_engine` / `cabac_context`（Table 9-37~9-40、init_values、状态转移）/ `cabac_syntax`
+- [x] A4 拆 `ctb_tree`（`code_cu` 迁入；`split_cu_flag` 的 ctxInc = `(x0>0)+(y0>0)`）
 
-**B. 阶段一：真帧内压缩（新增档，不替换 PCM）**
+**B. 阶段一：真帧内压缩（新增档，不替换 PCM）** — 2026-11-09 按代码实证勾选
 
-- [ ] B1 `transform` 4×4/8×8 整数 DCT 蝶形 + `transform_skip`；`quantize` QP→步长、死区、逆量化
-- [ ] B2 `transquant` 残差/重建；`intra_prediction` 参考样本填充、边界平滑，先 DC + Planar + H/V，后补 35 角度
-- [ ] B3 `cabac_syntax` 补 `cbf_luma/cb/cr`、`last_sig_coeff_x/y`、`coeff_abs_level_*` 与 `residual_coding` bin 序列
-- [ ] **出口**：FFmpeg 0 error、PSNR > 35 dB（QP=26）；64×64 图体积比 I_PCM 降 ≥80%；QP 22/26/30/34 下体积与 PSNR 单调；真压缩档码流不再出现 `pcm_flag`
+- [x] B1 `transform` 4×4 整数 DCT-II / DST-VII 与 `quantize` QP→步长、死区、逆量化
+      （8×8 TU / `transform_skip` 仍未做，见 `hevc_engineering_roadmap.md` §2.3 P1）
+- [x] B2 `transquant` 残差/重建；`intra_prediction` 参考样本填充、边界平滑，**35 角度模式全实现**
+- [x] B3 `cabac_syntax` 补 `cbf_luma/cb/cr`、`last_sig_coeff_x/y`、`coeff_abs_level_*` 与 `residual_coding` bin 序列
+- [x] **出口**：FFmpeg 0 error、PSNR 39.14 dB > 35 dB（QP=26）；64×64 图体积比 I_PCM 降 97.06%；
+      QP 22/26/30/34 体积 1111→748→564→421 B 与 PSNR 43.54→39.14→36.47→34.32 dB 双单调；
+      `trace_headers` 确认 `pcm_enabled_flag=0`；G5 硬解 64/64、标准 4K d3d11va 与软解逐字节一致
 
 **C. 阶段二：P 帧与参考帧管理**
 
