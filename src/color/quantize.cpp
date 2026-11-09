@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>  // std::abs(int)：MinGW 靠传递包含能过，Emscripten/libc++ 必须显式包含
 
 namespace termchart::color {
 namespace {
