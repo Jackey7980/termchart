@@ -300,9 +300,10 @@ std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp) {
         if (static_cast<int>(f.width()) != W || static_cast<int>(f.height()) != H)
             return std::string{};
     }
-    // 非 PCM 路径的 coding_tree 不做 CTB 边界部分块，要求尺寸为 64 的整数倍；
-    // 不满足时显式返回空（fail-loud，不静默降级成 PCM）。
-    if (W % 64 != 0 || H % 64 != 0) return std::string{};
+    // 非 64 倍数的尺寸（如标准 4K 的 2160 高）由 to_yuv 补 CTB padding，
+    // 编码树按对齐后的 cw/ch 遍历整块，再由 SPS conformance window 裁掉底部
+    // padding（与 PCM 档同一套口径）。早期版本在此直接返回空，导致标准 4K
+    // 只能走 I_PCM 档、码率爆到 2.5 Gb/s 被硬解按 Level 预算拒绝。
     const int cw = ((W + 63) / 64) * 64;
     const int ch = ((H + 63) / 64) * 64;
 
