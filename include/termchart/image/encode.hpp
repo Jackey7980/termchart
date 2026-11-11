@@ -62,6 +62,11 @@ struct EncodeOptions {
     // 真压缩档（Intra）的 slice QP，合法区间 [0,51]（越界夹到边界）。
     // 默认 26 ⇒ slice_qp_delta=0，与既有码流字节级一致；Pcm 档忽略本字段。
     int video_qp = 26;
+    // 真压缩档（Intra）是否启用 transform_skip：4x4 TU 跳过 DCT/DST，残差直接
+    // 量化。默认 false ⇒ PPS transform_skip_enabled_flag=0、CU 无额外 bin，
+    // 码流与既有基线逐字节一致。显式置 true 才在 PPS 打开开关，并对每个
+    // cbf=1 的 TU 写 transform_skip_flag。Pcm 档忽略本字段。
+    bool hevc_transform_skip = false;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。

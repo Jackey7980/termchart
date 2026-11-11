@@ -38,6 +38,14 @@ struct CuIntra8x8 {
     // U/V 各一个 4x4 色度 TU（8x8 亮度 CU → 4x4 色度）；nullptr/全零时 cbf 应为 0。
     // DM 模式下色度预测模式等于亮度模式，故系数扫描与亮度共用同一套表。
     const std::int16_t* chroma4x4[2] = {nullptr, nullptr};
+
+    // PPS transform_skip_enabled_flag：true 时每个 cbf=1 的 TU 在残差 bin 之前
+    // 多写一个 transform_skip_flag（ffmpeg cabac.c:1138-1140）。默认 false ⇒
+    // bin 序列与既有码流逐字节一致。
+    bool transform_skip_enabled = false;
+    // 每个 TU 的 flag 值（0/1）；仅 cbf=1 时消费。色度 c_idx=1/2 → ctx 48。
+    int transform_skip_luma[4] = {0, 0, 0, 0};
+    int transform_skip_chroma[2] = {0, 0};
 };
 
 // 返回空序列表示输入超出当前支持范围（残差编码失败）。
@@ -54,15 +62,19 @@ struct CuIntra8x8Decoded {
     int cbf_luma[4] = {0, 0, 0, 0};
     std::int16_t luma[4][16] = {};
     std::int16_t chroma[2][16] = {};
+    int transform_skip_luma[4] = {0, 0, 0, 0};
+    int transform_skip_chroma[2] = {0, 0};
 };
 
-// shape 提供不由 bin 决定的 SPS 开关。
+// shape 提供不由 bin 决定的 SPS/PPS 开关。
 struct CuIntra8x8Shape {
     // MaxTb=4x4（本 SPS 配置）时解码端不读 split_transform_flag，
     // 该字段仅保留历史语义，解码不再消费它。
     bool emit_split_transform_flag = true;
     bool emit_chroma_cbf = true;
     ScanIdx scan_idx = kScanDiag;  // 不由 bin 决定，由 CU 的亮度模式推导
+    // PPS transform_skip_enabled_flag：由参数集决定，不随 bin 传输。
+    bool transform_skip_enabled = false;
 };
 
 bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Shape& shape,

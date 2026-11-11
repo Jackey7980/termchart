@@ -138,7 +138,8 @@ static int chroma_qp_from_luma(int qp_y) {
     return kQpC[qp_y - 30];
 }
 
-std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
+std::string build_intra_idr_slice(const Yuv420& f, int slice_qp,
+                                  bool transform_skip_enabled) {
     codec::hevc::SliceHeader sh;
     // SliceQpY = 26 + init_qp_minus26(=0) + slice_qp_delta + QpBdOffsetY(=0, 8bit)。
     // 量化与 CABAC 上下文初始化都用 slice_qp，故 delta 必须同步写进码流，
@@ -171,6 +172,10 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     // TERMCHART_HEVC_FIXED_MODE 强制全帧固定模式，便于用 ffmpeg 解码做逐模式 oracle。
     const char* fixed_mode_env = std::getenv("TERMCHART_HEVC_FIXED_MODE");
     const int kIntraMode = (fixed_mode_env && *fixed_mode_env) ? std::atoi(fixed_mode_env) : -1;
+    // 诊断专用：强制所有亮度 TU 选 transform_skip=1，用于端到端门禁验证「100% skip」
+    // 码流仍能被 ffmpeg 逐像素正确解码。默认关闭，不影响任何生产码流。
+    // 与 TERMCHART_HEVC_FIXED_MODE / TERMCHART_HEVC_NO_DBLOCK 同属验证注入点。
+    const bool kForceSkip = std::getenv("TERMCHART_HEVC_FORCE_SKIP") != nullptr;
     // MPM 候选表由左/上 PU 的【实际模式】决定，且 CTB 首行强制 cand_up=DC，
     // 故不能固定 mpm_idx：维护 tab_ipm 并按 FFmpeg luma_intra_pred_mode 推导。
     const std::size_t cw8 = static_cast<std::size_t>(cw / 8);
@@ -194,16 +199,49 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         const auto scan_idx = codec::hevc::scan_idx_for_intra_mode(mode);
         const auto& st = codec::hevc::scan4x4_tables(scan_idx);
         std::int16_t scan[4][16] = {};
+        int ts_luma[4] = {0, 0, 0, 0};
         for (int i = 0; i < 4; ++i) {
             const int tx = x0 + ((i & 1) ? 4 : 0);
             const int ty = y0 + ((i & 2) ? 4 : 0);
             std::uint8_t pred[16];
             codec::hevc::predict_intra_luma_4x4(mode, rec.y.data(), cw, tx, ty, cw, f.ch, pred);
             std::int16_t raster[16];
-            codec::hevc::encode_tu_4x4(
-                &f.y[static_cast<std::size_t>(ty) * cw + tx], cw, pred,
-                &rec.y[static_cast<std::size_t>(ty) * cw + tx], cw, raster, slice_qp,
-                /*use_dst=*/true);
+            if (!transform_skip_enabled) {
+                // 默认路径逐字保留：码流与既有基线字节级一致。
+                codec::hevc::encode_tu_4x4(
+                    &f.y[static_cast<std::size_t>(ty) * cw + tx], cw, pred,
+                    &rec.y[static_cast<std::size_t>(ty) * cw + tx], cw, raster, slice_qp,
+                    /*use_dst=*/true);
+            } else {
+                // transform_skip：逐 TU 在「DST + 常规量化」与「跳过变换 + 两段式
+                // 逆量化」之间按重建 SSE 选优。两路都必须用紧凑 4x4 临时块试算，
+                // 不能污染 rec（后续 TU 的帧内预测参考它）。
+                std::uint8_t src4[16], r0[16], r1[16];
+                for (int yy = 0; yy < 4; ++yy)
+                    for (int xx = 0; xx < 4; ++xx)
+                        src4[yy * 4 + xx] = f.y[static_cast<std::size_t>(ty + yy) * cw + tx + xx];
+                std::int16_t l0[16], l1[16];
+                codec::hevc::encode_tu(src4, 4, pred, r0, 4, l0, slice_qp, 2,
+                                       /*use_dst=*/true, /*transform_skip=*/false);
+                codec::hevc::encode_tu(src4, 4, pred, r1, 4, l1, slice_qp, 2,
+                                       /*use_dst=*/true, /*transform_skip=*/true);
+                std::int64_t sse0 = 0, sse1 = 0;
+                for (int k = 0; k < 16; ++k) {
+                    const std::int64_t d0 = static_cast<int>(src4[k]) - r0[k];
+                    const std::int64_t d1 = static_cast<int>(src4[k]) - r1[k];
+                    sse0 += d0 * d0;
+                    sse1 += d1 * d1;
+                }
+                const bool use_skip = kForceSkip || (sse1 < sse0);
+                const std::uint8_t* chosen_rec = use_skip ? r1 : r0;
+                const std::int16_t* chosen_lvl = use_skip ? l1 : l0;
+                ts_luma[i] = use_skip ? 1 : 0;
+                for (int yy = 0; yy < 4; ++yy)
+                    for (int xx = 0; xx < 4; ++xx)
+                        rec.y[static_cast<std::size_t>(ty + yy) * cw + tx + xx] =
+                            chosen_rec[yy * 4 + xx];
+                for (int k = 0; k < 16; ++k) raster[k] = chosen_lvl[k];
+            }
             // 变换输出是行主序（idx = 行*4 + 列），残差语法要的是所选扫描序。
             for (int n = 0; n < 16; ++n)
                 scan[i][n] = raster[st.y[n] * 4 + st.x[n]];
@@ -265,6 +303,13 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
         for (int i = 0; i < 4; ++i) cu.luma4x4[i] = scan[i];
         cu.chroma4x4[0] = cscan[0];
         cu.chroma4x4[1] = cscan[1];
+        // PPS 打开 transform_skip 后，每个 cbf=1 的 TU 都要写 flag。亮度按 SSE
+        // 决策，色度保持不 skip（flag=0）——两条分支都进码流，且色度 QP 映射
+        // 与 DC 特性下 skip 无收益。
+        cu.transform_skip_enabled = transform_skip_enabled;
+        for (int i = 0; i < 4; ++i) cu.transform_skip_luma[i] = ts_luma[i];
+        cu.transform_skip_chroma[0] = 0;
+        cu.transform_skip_chroma[1] = 0;
         const auto bins = codec::hevc::encode_cu_intra_8x8(cu);
         for (const auto& b : bins) {
             if (b.ctx == kBypassCtx) cabac.encode_bypass(b.val);
@@ -340,7 +385,8 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp) {
     return rbsp;
 }
 
-std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp) {
+std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp,
+                                     bool transform_skip) {
     if (frames.empty()) return std::string{};
     const int W = static_cast<int>(frames[0].width());
     const int H = static_cast<int>(frames[0].height());
@@ -374,10 +420,12 @@ std::string encode_hevc_intra_annexb(std::span<const Bitmap> frames, int qp) {
     // ⇒ pps_deblocking_filter_disabled_flag 推断为 0，滤波生效，且 slice header 不新增
     // 任何比特）。编码端在重建出口同步实现 DBF（见 build_intra_idr_slice 末尾），
     // 因此 "enc 重建 == dec 输出" 的逐像素判据继续成立。PCM 档同样传 Pps{}，位序列不变。
-    out += make_nal(34, codec::hevc::write_pps(codec::hevc::Pps{}));
+    codec::hevc::Pps pps;
+    pps.transform_skip_enabled = transform_skip;  // 默认 false ⇒ 位序列与 G0 基线一致
+    out += make_nal(34, codec::hevc::write_pps(pps));
     for (const auto& frame : frames) {
         const Yuv420 f = to_yuv(frame);
-        out += make_nal(19, build_intra_idr_slice(f, qp));  // IDR slice
+        out += make_nal(19, build_intra_idr_slice(f, qp, transform_skip));  // IDR slice
     }
     return out;
 }
@@ -427,7 +475,7 @@ std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptio
             return encode_hevc_pcm_annexb(frames);
         case VideoEncodeMode::Intra: {
             const int qp = std::clamp(opts.video_qp, 0, 51);
-            return encode_hevc_intra_annexb(frames, qp);
+            return encode_hevc_intra_annexb(frames, qp, opts.hevc_transform_skip);
         }
         case VideoEncodeMode::Inter:
             // 阶段二才落地；显式返回空串，不静默降级成 PCM。

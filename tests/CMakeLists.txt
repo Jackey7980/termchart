@@ -106,6 +106,8 @@ add_executable(termchart_tests
     unit/image/test_hevc_scan.cpp
     unit/image/test_hevc_deblocking.cpp
     unit/image/test_hevc_qp.cpp
+    unit/image/test_hevc_transform.cpp
+    unit/image/test_hevc_transform_skip.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp

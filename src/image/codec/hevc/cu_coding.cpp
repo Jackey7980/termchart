@@ -46,6 +46,12 @@ std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
         const bool nz = block_nonzero(cu.luma4x4[i]);
         put_cbf_luma(out, 1, nz ? 1 : 0);
         if (!nz) continue;
+        // ffmpeg hls_residual_coding 在 cbf=1 时的第一个语法元素（cabac.c:1138）。
+        // transform_skip_flag=1 只改逆量化/重建，不改残差 bin 序列本身：本 SPS
+        // 不开 range extension ⇒ transform_skip_context/rotation=0，PPS
+        // sign_data_hiding=0，扫描表 / ctx_idx_map / Rice 全部沿用 4x4 路径。
+        if (cu.transform_skip_enabled)
+            put_transform_skip_flag(out, 0, cu.transform_skip_luma[i]);
         bool ok = true;
         const auto rb = encode_residual_4x4(cu.luma4x4[i], &ok, cu.scan_idx);
         if (!ok || rb.empty()) return {};
@@ -59,6 +65,8 @@ std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
         const int cbf = c ? cu.cbf_cr : cu.cbf_cb;
         if (!cbf) continue;
         if (!block_nonzero(cu.chroma4x4[c])) return {};  // cbf=1 却全零是非法码流
+        if (cu.transform_skip_enabled)
+            put_transform_skip_flag(out, c + 1, cu.transform_skip_chroma[c]);
         bool ok = true;
         const auto rb = encode_residual_4x4(cu.chroma4x4[c], &ok, cu.scan_idx, c + 1);
         if (!ok || rb.empty()) return {};
@@ -105,6 +113,8 @@ bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Sha
         if (!get_cbf_luma(c, 1, v)) return false;
         out->cbf_luma[i] = v;
         if (!v) continue;
+        if (shape.transform_skip_enabled &&
+            !get_transform_skip_flag(c, 0, out->transform_skip_luma[i])) return false;
         std::size_t used = 0;
         if (!decode_residual_4x4(c.current(), c.remaining(), out->luma[i], &used,
                                  shape.scan_idx)) return false;
@@ -114,6 +124,8 @@ bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Sha
     for (int ch = 0; ch < 2; ++ch) {
         const int cbf = ch ? out->cbf_cr : out->cbf_cb;
         if (!cbf) continue;
+        if (shape.transform_skip_enabled &&
+            !get_transform_skip_flag(c, ch + 1, out->transform_skip_chroma[ch])) return false;
         std::size_t used = 0;
         if (!decode_residual_4x4(c.current(), c.remaining(), out->chroma[ch], &used,
                                  shape.scan_idx, ch + 1)) return false;

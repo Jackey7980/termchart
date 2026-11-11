@@ -111,6 +111,15 @@ void put_split_transform_flag(std::vector<Bin>& out, int log2_trafo_size, int va
     out.push_back({kCtxSplitTransform + 5 - log2_trafo_size, value});
 }
 
+void put_transform_skip_flag(std::vector<Bin>& out, int c_idx, int value) {
+    // hevc_transform_skip_flag_decode: GET_CABAC(TRANSFORM_SKIP_FLAG_OFFSET + !!c_idx)
+    out.push_back({kCtxTransformSkip + (c_idx ? 1 : 0), value});
+}
+
+bool get_transform_skip_flag(BinCursor& c, int c_idx, int& value) {
+    return c.decision(kCtxTransformSkip + (c_idx ? 1 : 0), value);
+}
+
 bool get_split_cu_flag(BinCursor& c, int ctx_inc, int& value) {
     return c.decision(kCtxSplitCuFlag + ctx_inc, value);
 }

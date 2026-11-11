@@ -65,6 +65,13 @@ void put_cbf_luma(std::vector<Bin>& out, int trafo_depth, int value);
 void put_cbf_cb_cr(std::vector<Bin>& out, int c_idx, int trafo_depth, int value);
 void put_split_transform_flag(std::vector<Bin>& out, int log2_trafo_size, int value);
 
+// transform_skip_flag（ffmpeg cabac.c:850-853）：ctx = 47 + !!c_idx。
+// 只在 pps->transform_skip_enabled_flag 且 log2_trafo_size <=
+// log2_max_transform_skip_block_size 时读写，位置在残差语法最前面
+// （last_significant_coeff_x/y_prefix 之前，cabac.c:1138-1140）。
+void put_transform_skip_flag(std::vector<Bin>& out, int c_idx, int value);
+bool get_transform_skip_flag(BinCursor& c, int c_idx, int& value);
+
 bool get_split_cu_flag(BinCursor& c, int ctx_inc, int& value);
 bool get_part_mode_intra(BinCursor& c, bool& part_2nx2n);
 bool get_prev_intra_luma_pred_flag(BinCursor& c, int& value);

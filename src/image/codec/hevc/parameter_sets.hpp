@@ -47,6 +47,13 @@ struct Pps {
     // slice_deblocking_filter_disabled_flag / beta / tc——**本开关不增加任何一个
     // slice 比特**，只改 PPS。
     bool disable_deblocking = false;
+
+    // transform_skip_enabled_flag（HEVC 7.3.4.3.1）。默认 false ⇒ PPS 位序列与
+    // G0 黄金基线逐字节一致；真压缩档可显式置 true，让每个 cbf=1 的 4x4 TU
+    // 在残差语法最前面多读/写一个 transform_skip_flag bin（ctx 47/48）。
+    // 不写 pps_extension ⇒ ffmpeg 用 log2_max_transform_skip_block_size 默认 2
+    // （ps.c:2243），4x4 TU 满足 log2_trafo_size<=2，无需额外语法位。
+    bool transform_skip_enabled = false;
 };
 
 std::string write_vps(const Vps& vps);

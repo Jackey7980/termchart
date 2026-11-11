@@ -137,7 +137,11 @@ std::string write_pps(const Pps& pps) {
     w.ue(0);      // num_ref_idx_l1_default_active_minus1
     w.se(0);      // init_qp_minus26
     w.u(0, 1);    // constrained_intra_pred_flag
-    w.u(0, 1);    // transform_skip_enabled_flag
+    // transform_skip_enabled_flag：默认 0（G0 基线 / 现有 Intra 档字节不变）；
+    // 置 1 时解码端会在每个 cbf=1 的 transform_unit 的残差语法最前面多读一个
+    // transform_skip_flag（cabac.c:1138-1140）。本 PPS 不写 extension，
+    // 故 log2_max_transform_skip_block_size 走 ffmpeg 默认 2（ps.c:2243）。
+    w.u(pps.transform_skip_enabled ? 1 : 0, 1);
     w.u(0, 1);    // cu_qp_delta_enabled_flag
     w.se(0);      // pps_cb_qp_offset
     w.se(0);      // pps_cr_qp_offset

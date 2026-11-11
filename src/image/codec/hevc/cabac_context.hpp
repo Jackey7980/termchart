@@ -27,6 +27,11 @@ inline constexpr int kCtxIntraChromaPred = 18;
 inline constexpr int kCtxSplitTransform = 37;
 inline constexpr int kCtxCbfLuma = 40;
 inline constexpr int kCtxCbfCbCr = 42;
+// TRANSFORM_SKIP_FLAG_OFFSET：由 CABAC_ELEMS 表累加自洽推出
+//   37(split_tf,3) + 40(cbf_luma,2) + 42(cbf_cb/cr,5) = 47(transform_skip,2)
+//   + 49(rdpcm,2) + 51(rdpcm_dir,2) = 53(last_sig_x,18) ✓
+// ffmpeg cabac.c:852 用 TRANSFORM_SKIP_FLAG_OFFSET + !!c_idx（亮度 47 / 色度 48）。
+inline constexpr int kCtxTransformSkip = 47;
 inline constexpr int kCtxLastSigCoeffX = 53;
 inline constexpr int kCtxLastSigCoeffY = 71;
 inline constexpr int kCtxSigCoeffGroup = 89;
