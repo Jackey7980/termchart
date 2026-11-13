@@ -215,6 +215,32 @@
   转嫁给所有下游分发者）；**不 vendoring** 任何 Qt 二进制，一律 `find_package` 由使用者自备；分发含该后端的
   可执行文件时须附 LGPLv3 全文与 Qt 源码获取途径，并保证终端用户能替换 Qt 库本身。**不要**为省事把本项目改 GPLv3。
   GUI 复用边界是 `scene`(L4) 及以下，不碰终端呈现（`cell`/`SGR`/`CellBuffer`）。
+- [x] **Python 桥强化 + Qt Take 2（2026-11-13）**：
+  `bindings/python/termchart_pybind.cpp` 重写输入层——`x/y/values` 统一接受
+  list / tuple / **numpy.ndarray（零拷贝读缓冲，多 dtype：f32/f64/int/uint）** / **pandas
+  Series·DataFrame 列（`.to_numpy()`，运行时 duck-typed、零编译期依赖）**；新增
+  `plot_df(df,x,y)`、`plot_series(s)`；新增像素输出 `to_rgba/to_rgb`（numpy `(H,W,3/4)` 数组）
+  与 `to_rgba_bytes/to_rgb_bytes`（bytes，无需 numpy）、`to_png_bytes`、`save_png_pixels`
+  （bytes/ndarray → PNG，给 Tkinter/PIL/Qt 再合成用），并对光栅类函数加
+  `py::call_guard<py::gil_scoped_release>()` 释放 GIL；配套 `examples/79_tkinter_demo.py`
+  （PIL → Tk PhotoImage 嵌进 Tk 窗口）、`examples/80_qt_demo.py`、`bindings/python/termchart.pyi`
+  已同步。**`gui_qt` 接 Take 2 句柄注入**：`QtBackend(const NativeSurface&)` + `blit(QPainter&)` /
+  `frame()` / `resize()`（宿主 QWidget 在自己 `paintEvent` 里 `blit`，与 Win32/Cocoa/X11/JNI 同构），
+  另加 `static show_bitmap()` 一键开 Qt 看图窗口；对应 `example/embed_demo_qt.cpp`；Python 侧
+  `show_qt` 在 `TERMCHART_BUILD_GUI_QT=ON` 时由 `bindings/python/CMakeLists.txt` 自动链入并暴露。
+  **未编译验证**：本机无 Qt，Qt 后端 Take 2 / `embed_demo_qt` / Python `show_qt` 仅通过代码审查，
+  与 Cocoa 同档（待带 Qt 的构建/CI 闭环）。其余 Python 桥改动待装 numpy/pandas 后本地编译 + 跑示例闭环。
+- [ ] **Rust 桥 / Java 桥（仅规划，未实现，2026-11-13）**：全库无 `extern "C"` 接口，任何语言桥都需先补
+  一层 C ABI 适配层（`termchart_capi`：纯 POD / 句柄 / `tc_error_handle` 兜底，包 `api::quick` 高层出图）。
+  Java 走 `capi` + JNI glue（通用出图）+ 复用现有 `plugins/gui_jni`（GUI 注入）；Rust 走 `cxx`（`crate`
+  分 `termchart-sys` + `termchart`，ndarray 直接传裸指针零拷贝）。方案见 `docs/design/ffi_plan.md`。
+  **规划归属（2026-11-13 决策）**：`termchart_capi` 列入 **v1.1 规划**；**Rust/Java 搭桥推迟**（不在 v1.1、
+  不在本轮），未来开工时 `搭桥` 在 todo 排**较前**（capi 是其共同前置）。
+- [ ] **`single_include/termchart.hpp` 必须与公开头改动成对提交（工程护栏）**：改公开头（如
+  `include/termchart/chart/series.hpp` 的 `set_points` 移动语义）后必须重跑 `tools/gen_single_header.py`
+  并重生成 `single_include/termchart.hpp`，二者**一并暂存提交**；若只提交公开头、漏掉重生成的单头，
+  CI `check_generated`（guardrails 套件）会红。2026-11-13 并行 Agent 改动中 `series.hpp` 已改、单头已本地
+  重生成但未替其提交，提交时务必捆绑。
 
 ## 六、地理图（`chart/geo`）与地图数据链（2026-10-18 登记）
 

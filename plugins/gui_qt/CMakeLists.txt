@@ -63,6 +63,10 @@ endif()
 
 add_executable(qt_demo example/qt_demo.cpp)
 target_link_libraries(qt_demo PRIVATE termchart_gui_qt)
+
+# Take 2 句柄注入演示：宿主拥有 QWidget，后端只当像素渲染器。
+add_executable(embed_demo_qt example/embed_demo_qt.cpp)
+target_link_libraries(embed_demo_qt PRIVATE termchart_gui_qt)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(qt_demo PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()

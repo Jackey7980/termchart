@@ -11795,6 +11795,10 @@ struct Series {
     std::string name;
     Color color = default_color(DefaultColor::Series);
     std::vector<Point> points;  // 数据坐标 (x, y)
+
+    // 移动语义：把外部已构造好的点集整段搬入，避免一次 vector 拷贝
+    // （Python / 外部桥批量灌数据时尤其有用）。
+    void set_points(std::vector<Point>&& pts) noexcept { points = std::move(pts); }
 };
 
 }  // namespace termchart::chart

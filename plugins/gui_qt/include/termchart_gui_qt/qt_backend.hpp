@@ -32,6 +32,7 @@
 #include <string>
 
 #include "termchart_gui/backend_tk/backend.hpp"
+#include "termchart_gui/backend_tk/native_surface.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"
 
 namespace termchart_gui_qt {
@@ -43,12 +44,31 @@ public:
 
     // width/height 为初始客户区尺寸（像素）；title 为窗口标题。
     QtBackend(std::uint32_t width, std::uint32_t height, std::string title);
+
+    // Take 2：句柄注入。绑定到**用户已创建并拥有**的 QWidget（host.surface 即其指针），
+    // 后端不再创建/销毁窗口，只持一块离线画布；宿主在自己的 paintEvent 里调 blit()
+    // 把当前帧画进去，并把原生事件 inject_event 回传。host.width/height 为初始尺寸。
+    explicit QtBackend(const termchart_gui::NativeSurface& host);
+
     ~QtBackend() override;
     QtBackend(const QtBackend&) = delete;
     QtBackend& operator=(const QtBackend&) = delete;
 
     // QApplication / 窗口是否就绪（无显示环境时构造失败）。
     [[nodiscard]] bool valid() const noexcept;
+
+    // 是否处于「外部句柄注入」模式（用户拥有窗口；析构不销毁该窗口）。
+    [[nodiscard]] bool is_external() const noexcept;
+
+    // Take 2 用：把当前帧（image::Bitmap）整块画进宿主传入的 QPainter（例如宿主
+    // QWidget 的 paintEvent 里）。RGBA 直贴，与 CanvasWidget 同款上屏逻辑。
+    void blit(QPainter& painter);
+
+    // Take 2 用：当前帧像素（RGBA），宿主可据此做再合成 / 导出。
+    [[nodiscard]] const termchart::image::Bitmap& frame() const;
+
+    // Take 2 用：宿主在窗口尺寸变化时调用——重排画布缓冲并投递 Resize 事件。
+    void resize(std::uint32_t width, std::uint32_t height);
 
     // Backend 接口。
     [[nodiscard]] std::unique_ptr<termchart_gui::TkWindow> create_window(
@@ -76,6 +96,11 @@ public:
     // 每帧回调：run_loop 用 QTimer 周期调用，供应用接入自持事件泵（抽干事件 + 重绘）。
     // 见 qt_demo——把"抽干原生事件并路由到控件树"的逻辑挂在这里，由 exec() 循环驱动。
     void set_frame_callback(std::function<void()> cb) noexcept;
+
+    // 便捷入口：开一个独立的 Qt 窗口把一张位图（例如 SceneRenderer 的产物）显示出来，
+    // 阻塞到窗口关闭。供 Python 桥 show_qt 与「只想看一张图」的场景使用；不参与
+    // widget_tree 事件循环。
+    static void show_bitmap(const termchart::image::Bitmap& bitmap, const std::string& title);
 
 private:
     std::unique_ptr<Impl> impl_;

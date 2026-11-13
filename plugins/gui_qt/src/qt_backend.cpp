@@ -20,6 +20,8 @@
 #include <QTimer>
 #include <cstring>
 
+#include "termchart/image/bitmap.hpp"
+
 namespace termchart_gui_qt {
 namespace {
 
@@ -242,6 +244,7 @@ struct QtBackend::Impl {
     std::unique_ptr<CanvasWidget> widget;
     bool running = false;
     bool quit_requested = false;
+    bool external = false;  // Take 2：用户拥有窗口，present() 退化为 no-op
     std::function<void()> frame_cb;  // run_loop 的 QTimer 每帧调用
 
     std::mutex queue_mutex;
@@ -302,6 +305,13 @@ QtBackend::QtBackend(std::uint32_t width, std::uint32_t height, std::string titl
     impl_ = std::move(impl);
 }
 
+QtBackend::QtBackend(const termchart_gui::NativeSurface& host) {
+    auto impl = std::make_unique<Impl>();
+    impl->external = true;
+    impl->canvas = std::make_unique<termchart_gui::BitmapCanvas>(host.width, host.height);
+    impl_ = std::move(impl);
+}
+
 QtBackend::~QtBackend() {
     if (impl_ != nullptr && impl_->widget != nullptr) {
         impl_->widget.reset();  // 先于 canvas 销毁（widget 持有 canvas 引用）
@@ -309,7 +319,50 @@ QtBackend::~QtBackend() {
 }
 
 bool QtBackend::valid() const noexcept {
-    return impl_ != nullptr && impl_->widget != nullptr;
+    if (impl_ == nullptr) {
+        return false;
+    }
+    return impl_->external || impl_->widget != nullptr;
+}
+
+bool QtBackend::is_external() const noexcept {
+    return impl_ != nullptr && impl_->external;
+}
+
+void QtBackend::blit(QPainter& painter) {
+    if (impl_ == nullptr || impl_->canvas == nullptr) {
+        return;
+    }
+    const termchart_gui::Bitmap& px = impl_->canvas->pixels();
+    const int w = static_cast<int>(px.width());
+    const int h = static_cast<int>(px.height());
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    QImage image(w, h, QImage::Format_RGBA8888);
+    const std::size_t rb = static_cast<std::size_t>(px.row_bytes());
+    for (int y = 0; y < h; ++y) {
+        std::memcpy(image.scanLine(y), px.data() + static_cast<std::size_t>(y) * rb, rb);
+    }
+    painter.drawImage(QPoint{0, 0}, image);
+}
+
+const termchart::image::Bitmap& QtBackend::frame() const {
+    static const termchart::image::Bitmap kEmpty;
+    if (impl_ == nullptr || impl_->canvas == nullptr) {
+        return kEmpty;
+    }
+    return impl_->canvas->pixels();
+}
+
+void QtBackend::resize(std::uint32_t width, std::uint32_t height) {
+    if (impl_ == nullptr || impl_->canvas == nullptr) {
+        return;
+    }
+    impl_->canvas->resize(width, height);
+    if (impl_->render_hook) {
+        impl_->render_hook(width, height);
+    }
 }
 
 std::unique_ptr<termchart_gui::TkWindow> QtBackend::create_window(std::uint32_t w,
@@ -386,6 +439,47 @@ void QtBackend::show() noexcept {
     if (impl_ != nullptr && impl_->widget != nullptr) {
         impl_->widget->show();
     }
+}
+
+// 独立的"看图"窗口：把一张位图（如 SceneRenderer 产物）显示出来，阻塞到关闭。
+// 不接入 widget_tree 事件循环，仅供 Python 桥 show_qt 与快速预览。
+class BitmapShowerWidget final : public QWidget {
+public:
+    explicit BitmapShowerWidget(const termchart::image::Bitmap& b, QWidget* parent = nullptr)
+        : QWidget(parent), bmp_(b) {
+        setFixedSize(static_cast<int>(b.width()), static_cast<int>(b.height()));
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        const termchart::image::Bitmap& px = bmp_;
+        const int w = static_cast<int>(px.width());
+        const int h = static_cast<int>(px.height());
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        QImage image(w, h, QImage::Format_RGBA8888);
+        const std::size_t rb = static_cast<std::size_t>(px.row_bytes());
+        for (int y = 0; y < h; ++y) {
+            std::memcpy(image.scanLine(y), px.data() + static_cast<std::size_t>(y) * rb, rb);
+        }
+        QPainter painter(this);
+        painter.drawImage(QPoint{0, 0}, image);
+    }
+
+private:
+    const termchart::image::Bitmap& bmp_;
+};
+
+void QtBackend::show_bitmap(const termchart::image::Bitmap& bitmap, const std::string& title) {
+    QApplication* app = ensure_qapplication();
+    if (app == nullptr) {
+        return;  // 无 QApplication（非 GUI 环境）
+    }
+    BitmapShowerWidget widget(bitmap);
+    widget.setWindowTitle(QString::fromUtf8(title.data(), static_cast<int>(title.size())));
+    widget.show();
+    QApplication::exec();
 }
 
 }  // namespace termchart_gui_qt

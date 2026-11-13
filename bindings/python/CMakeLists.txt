@@ -29,6 +29,12 @@ target_link_libraries(termchart_pybind PRIVATE termchart::termchart)
 target_compile_definitions(termchart_pybind PRIVATE TERMCHART_HAVE_PYBIND11=1)
 termchart_set_warnings(termchart_pybind)
 
+# 可选：与 Qt 后端一并构建时，暴露 termchart.show_qt（开 Qt 窗口出图）。
+if(TERMCHART_BUILD_GUI_QT)
+    target_compile_definitions(termchart_pybind PRIVATE TERMCHART_HAVE_QT=1)
+    target_link_libraries(termchart_pybind PRIVATE termchart_gui_qt)
+endif()
+
 if(WIN32)
     target_link_options(termchart_pybind PRIVATE -static-libgcc -static-libstdc++)
 endif()
