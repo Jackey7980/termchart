@@ -157,3 +157,84 @@ TEST_CASE("hevc deblocking: 水平方向的强滤波（xstride=stride 通路）"
     CHECK(p.get(30, 11) == 140);  // Q3
 }
 
+// ── 2026-11-13 补：色度通路 + 固定大 TU 边界周期 + 自动档真实 TU 边界图 ──
+// 这三项是「开 DBF 时 recon == dec」的前提；期望值同样手工展开公式，
+// 端到端逐像素对拍由 tools/verify_hevc_tu_sizes.py --dblock-on 覆盖。
+
+TEST_CASE("hevc deblocking: 色度 bS=2 弱滤波手工展开（QPc=26）") {
+    Plane u;
+    std::vector<std::uint8_t> cols(kN, 100);
+    for (int x = 8; x < 12; ++x) cols[static_cast<std::size_t>(x)] = 110;
+    u.fill_columns(cols);
+    std::vector<std::uint8_t> v = u.buf;  // V 走同一套公式
+
+    DeblockConfig cfg;
+    cfg.slice_qp = 26;
+    cfg.chroma_qp = 26;  // tc = kTcTable[26 + 2] = 2
+    cfg.edge_period = 8;
+    deblock_frame_chroma(u.buf.data(), v.data(), kN, kN, kN, cfg);
+
+    // x=8 垂直边界：p1=100, p0=100, q0=110, q1=110
+    // delta = clip3(-2, 2, (((110-100)<<2) + 100 - 110 + 4) >> 3) = clip(4) = 2
+    CHECK(u.get(7, 3) == 102);
+    CHECK(u.get(8, 3) == 108);
+    CHECK(v[3 * kN + 7] == 102);
+    CHECK(v[3 * kN + 8] == 108);
+    // 色度只改 p0/q0；其它 8 对齐边界两侧同值 ⇒ delta=0
+    CHECK(u.get(6, 3) == 100);
+    CHECK(u.get(9, 3) == 110);
+    CHECK(u.get(16, 3) == 100);
+}
+
+TEST_CASE("hevc deblocking: 16/32 TU 档内部 8 对齐边不滤波") {
+    auto make_step = [] {
+        Plane p;
+        std::vector<std::uint8_t> cols(kN, 140);
+        for (int x = 0; x < 8; ++x) cols[static_cast<std::size_t>(x)] = 100;
+        p.fill_columns(cols);
+        return p;
+    };
+    Plane a = make_step(), b = make_step();
+    DeblockConfig period8, period16;
+    period8.slice_qp = 51;
+    period8.edge_period = 8;   // 4x4/8x8 TU：x=8 是真 TU 边界
+    period16.slice_qp = 51;
+    period16.edge_period = 16; // 16x16 TU：x=8 是 TU 内部，不该滤
+    deblock_frame_luma(a.buf.data(), kN, kN, kN, period8);
+    deblock_frame_luma(b.buf.data(), kN, kN, kN, period16);
+
+    CHECK(a.get(7, 3) != 100);  // 周期 8：强滤波改了 P0
+    CHECK(b.get(7, 3) == 100);  // 周期 16：整帧不动
+    CHECK(b.get(8, 3) == 140);
+}
+
+TEST_CASE("hevc deblocking: 自动档按真实 TU 边界图只滤标记的边") {
+    auto make_step = [] {
+        Plane p;
+        std::vector<std::uint8_t> cols(kN, 140);
+        for (int x = 0; x < 8; ++x) cols[static_cast<std::size_t>(x)] = 100;
+        p.fill_columns(cols);
+        return p;
+    };
+    constexpr int kGrid = kN / 8;
+    const std::size_t cells = static_cast<std::size_t>(kGrid) * kGrid;
+    std::vector<std::uint8_t> ve(cells, 0), he(cells, 0), zero(cells, 0);
+    for (int gy = 0; gy < kGrid; ++gy) ve[gy * kGrid + 1] = 1;  // 只标 x=8 这条边
+
+    Plane mapped = make_step(), unmapped = make_step();
+    DeblockConfig cfg;
+    cfg.slice_qp = 51;
+    cfg.edge_period = 8;
+    cfg.vert_edge = ve.data();
+    cfg.horz_edge = he.data();
+    cfg.grid_w = kGrid;
+    deblock_frame_luma(mapped.buf.data(), kN, kN, kN, cfg);
+
+    cfg.vert_edge = zero.data();
+    deblock_frame_luma(unmapped.buf.data(), kN, kN, kN, cfg);
+
+    CHECK(mapped.get(7, 3) != 100);   // 标记的边被滤
+    CHECK(unmapped.get(7, 3) == 100); // 全 0 图：一条边都不滤
+    CHECK(unmapped.get(8, 3) == 140);
+}
+

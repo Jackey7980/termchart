@@ -92,7 +92,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | ~~P0-5~~ **已修（2026-11-10）** | 跨 CTB 行的 **bottom-left 扩展参考** | 根因是 `end_of_tiles_y` 被误当成整帧高度：FFmpeg `hevcdec.c:2753` 它是**当前 CTB 行底部**，故每个 CTB 行最后一行的 TU 关闭 bottom-left 扩展（`mvs.c:58`）。编码端按 `pic_h` 判定会读下一 CTB 行尚未编码的 `rec` 区。改为按 `min(((y0>>6)<<6)+64, pic_h)` 判定后，35 模式在 128×64 / 256×128 / 640×384 全部 `recon == dec` maxdiff=0，默认模式决策已**放开此前排除的 mode 0/2..9**。注：此前文档写的「top-right」是误判——坏的是用 L 参考的 2..9，用 T 参考的 26..34 一直正常。 |
 | ~~P1~~ **已完成（2026-11-12）** | 8×8 / 16×16 / 32×32 TU + 自动档 + 大 TU `transform_skip` | 多 CG 残差语法、n×n 帧内预测、CU/transform 树分裂已落地；`tools/verify_hevc_tu_sizes.py` 三模式 360 条码流 ffmpeg 软解 `recon == dec`（`neq=0`）全绿，自动档比最佳单一档省 20.7%（关闭 skip）/ 相对关闭 skip 的最佳固定档省 21.0%（开启 skip）。`transform_skip` 已解除 4×4 互斥：RExt profile（`general_profile_idc=4`）+ `sps_range_extension` 配套开关 + **`pps_range_extension.log2_max_transform_skip_block_size_minus2`**（该字段在 PPS 而非 SPS，旧文档把它写错了）；8/16/32 TU 与色度（4×4 及大 TU 两条路径）都按各自平面 QP 的 RD 选 skip，`--force-skip` 端到端验证 `flag=1` 语法。`trace_headers` 逐字段核对已接入 `tools/verify_hevc_tu_sizes.py`，关闭 skip 的 Main 档核对不写 extension。 |
 | ~~P1~~ **已完成（2026-11-10）** | 色度预测与色度残差 | DM 模式色度预测（复用亮度 35 模式逻辑 + `c_idx` 语义）、4×4 色度 DCT-II、`qPi→qPc` 色度 QP、`cbf_cb/cr` 与 U/V 残差 CABAC（`c_idx>0` 固定 ctx 偏移）全部落地。5 形态 × 4 QP 的 `recon U/V == ffmpeg dec U/V` maxdiff=0，彩色图 U/V PSNR 37.9~50.6 dB。 |
-| P3 | DBF 精确化 | `deblocking.cpp` 是 bS 恒 2、仅亮度、单 tc 的近似，与 FFmpeg 差 maxdiff≈4（只影响编码端 recon，不进码流）；SAO 在 SPS 中关闭。 |
+| ~~P3-1~~ **已完成（2026-11-13）** | DBF 精确化 | 亮度强/弱滤波与 tc 双段本就逐式对齐 FFmpeg（4×4/8×8 档 `maxdiff=0`，旧文档「亮度差≈4」过时）；本轮补齐色度 8.7.2.5 弱滤波、固定档 TU 边界周期、自动档逐 8×8 网格真实边界图，`--dblock-on` 60 组 Y/U/V 全部 `max=0 neq=0`。bS 恒 2 是全帧内码流的规范结论，不是近似。**剩余**：SAO 仍在 SPS 中关闭，RDO / 码率控制（P3-2/3）未开工。 |
 | P2 | 阶段二 | `inter_prediction` / `motion_estimate` / `dpb` / `sao` / `rd_optimization` / `bitstream_control` **全仓库 0 实现文件**；`VideoEncodeMode::Inter` 显式返回空串（fail-loud 契约，不是半成品）。"P 帧功能清理"的结论是：没有可清理的代码，需要的是把该占位语义写进公开头并锁定（已完成）。 |
 | ~~P4~~ **功能已完成（2026-11-13 复核）** | MP4 路径 QP | `encode_mp4` → `encode_hevc_annexb(frames, opts)` → `std::clamp(opts.video_qp, 0, 51)` → `slice_qp_delta` 已全链路透传（旧文档「尚未透传」已更正）；`tests/unit/image/test_hevc_qp.cpp` 覆盖 slice_qp_delta，`test_mp4_encode.cpp` 新增「video_qp 经 MP4 路径透传」用例（QP10/40 码流不同且体积单调）。**注意**：`video_mode` 默认 `Pcm`（I_PCM 档刻意忽略 QP 以保基线字节不变），按 QP 产出必须显式设 `VideoEncodeMode::Intra`。 |
 
@@ -196,7 +196,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 
 | 步骤 | 文件 | 内容 | 验收 |
 | --- | --- | --- | --- |
-| P3-1 | `deblocking.{hpp,cpp}` | bS 计算、β/tc 阈值表、亮度/色度滤波；**编码端 `rec` 必须同步滤波**，否则重建漂移 | 清单五：PSNR +≥0.5 dB 或同 PSNR 体积 −≥5% |
+| ~~P3-1~~ 已完成 | `deblocking.{hpp,cpp}` | bS 判定（全帧内恒 2）、β/tc 表、亮度强/弱滤波、**色度弱滤波**、固定档 TU 边界周期、自动档逐 CU 边界图；编码端 `rec` 同步滤波 | `--dblock-on` 60 组开 DBF 逐像素 `neq=0`；15 组 DBF 开关 Annex-B 字节恒等；单测 10 用例 |
 | P3-2 | `sao.{hpp,cpp}` | EO/BO，先全 off 保证码流合法，再逐模式打开 | 同上 |
 | P3-3 | `rd_optimization.{hpp,cpp}` | SATD/SSD + λ·bits 决定 CU 切分 / 预测模式 / CBF | 关闭 RD 仍合法；打开后体积 −≥10% |
 | P3-4 | `bitstream_control.*`（可选） | 固定 QP → 简单 CBR/VBR | 帧间码率波动收敛 |
@@ -207,7 +207,9 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 编码端重建出口有 `deblock_frame_luma` 近似实现（bS 恒 2、仅亮度、单 tc），与 FFmpeg 差
 `maxdiff≈4`；逐像素门禁 `tools/verify_hevc_tu_sizes.py` 用 `TERMCHART_HEVC_NO_DBLOCK=1`
 + `ffmpeg -skip_loop_filter all` 让两端都关 DBF，故 `recon == dec neq=0` 成立。
-P3-1 要做的是把编码端 DBF 精确化，使**开启 DBF 时**也能逐位一致；G5 的 Y 平面逐位比对保留。
+**P3-1 已于 2026-11-13 完成**：编码端 DBF 精确化后，**开启 DBF 时**同样逐位一致
+（`--dblock-on` 60 组 Y/U/V `max=0 neq=0`）；G5 的 Y 平面逐位比对保留。
+两端都关 DBF 的旧门禁路径也保留，用于隔离「滤波」与「码流语法」两类变量。
 
 ### P4 — 工程收口
 
@@ -259,7 +261,7 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
    ↓
 P2（DPB → ME → inter_prediction → I+P+P；G5 扩成 3 帧序列硬解）
    ↓
-P3（DBF 精确 bS + 色度通路 → SAO → RDO / 码率控制）
+~~P3-1（DBF 色度通路 + TU 边界图）~~ 已完成 2026-11-13 → P3-2 / P3-3（SAO → RDO / 码率控制，未开工）
    ↓
 ~~P4（MP4 QP 透传 / 文档 / ROADMAP 勾选）~~ 已完成 2026-11-13（含 QP 透传单测）
 ```

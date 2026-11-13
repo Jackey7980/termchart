@@ -123,6 +123,23 @@ void filter_luma_edge(std::uint8_t* pix, std::ptrdiff_t xstride, std::ptrdiff_t 
     }
 }
 
+// 8.7.2.5 色度弱滤波（bS=2 帧内边界）：沿边界方向 4 个样本，只改 p0 / q0
+// 各一个样本（亮度强/弱滤波会改 3 个，色度没有强滤波分支）。
+void filter_chroma_edge(std::uint8_t* pix, std::ptrdiff_t xstride,
+                        std::ptrdiff_t ystride, int tc) {
+    if (tc <= 0) return;
+    for (int d = 0; d < 4; ++d) {
+        std::uint8_t* s = pix + d * ystride;
+        const int p1 = static_cast<int>(s[-2 * xstride]);
+        const int p0 = static_cast<int>(s[-1 * xstride]);
+        const int q0 = static_cast<int>(s[0]);
+        const int q1 = static_cast<int>(s[1 * xstride]);
+        const int delta = clip3(-tc, tc, (((q0 - p0) << 2) + p1 - q1 + 4) >> 3);
+        s[-1 * xstride] = static_cast<std::uint8_t>(clip_pixel(p0 + delta));
+        s[0] = static_cast<std::uint8_t>(clip_pixel(q0 - delta));
+    }
+}
+
 }  // namespace
 
 int deblock_beta(int qp, int beta_offset_div2) {
@@ -155,15 +172,80 @@ void deblock_frame_luma(std::uint8_t* y, int width, int height, int stride,
             // （那里以 x0-8 起始时用 left offset；本编码器 offset 恒 0，只影响顺序）
             const int x_end2 = (x_end != width) ? x_end - 8 : x_end;
 
+            const int period = cfg.edge_period;
+            const bool use_map = cfg.vert_edge != nullptr && cfg.horz_edge != nullptr &&
+                                 cfg.grid_w > 0;
             for (int yy = y0; yy < y_end; yy += 8) {
-                // 垂直边界：左边界（x == 0）永不滤波
-                for (int xx = (x0 > 0 ? x0 : 8); xx < x_end; xx += 8)
-                    filter_luma_edge(y + static_cast<std::ptrdiff_t>(yy) * stride + xx, 1, stride,
-                                     beta, tc);
+                const int gy = yy / 8;
+                // 垂直边界：左边界（x == 0）永不滤波；固定档按周期、自动档按
+                // 真实 TU 边界图判定（16/32 TU 内部的 8 对齐边不是 TU/PU 边界）。
+                for (int xx = (x0 > 0 ? x0 : 8); xx < x_end; xx += 8) {
+                    const int gx = xx / 8;
+                    const bool is_edge = use_map
+                        ? (cfg.vert_edge[gy * cfg.grid_w + gx] != 0)
+                        : ((xx % period) == 0);
+                    if (is_edge)
+                        filter_luma_edge(y + static_cast<std::ptrdiff_t>(yy) * stride + xx,
+                                         1, stride, beta, tc);
+                }
                 if (yy == 0) continue;  // 上边界（y == 0）永不滤波
-                for (int xx = (x0 > 0 ? x0 - 8 : 0); xx < x_end2; xx += 8)
-                    filter_luma_edge(y + static_cast<std::ptrdiff_t>(yy) * stride + xx, stride, 1,
-                                     beta, tc);
+                for (int xx = (x0 > 0 ? x0 - 8 : 0); xx < x_end2; xx += 8) {
+                    const int gx = xx / 8;
+                    const bool is_edge = use_map
+                        ? (cfg.horz_edge[gy * cfg.grid_w + gx] != 0)
+                        : ((yy % period) == 0);
+                    if (is_edge)
+                        filter_luma_edge(y + static_cast<std::ptrdiff_t>(yy) * stride + xx,
+                                         stride, 1, beta, tc);
+                }
+            }
+        }
+    }
+}
+
+void deblock_frame_chroma(std::uint8_t* u, std::uint8_t* v, int width, int height,
+                          int stride, const DeblockConfig& cfg) {
+    if (u == nullptr || v == nullptr || width <= 0 || height <= 0) return;
+    // HEVC 色度去块滤波按 **8x8 色度块**边界走（对应亮度 16x16），不是每条
+    // 亮度 8 对齐边都在色度上滤一次：4:2:0 下周期下限是 8 个色度样本。
+    // 固定大 TU 档再按 TU 尺寸放大（16 TU→8、32 TU→16）。
+    // 实测：用 edge_period/2（tu2/tu3 = 4）会多滤一半边界，U/V maxdiff 4~10。
+    const int half = cfg.edge_period / 2;
+    const int period = half < 8 ? 8 : half;
+    if (period < 4 || (period % 4) != 0 || (width % period) != 0 || (height % period) != 0)
+        return;
+    const int tc = deblock_tc(cfg.chroma_qp, 2, cfg.tc_offset_div2);
+    if (tc <= 0) return;  // 低 QP 段 tctable 为 0，色度也不改动
+
+    const bool use_map = cfg.vert_edge != nullptr && cfg.horz_edge != nullptr &&
+                         cfg.grid_w > 0;
+    std::uint8_t* planes[2] = {u, v};
+    for (std::uint8_t* plane : planes) {
+        for (int yy = 0; yy < height; yy += 4) {
+            // 4 个色度样本 = 亮度 8 像素 = 1 个网格单元；色度坐标 /4 即网格索引。
+            const int gy = yy / 4;
+            // 垂直边界：左边界不滤；自动档按真实 TU 边界图逐格判定。
+            for (int xx = period; xx < width; xx += period) {
+                const int gx = xx / 4;
+                const bool is_edge = use_map
+                    ? (cfg.vert_edge[gy * cfg.grid_w + gx] != 0)
+                    : true;
+                if (is_edge)
+                    filter_chroma_edge(plane + static_cast<std::ptrdiff_t>(yy) * stride + xx,
+                                       1, stride, tc);
+            }
+            // 色度水平滤波按 8 个色度样本（= 亮度 16 像素 = 2 个网格行）为一段，
+            // 只在 8 色度对齐行判边界；逐 4 样本判一次会多滤一半行（实测自动档
+            // QP26 渐变图 U/V maxdiff=2）。固定档再用 period 过滤 16/32 TU 档。
+            if (yy == 0 || (yy % 8) != 0) continue;
+            for (int xx = 0; xx < width; xx += 4) {
+                const int gx = xx / 4;
+                const bool is_edge = use_map
+                    ? (cfg.horz_edge[gy * cfg.grid_w + gx] != 0)
+                    : ((yy % period) == 0);
+                if (is_edge)
+                    filter_chroma_edge(plane + static_cast<std::ptrdiff_t>(yy) * stride + xx,
+                                       stride, 1, tc);
             }
         }
     }

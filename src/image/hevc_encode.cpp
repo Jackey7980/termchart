@@ -363,7 +363,28 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp,
 
     // CU 边长 = 1<<log2_cb；log2_tu<=3 时 CU 恒为 8x8，>=4 时 CU 与 TU 同尺寸。
     const bool auto_tu = (log2_tu == 0);
+    // 自动档同一帧混用 4/8/16/32 TU，去块滤波不能用统一边界周期，必须在逐 CU
+    // 发射时记下每个 8x8 网格的左/上边界是否真是 TU 边界（8.7.2：只对 TU/PU
+    // 边界滤波）。固定档走 DeblockConfig::edge_period，不填这两张表。
+    std::vector<std::uint8_t> vert_edge, horz_edge;
+    if (auto_tu) {
+        const std::size_t cells = cw8 * static_cast<std::size_t>(f.ch / 8);
+        vert_edge.assign(cells, 0);
+        horz_edge.assign(cells, 0);
+    }
     auto emit_cu = [&](int x0, int y0, int log2_cb, int tu_log2, int split4) {
+        if (auto_tu) {
+            const int cb = 1 << log2_cb;
+            const int tu = 1 << tu_log2;
+            for (int dy = 0; dy < cb; dy += 8)
+                for (int dx = 0; dx < cb; dx += 8) {
+                    const int gx = (x0 + dx) / 8;
+                    const int gy = (y0 + dy) / 8;
+                    const std::size_t gi = static_cast<std::size_t>(gy) * cw8 + gx;
+                    if ((dx % tu) == 0) vert_edge[gi] = 1;  // 该格左边界是 TU 边界
+                    if ((dy % tu) == 0) horz_edge[gi] = 1;  // 该格上边界是 TU 边界
+                }
+        }
         // 本编码器 8x8 CU 用 PART_2Nx2N ⇒ 整 8x8 单 PU 预测（ffmpeg 解码端同样按
         // 8x8 预测）。故先用选定模式算整块预测，再拆成 4 个 4x4 TU 写残差。
         const int mode = (kIntraMode >= 0)
@@ -713,14 +734,28 @@ std::string build_intra_idr_slice(const Yuv420& f, int slice_qp,
     rbsp += cabac.finish();
     // 重建出口同步去块滤波（8.7.2）。必须放在整帧编码之后：帧内预测参考的是
     // **滤波前**重建，逐 CU 滤波会污染后续 CU 的参考样本。
-    // deblock_frame_luma 目前是按 8x8 网格 + 恒定 bS=2 的近似实现（没有 CU/TU 边界图，
-    // 无法区分 bS=1/2），与 FFmpeg 的 DBF 输出存在 maxdiff≈4（QP26/渐变图）的差异；
-    // 该差异只影响编码端 recon，不进码流，故不影响解码正确性。
-    // 逐像素门禁（recon == dec）在 DBF 关闭时成立：设 TERMCHART_HEVC_NO_DBLOCK=1 编码
-    // + `ffmpeg -skip_loop_filter all` 解码，实测 Y 平面 maxdiff=0。
-    if (!std::getenv("TERMCHART_HEVC_NO_DBLOCK"))
-        codec::hevc::deblock_frame_luma(rec.y.data(), cw, f.ch, cw,
-                                        codec::hevc::DeblockConfig{.slice_qp = slice_qp});
+    // 2026-11-13 精确化：亮度强/弱滤波与 tc 双段早已逐式对齐 FFmpeg（4x4/8x8 TU
+    // 档 Y 平面 maxdiff=0）；补齐的是 ① 色度 8.7.2.5 弱滤波 ② 固定大 TU 档的
+    // 边界周期（16/32 TU 内部不存在 TU 边界，不该逐条 8 对齐边都滤）。
+    // bS 恒 2 对全帧内码流是规范结论，不是近似。自动档混合 TU 尺寸仍需逐 CU 边界图。
+    // 两端都关 DBF 的门禁路径（TERMCHART_HEVC_NO_DBLOCK=1 + -skip_loop_filter all）
+    // 保持不变；开 DBF 的逐像素一致性由新增 --dblock-on 门禁覆盖。
+    if (!std::getenv("TERMCHART_HEVC_NO_DBLOCK")) {
+        const int edge_period = auto_tu ? 8 : std::max(8, 1 << log2_tu);
+        const codec::hevc::DeblockConfig dbf{
+            .slice_qp = slice_qp,
+            .beta_offset_div2 = 0,
+            .tc_offset_div2 = 0,
+            .chroma_qp = chroma_qp_from_luma(slice_qp),
+            .edge_period = edge_period,
+            .vert_edge = auto_tu ? vert_edge.data() : nullptr,
+            .horz_edge = auto_tu ? horz_edge.data() : nullptr,
+            .grid_w = static_cast<int>(cw8),
+        };
+        codec::hevc::deblock_frame_luma(rec.y.data(), cw, f.ch, cw, dbf);
+        codec::hevc::deblock_frame_chroma(rec.u.data(), rec.v.data(),
+                                          cw / 2, f.ch / 2, cw / 2, dbf);
+    }
 #if defined(TERMCHART_HEVC_RECON_DUMP)  // 诊断专用：重建帧追加到指定前缀（或当前目录）
     {
         // TERMCHART_HEVC_RECON_PATH=<前缀> 时写 <前缀>.yuv + <前缀>.chroma.yuv，

@@ -43,6 +43,10 @@
   的残差语法；`--quick` 三档已接入 CI `encoder-cert`。
 - `EncodeOptions::hevc_transform_skip` 默认 `false`，关闭时参数集仍是本文 §1 的
   Main / 基线口径，不写任何 extension。
+- 阶段三 P3-1 已收口：编码端去块滤波（色度通路 + 固定档 TU 边界周期 + 自动档逐
+  CU 真实边界图）与 FFmpeg 输出在**开滤波时**也逐像素一致，门禁
+  `python tools/verify_hevc_tu_sizes.py --dblock-on`；两端都关 DBF 的旧门禁保留。
+  bS 恒 2 是全帧内码流的规范结论，不再是「近似实现」。
 
 ## 1. 两个档位必须先分清
 

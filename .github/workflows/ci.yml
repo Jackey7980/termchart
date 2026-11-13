@@ -216,6 +216,7 @@ jobs:
           python tools/verify_hevc_tu_sizes.py --quick
           python tools/verify_hevc_tu_sizes.py --quick --transform-skip
           python tools/verify_hevc_tu_sizes.py --quick --force-skip
+          python tools/verify_hevc_tu_sizes.py --quick --dblock-on
 
   wasm:
     name: wasm (emscripten 真编译)

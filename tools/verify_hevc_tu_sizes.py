@@ -35,6 +35,12 @@ transform_skip 覆盖：`--transform-skip` 打开自适应 skip（大 TU 档会�
   python tools/verify_hevc_tu_sizes.py --quick   # CI 冒烟（2 形态 x 2 QP）
   python tools/verify_hevc_tu_sizes.py --quick --transform-skip
   python tools/verify_hevc_tu_sizes.py --quick --force-skip
+  python tools/verify_hevc_tu_sizes.py --quick --dblock-on
+
+`--dblock-on` 是开 DBF 的逐像素门禁：编码端不设 `TERMCHART_HEVC_NO_DBLOCK`、
+解码端不加 `-skip_loop_filter all`，比对「编码端同步滤波后的重建 == ffmpeg 输出」，
+覆盖 Y/U/V 三平面；同时用 15 组 on/off 对照断言 **DBF 开关不改变码流字节**。
+该模式不做码率排序断言（2 形态小矩阵会有 1 B 抖动，且码流本就相同）。
 
 退出码：0 全通过；1 有失败；2 环境不满足（ffmpeg/CXX 缺失，显式失败）。
 """
@@ -157,14 +163,41 @@ def verify_parameter_sets(probe: Path, ff: str, tmp: Path, env,
     return problems
 
 
+def verify_dblock_bitstream_identity(probe: Path, tmp: Path, env) -> list[str]:
+    """DBF 只改编码端重建、不进码流：开关前后 Annex-B 必须逐字节相同。
+
+    这比在 2 形态小矩阵上重复码率排序更可靠（后者会因 1 B 抖动误报）。
+    """
+    problems: list[str] = []
+    for tu in TUS:
+        for qp in (10, 26, 40):
+            stem = f"dbid_tu{tu}_qp{qp}"
+            on = tmp / (stem + "_on.265")
+            off = tmp / (stem + "_off.265")
+            e_on = dict(env, TERMCHART_HEVC_RECON_PATH=str(tmp / (stem + "_on_recon")))
+            e_on.pop("TERMCHART_HEVC_NO_DBLOCK", None)
+            e_off = dict(env, TERMCHART_HEVC_NO_DBLOCK="1",
+                         TERMCHART_HEVC_RECON_PATH=str(tmp / (stem + "_off_recon")))
+            base = [str(probe), str(qp), str(W), str(H), "grad"]
+            r1 = run(base + [str(on), str(tu), "0"], e_on)
+            r2 = run(base + [str(off), str(tu), "0"], e_off)
+            if r1.returncode != 0 or r2.returncode != 0 or not on.exists() or not off.exists():
+                problems.append(f"tu={tu} QP{qp}: 编码失败")
+            elif on.read_bytes() != off.read_bytes():
+                problems.append(f"tu={tu} QP{qp}: DBF 开关改变了码流字节")
+    return problems
+
+
 def encode_decode(probe: Path, ff: str, tmp: Path, shape: str, qp: int, tu: int,
-                  env, skip: bool = False,
-                  decode: bool = True) -> tuple[int, list[tuple[str, float, int]], int] | None:
+                  env, skip: bool = False, decode: bool = True,
+                  dblock_on: bool = False) -> tuple[int, list[tuple[str, float, int]], int] | None:
     stem = f"tu{tu}_{shape}_{qp}" + ("_ts" if skip else "")
     f265 = tmp / (stem + ".265")
     # 每条码流用独立前缀，避免 dump 的 "ab" 追加把上一帧带进来。
     prefix = tmp / (stem + "_recon")
     e = dict(env, TERMCHART_HEVC_RECON_PATH=str(prefix))
+    if dblock_on:
+        e.pop("TERMCHART_HEVC_NO_DBLOCK", None)  # 编码端开 DBF
     r = run([str(probe), str(qp), str(W), str(H), shape, str(f265), str(tu),
              "1" if skip else "0"], e)
     if r.returncode != 0 or not f265.exists():
@@ -174,8 +207,11 @@ def encode_decode(probe: Path, ff: str, tmp: Path, shape: str, qp: int, tu: int,
         return f265.stat().st_size, [], 0
     yuv = tmp / (stem + ".265.yuv")
     dec = tmp / (stem + ".dec.yuv")
-    r = run([ff, "-y", "-loglevel", "error", "-skip_loop_filter", "all",
-             "-i", str(f265), "-f", "rawvideo", "-pix_fmt", "yuv420p", str(dec)])
+    ff_args = [ff, "-y", "-loglevel", "error"]
+    if not dblock_on:
+        ff_args += ["-skip_loop_filter", "all"]  # 关 DBF 路径：两端都关
+    ff_args += ["-i", str(f265), "-f", "rawvideo", "-pix_fmt", "yuv420p", str(dec)]
+    r = run(ff_args)
     if r.returncode != 0 or not dec.exists():
         print(f"  DEC FAIL tu={tu} {shape} QP{qp}: {r.stderr.decode(errors='replace')[:160]}")
         return None
@@ -210,6 +246,8 @@ def main() -> int:
                     help="打开 transform_skip（大 TU 档写 RExt 参数集）")
     ap.add_argument("--force-skip", action="store_true",
                     help="强制每个候选 TU 都 transform_skip=1（隐含 --transform-skip）")
+    ap.add_argument("--dblock-on", action="store_true",
+                    help="开 DBF 门禁：编码端与解码端都启用去块滤波，逐像素比对")
     ap.add_argument("--cxx", default=None)
     ap.add_argument("--ffmpeg", default=None)
     args = ap.parse_args()
@@ -227,7 +265,8 @@ def main() -> int:
     # quick 冒烟里，skip 档故意换用 dots（稀疏亮点）——只有它会在自适应档
     # 真正选出 transform_skip=1，从而覆盖 flag=1 的残差语法；base 档仍走 flat/grad。
     shapes = (["flat", "dots"] if skip else SHAPES[:2]) if args.quick else SHAPES
-    qps = [10, 26] if args.quick else QPS
+    # DBF 门禁额外纳入 QP40（色度滤波差异最明显），其余模式保持既有冒烟矩阵。
+    qps = ([10, 26, 40] if args.dblock_on else [10, 26]) if args.quick else QPS
     tmp = Path(tempfile.mkdtemp(prefix="termchart_tu_"))
     probe = tmp / ("probe.exe" if sys.platform == "win32" else "probe")
     if not build_probe(cxx, probe):
@@ -241,6 +280,7 @@ def main() -> int:
         env["TERMCHART_HEVC_FORCE_SKIP"] = "1"
     print(f"MODE: transform_skip={'on' if skip else 'off'}"
           f"{' (forced)' if args.force_skip else ''} "
+          f"dblock={'on' if args.dblock_on else 'off'} "
           f"shapes={shapes} qps={qps}")
     bad = 0
     # 参数集逐字段核对：能解码只证明「语法自洽」，trace_headers 才证明
@@ -251,6 +291,12 @@ def main() -> int:
     bad += len(trace_problems)
     print("TRACE HEADERS:", "PASS" if not trace_problems else "FAIL",
           f"cases={len(TUS) if skip else 1}")
+    if args.dblock_on:
+        ident = verify_dblock_bitstream_identity(probe, tmp, env)
+        for p in ident:
+            print("  DBF BITSTREAM MISMATCH:", p)
+        bad += len(ident)
+        print("DBF BITSTREAM IDENTITY:", "PASS" if not ident else "FAIL", "cases=15")
     # skip 开启时额外编一份「关闭 skip 的固定档」作码率对照（只编码、不解码：
     # 逐像素门禁由主矩阵和 base 模式的独立 run 覆盖）。
     compare_base = skip and not args.force_skip
@@ -260,7 +306,8 @@ def main() -> int:
         base_per_qp: dict[int, int] = {t: 0 for t in FIXED_TUS}
         for shape in shapes:
             for tu in TUS:
-                res = encode_decode(probe, ff, tmp, shape, qp, tu, env, skip)
+                res = encode_decode(probe, ff, tmp, shape, qp, tu, env, skip,
+                                    dblock_on=args.dblock_on)
                 if res is None:
                     bad += 1
                     continue
@@ -280,12 +327,18 @@ def main() -> int:
                         print(f"  BAD tu={tu} {shape} QP{qp} {stats}")
                 if compare_base and tu in base_per_qp:
                     base = encode_decode(probe, ff, tmp, shape, qp, tu, env, False,
-                                         decode=False)
+                                         decode=False, dblock_on=args.dblock_on)
                     if base is None:
                         bad += 1
                     else:
                         base_per_qp[tu] += base[0]
         best = min(per_qp[t] for t in FIXED_TUS)
+        if args.dblock_on:
+            # DBF 不进码流，码率与关 DBF 路径逐字节相同（已由 15 组字节恒等断言
+            # 证明），此处只汇报、不重复码率排序断言（2 形态小矩阵会有 1 B 抖动）。
+            print(f"  QP{qp:2d} dblock-on fixed {[per_qp[t] for t in FIXED_TUS]} "
+                  f"auto={per_qp[0]} (码率断言跳过；逐像素一致性逐条校验)")
+            continue
         if args.force_skip:
             # 强制 skip 把每个 TU 的率失真都拉到「不做变换」，TU 尺寸的分裂收益
             # 被削平，自动档不再有优势——这是 debug 模式自身的性质，不是回归。

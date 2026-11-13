@@ -13,12 +13,15 @@
 // 帧内分支也不走 TU 内部 PU 边界那条路），所以整帧滤波只由固定的 beta/tc 与逐边
 // 的 d 判据决定。
 //
-// 已知近似（**不进码流**，只影响编码端重建帧 `rec`）：只滤亮度、bS 恒取 2、
-// 8 样本段共用单个 tc（未做 FFmpeg 的 tc[0]/tc[1] 双段），也没有色度通路。因此
-// `rec` 与 ffmpeg 解码输出存在 maxdiff≈4 的差异（实测 QP26/渐变图，128x64）。
-// 要逐像素一致必须传 CU/TU 边界图、按 8.7.2.4 逐边求 bS 并补色度滤波，
-// 属阶段三（P3-1）的正式工作。当前正确性门禁走 DBF 关闭路径：
-// 编码设 TERMCHART_HEVC_NO_DBLOCK=1、解码加 `-skip_loop_filter all`，Y 平面 maxdiff=0。
+// 2026-11-13 逐像素复核（编码端开 DBF + ffmpeg 不做 -skip_loop_filter all）结论：
+//   · 亮度 4x4 / 8x8 TU 档已 **maxdiff=0**（强/弱滤波 + tc 双段逐式对齐），
+//     旧文档「亮度 maxdiff≈4」早已过时；
+//   · 16/32 TU 档亮度差 max=2~4：固定大 TU 内部不存在 TU 边界，不该在每条
+//     8 对齐边上滤波，需要按 TU 尺寸给边界周期；
+//   · U/V 各档 QP26/40 差 max=4~10：缺色度通路（8.7.2.5 的 bS=2 弱滤波）。
+// 本轮据此补 edge_period 与色度滤波；bS 恒 2 对全帧内码流是**正确简化**而非近似
+//（8.7.2.4：边界任一侧为帧内预测即 bS=2），不需要 CU/TU 边界强度表。
+// 自动档（混合 TU 尺寸）仍需逐 CU 的真实边界图，属后续工作。
 #ifndef TERMCHART_SRC_IMAGE_CODEC_HEVC_DEBLOCKING_HPP
 #define TERMCHART_SRC_IMAGE_CODEC_HEVC_DEBLOCKING_HPP
 
@@ -32,6 +35,15 @@ struct DeblockConfig {
     int slice_qp = 26;         // SliceQpY（8 bit 时 QpBdOffsetY = 0）
     int beta_offset_div2 = 0;  // slice_beta_offset_div2
     int tc_offset_div2 = 0;    // slice_tc_offset_div2
+    int chroma_qp = 26;        // qPi→qPc 之后的色度 QP（色度 tc 用）
+    // 固定档的 TU 边界周期（亮度像素）：max(8, 1<<log2_tu)。HEVC 只对 8 对齐且
+    // 恰为 TU/PU 边界的边滤波，16/32 TU 内部的 8 对齐边不是边界。
+    int edge_period = 8;
+    // 自动档（同一帧混合 TU 尺寸）用逐 8x8 网格的真实 TU 边界图代替周期：
+    // 非 null 时，只有对应格置 1 的边才滤波。grid_w = ceil(width/8)。
+    const std::uint8_t* vert_edge = nullptr;  // 该 8x8 格的左边界是 TU 边界
+    const std::uint8_t* horz_edge = nullptr;  // 该 8x8 格的上边界是 TU 边界
+    int grid_w = 0;
 };
 
 // 表 8-11 / 8-12（FFmpeg filter.c 的 betatable[52] / tctable[54]）。
@@ -44,6 +56,11 @@ int deblock_tc(int qp, int boundary_strength, int tc_offset_div2 = 0);
 // 前提：width、height 均为 8 的倍数（本编码器按 CTB 对齐，恒成立）；否则直接返回。
 void deblock_frame_luma(std::uint8_t* y, int width, int height, int stride,
                         const DeblockConfig& cfg);
+
+// 对 U/V 两个色度平面做 8.7.2.5 的 bS=2 弱滤波（只改 p0/q0 各一个样本）。
+// width / height / stride 都是**色度平面**尺寸（亮度的一半）。
+void deblock_frame_chroma(std::uint8_t* u, std::uint8_t* v, int width, int height,
+                          int stride, const DeblockConfig& cfg);
 
 }  // namespace termchart::image::codec::hevc
 
