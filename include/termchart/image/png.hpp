@@ -31,7 +31,7 @@ inline constexpr std::uint64_t kPngMaxRawBytes = 512ull * 1024ull * 1024ull;
 [[nodiscard]] TERMCHART_API Result<Bitmap> decode_png(const std::uint8_t* data,
                                                       std::size_t size);
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_png(std::string_view bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_png(std::string_view bytes) {
     return decode_png(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
 

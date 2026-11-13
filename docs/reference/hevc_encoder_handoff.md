@@ -28,6 +28,22 @@
 下文 §1~§10 保留为攻坚期的过程记录（含已被证伪的 §5 判断），
 用于说明「为什么不能只靠自测」，不作为当前状态结论。
 
+## 0a. 后续扩展现状指针（2026-11-13）
+
+> 本文写作时只有 4×4 DCT/DST 管线。以下能力是之后落地的，现状与验收以
+> `docs/reference/hevc_engineering_roadmap.md` 和 `ROADMAP.md` 修订记录为准：
+
+- TU 尺寸已泛化到 4/8/16/32 并增加逐区域自动档（`EncodeOptions::hevc_log2_tu_size`），
+  配套多 CG 残差语法、n×n 帧内预测与 CU/transform 树分裂。
+- `transform_skip` 已解除 4×4 互斥：RExt profile（`general_profile_idc=4`）、
+  `sps_range_extension` 与 **PPS** 的 `log2_max_transform_skip_block_size_minus2`；
+  亮度与色度都按各自平面 QP 的 RD 决定是否跳过变换。
+- 门禁 `tools/verify_hevc_tu_sizes.py`：ffmpeg 软解 `recon == dec` 逐字节一致、
+  `-bsf:v trace_headers` 逐字段核对参数集、`--force-skip` 验证 `transform_skip_flag=1`
+  的残差语法；`--quick` 三档已接入 CI `encoder-cert`。
+- `EncodeOptions::hevc_transform_skip` 默认 `false`，关闭时参数集仍是本文 §1 的
+  Main / 基线口径，不写任何 extension。
+
 ## 1. 两个档位必须先分清
 
 | 档位 | 入口 | 状态 |

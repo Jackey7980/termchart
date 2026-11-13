@@ -9,18 +9,25 @@ namespace {
 using bitstream::BitWriter;
 
 // profile_tier_level（MaxNumSubLayersMinus1 = 0，无子层循环）。
-// HEVC 7.3.3：general_profile_idc==1（Main）走 else 分支 → 4 个约束标志之后是
-// general_reserved_zero_44bits（44 个 0），绝不可把 Main 专属 max_*_constraint 标志写进该区。
-void profile_tier_level(BitWriter& w, int level_idc) {
+// HEVC 7.3.3：Main(1) 与 Range Extensions(4) 都走同一段 else 分支——4 个约束标志
+// 之后是 44 个 0（Main 叫 general_reserved_zero_44bits，RExt 是 general_*_constraint
+// 全 0），位宽一致。二者只差 profile_idc 与兼容标志。
+// RExt(4) 是 transform_skip 超出 4x4 的必要条件：FFmpeg 只在 profile_idc >= 4 时
+// 解析 PPS range extension（ps.c:2431），否则 log2_max_transform_skip_block_size
+// 恒按默认 2 处理，8/16/32 TU 的 transform_skip_flag 不会被读。
+void profile_tier_level(BitWriter& w, int level_idc, int profile_idc) {
+    // 兼容标志 bit1 = Main、bit4 = RExt。RExt 档同时声明 Main 兼容：4:2:0 8bit 的
+    // RExt 码流本身满足 Main 的全部约束，硬解/播放器更不容易直接拒流。
+    const unsigned compat = (profile_idc >= 4) ? 0x48000000u : 0x40000000u;
     w.u(0, 2);   // general_profile_space
     w.u(0, 1);   // general_tier_flag
-    w.u(1, 5);   // general_profile_idc = 1 (Main, 8-bit)
-    w.u(2, 32);  // general_profile_compatibility_flags：bit1 置位（Main 兼容）
+    w.u(static_cast<unsigned>(profile_idc), 5);  // general_profile_idc
+    w.u(compat, 32);  // general_profile_compatibility_flags
     w.u(1, 1);   // general_progressive_source_flag
     w.u(0, 1);   // general_interlaced_source_flag
     w.u(1, 1);   // general_non_packed_constraint_flag
     w.u(1, 1);   // general_frame_only_constraint_flag
-    w.u(0, 44);  // general_reserved_zero_44bits（Main profile = else 分支，全 0）
+    w.u(0, 44);  // general_reserved_zero_44bits / general_*_constraint_flag（全 0）
     w.u(static_cast<unsigned>(level_idc), 8);  // general_level_idc
 }
 
@@ -35,7 +42,7 @@ std::string write_vps(const Vps& vps) {
     w.u(0, 3);    // vps_max_sub_layers_minus1
     w.u(1, 1);    // vps_temporal_id_nesting_flag
     w.u(0xFFFF, 16);  // vps_reserved_0xffff_16bits
-    profile_tier_level(w, vps.general_level_idc);
+    profile_tier_level(w, vps.general_level_idc, vps.general_profile_idc);
     w.u(1, 1);    // vps_sub_layer_ordering_info_present_flag
     w.ue(0);      // vps_max_dec_pic_buffering_minus1[0]
     w.ue(0);      // vps_max_num_reorder_pics[0]
@@ -52,7 +59,7 @@ std::string write_sps(const Sps& sps) {
     w.u(0, 4);    // sps_video_parameter_set_id
     w.u(0, 3);    // sps_max_sub_layers_minus1
     w.u(1, 1);    // sps_temporal_id_nesting_flag
-    profile_tier_level(w, sps.general_level_idc);
+    profile_tier_level(w, sps.general_level_idc, sps.general_profile_idc);
     w.ue(0);      // sps_seq_parameter_set_id
     w.ue(1);      // chroma_format_idc = 1 (4:2:0)
     w.ue(static_cast<unsigned>(sps.pic_width_in_luma_samples));
@@ -120,7 +127,29 @@ std::string write_sps(const Sps& sps) {
     w.u(0, 1);    // default_display_window_flag
     w.u(0, 1);    // vui_timing_info_present_flag
     w.u(0, 1);    // bitstream_restriction_flag
-    w.u(0, 1);    // sps_extension_present_flag
+    if (sps.range_extension) {
+        w.u(1, 1);    // sps_extension_present_flag
+        w.u(1, 1);    // sps_range_extension_flag
+        w.u(0, 1);    // sps_multilayer_extension_flag
+        w.u(0, 1);    // sps_3d_extension_flag
+        w.u(0, 1);    // sps_scc_extension_flag
+        w.u(0, 4);    // sps_extension_4bits
+        // sps_range_extension()：9 个开关全 0。transform_skip_context_enabled_flag=0
+        // 是刻意的：置 1 会让 transform_skip 的 sig_coeff_flag 换一组 ctx（ctxSet=2），
+        // 残差 bin 序列随之改变；我们用与常规块同一套 ctx，两端一致即可。
+        // extended_precision_processing=0 保持 bitDepth 相关舍入不额外偏移。
+        w.u(0, 1);    // transform_skip_rotation_enabled_flag
+        w.u(0, 1);    // transform_skip_context_enabled_flag
+        w.u(0, 1);    // implicit_rdpcm_enabled_flag
+        w.u(0, 1);    // explicit_rdpcm_enabled_flag
+        w.u(0, 1);    // extended_precision_processing_flag
+        w.u(0, 1);    // intra_smoothing_disabled_flag
+        w.u(0, 1);    // high_precision_offsets_enabled_flag
+        w.u(0, 1);    // persistent_rice_adaptation_enabled_flag
+        w.u(0, 1);    // cabac_bypass_alignment_enabled_flag
+    } else {
+        w.u(0, 1);    // sps_extension_present_flag = 0
+    }
     return w.finish();
 }
 
@@ -164,7 +193,28 @@ std::string write_pps(const Pps& pps) {
     w.u(0, 1);    // lists_modification_present_flag
     w.ue(0);      // log2_parallel_merge_level_minus2
     w.u(0, 1);    // slice_segment_header_extension_present_flag
-    w.u(0, 1);    // pps_extension_present_flag
+    // pps_extension：只有「transform_skip 允许超过 4x4」才写。
+    // 写成 bool 而非固定 0，是因为 log2_max_transform_skip_block_size 只存在于
+    // pps_range_extension()（RExt），默认 2 时省略它才能保住既有 PPS 字节。
+    const bool write_rext =
+        pps.transform_skip_enabled && pps.log2_max_transform_skip_block_size > 2;
+    w.u(write_rext ? 1 : 0, 1);    // pps_extension_present_flag
+    if (write_rext) {
+        w.u(1, 1);    // pps_range_extension_flag
+        w.u(0, 1);    // pps_multilayer_extension_flag
+        w.u(0, 1);    // pps_3d_extension_flag
+        w.u(0, 1);    // pps_scc_extension_flag
+        w.u(0, 4);    // pps_extension_4bits
+        // pps_range_extension()（HEVC 7.3.2.3.2 / ffmpeg ps.c:1973-2005）：
+        // log2_max_transform_skip_block_size_minus2 只在 transform_skip_enabled_flag=1
+        // 时出现，且值域 0..3（即最大 32x32）。后续 SAO offset scale 必须为 0
+        // （8bit 输入下 ffmpeg 会校验 > max(bitdepth-10,0) 即报错）。
+        w.ue(static_cast<unsigned>(pps.log2_max_transform_skip_block_size - 2));
+        w.u(0, 1);    // cross_component_prediction_enabled_flag
+        w.u(0, 1);    // chroma_qp_offset_list_enabled_flag
+        w.ue(0);      // log2_sao_offset_scale_luma
+        w.ue(0);      // log2_sao_offset_scale_chroma
+    }
     return w.finish();
 }
 

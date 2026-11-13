@@ -31,11 +31,11 @@ namespace termchart::image {
 [[nodiscard]] TERMCHART_API Result<Bitmap> decode_bmp(const std::uint8_t* data,
                                                       std::size_t size);
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_bmp(std::string_view bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_bmp(std::string_view bytes) {
     return decode_bmp(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_bmp(const std::vector<std::uint8_t>& bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_bmp(const std::vector<std::uint8_t>& bytes) {
     return decode_bmp(bytes.data(), bytes.size());
 }
 

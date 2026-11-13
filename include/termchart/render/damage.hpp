@@ -51,8 +51,8 @@ public:
     [[nodiscard]] TERMCHART_API std::span<const Run> runs_of(std::uint32_t row) const noexcept;
     [[nodiscard]] TERMCHART_API std::size_t run_count() const noexcept;
 
-    [[nodiscard]] TERMCHART_API std::uint32_t width() const noexcept { return width_; }
-    [[nodiscard]] TERMCHART_API std::uint32_t height() const noexcept { return height_; }
+    [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
+    [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
 
 private:
     TERMCHART_API void insert(std::uint32_t row, Run run) noexcept;

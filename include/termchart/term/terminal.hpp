@@ -45,8 +45,8 @@ public:
     TERMCHART_API Status leave() noexcept;
     TERMCHART_API void restore() noexcept;  // leave() 的 noexcept 版，给析构/信号处理用
 
-    [[nodiscard]] TERMCHART_API bool entered() const noexcept { return entered_; }
-    [[nodiscard]] TERMCHART_API const TerminalOptions& options() const noexcept { return options_; }
+    [[nodiscard]] bool entered() const noexcept { return entered_; }
+    [[nodiscard]] const TerminalOptions& options() const noexcept { return options_; }
 
     // 写入 / 立即生效：不使用 iostream，避免 locale 与缓冲策略差异。
     TERMCHART_API Status write(std::string_view bytes) noexcept;

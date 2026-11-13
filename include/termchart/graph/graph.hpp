@@ -4,8 +4,11 @@
 // 布局（graph/layout）、路由（graph/route）、形状（graph/shape）与图元
 // （graph/diagrams）都在这之上构建，因此同一张 Graph 可以被多种渲染消费。
 //
-// 注意：add_node 返回的是 vector 内元素的引用，后续 add_node 可能使引用失效；
-// 需要长期持有请用 id() 再 find()。
+// 增操作的返回类型**刻意不对称**（2026-11-13 复核后定稿，不做破坏性统一）：
+//   add_node 不会失败 ⇒ Node&；add_edge 端点可能不存在 ⇒ Edge*（失败 = nullptr）。
+// 统一成引用会丢掉失败通道，统一成 Id 则要改动 195 处调用点且无功能收益。
+// 真正统一的是使用约定：**返回值仅供即时使用**，两者都可能因后续插入失效；
+// 长期持有一律走身份查询 find(NodeId) / find_edge(from, to)。
 #ifndef TERMCHART_GRAPH_GRAPH_HPP
 #define TERMCHART_GRAPH_GRAPH_HPP
 

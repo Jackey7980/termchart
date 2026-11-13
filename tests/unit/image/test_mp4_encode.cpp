@@ -95,6 +95,36 @@ TEST_CASE("mp4: 多帧仍产出非空且含 mdat") {
     CHECK(has_box(mp4, "mdat"));
 }
 
+// P4 回归：video_qp 必须经 encode_mp4 → encode_hevc_annexb 落到 slice_qp_delta。
+// 注意 video_mode 默认是 Pcm（I_PCM 档忽略 QP，保持既有码流字节级不变），
+// 要验证 QP 必须显式选 Intra 真压缩档。
+TEST_CASE("mp4: video_qp 经 MP4 路径透传到 HEVC 码流") {
+    const std::vector<Bitmap> frames = {make_frame(64, 48, 0), make_frame(64, 48, 1)};
+    auto make_opts = [](int qp) {
+        EncodeOptions o;
+        o.fps = 10;
+        o.video_qp = qp;
+        o.video_codec = VideoCodec::H265;
+        o.video_mode = VideoEncodeMode::Intra;
+        return o;
+    };
+    const auto low = encode_mp4(frames, make_opts(10));
+    const auto high = encode_mp4(frames, make_opts(40));
+    REQUIRE_FALSE(low.empty());
+    REQUIRE_FALSE(high.empty());
+    CHECK(low != high);               // QP 真的进了码流，没被中间层丢掉
+    CHECK(low.size() > high.size());  // QP 越大量化越粗，帧数据越小
+    CHECK(has_box(low, "hvc1"));
+    CHECK(has_box(high, "hvc1"));
+
+    // 与裸 Annex-B 路径同源：两条路径都必须受 QP 影响。
+    const auto raw_low = encode_hevc_annexb(frames, make_opts(10));
+    const auto raw_high = encode_hevc_annexb(frames, make_opts(40));
+    REQUIRE_FALSE(raw_low.empty());
+    REQUIRE_FALSE(raw_high.empty());
+    CHECK(raw_low.size() > raw_high.size());
+}
+
 TEST_CASE("mp4: 空输入 / 不等尺寸返回空串") {
     CHECK(encode_mp4({}, {}).empty());
     std::vector<Bitmap> bad = {make_frame(32, 16, 0), make_frame(33, 16, 1)};

@@ -13,10 +13,20 @@ namespace termchart::image::codec::hevc {
 struct Vps {
     // VPS / SPS 的 profile_tier_level 必须写同一个 level；4K 需 Level 5.1(153)。
     int general_level_idc = 30;
+    // 必须与 SPS 一致：VPS 的 PTL 与 SPS 不匹配时部分解码器直接拒流。
+    int general_profile_idc = 1;
 };
 
 struct Sps {
     int general_level_idc = 30;
+    // general_profile_idc：1 = Main（默认，字节级 G0 口径）；4 = Range Extensions。
+    // 4 是 transform_skip 超出 4x4 的必要条件——FFmpeg 只在 profile_idc >= 4 时
+    // 才解析 PPS range extension（ps.c:2431），否则 log2_max_transform_skip_block_size
+    // 被当成默认 2，大 TU 的 transform_skip_flag 根本不会被读。
+    int general_profile_idc = 1;
+    // sps_range_extension_flag：置 1 时追加 sps_range_extension()（9 个开关全 0）。
+    // 与 profile_idc=4 配套打开，让解码端确认这是 RExt 语义的码流。
+    bool range_extension = false;
     int pic_width_in_luma_samples = 0;
     int pic_height_in_luma_samples = 0;
     // conformance window 裁剪（单位 CropUnitY：4:2:0 下 = 2 个亮度行）。
@@ -49,11 +59,17 @@ struct Pps {
     bool disable_deblocking = false;
 
     // transform_skip_enabled_flag（HEVC 7.3.4.3.1）。默认 false ⇒ PPS 位序列与
-    // G0 黄金基线逐字节一致；真压缩档可显式置 true，让每个 cbf=1 的 4x4 TU
+    // G0 黄金基线逐字节一致；真压缩档可显式置 true，让每个 cbf=1 的 TU
     // 在残差语法最前面多读/写一个 transform_skip_flag bin（ctx 47/48）。
-    // 不写 pps_extension ⇒ ffmpeg 用 log2_max_transform_skip_block_size 默认 2
-    // （ps.c:2243），4x4 TU 满足 log2_trafo_size<=2，无需额外语法位。
     bool transform_skip_enabled = false;
+
+    // log2_max_transform_skip_block_size（HEVC 7.3.2.3.2，写在 pps_range_extension）。
+    // 2 = 沿用 FFmpeg 默认（ps.c:2243），只覆盖 4x4 TU，**不写** pps_extension，
+    // 故 PPS 位序列仍与既有基线兼容。>=3 时写 pps_extension_present_flag +
+    // pps_range_extension_flag 并声明 log2_max_transform_skip_block_size_minus2，
+    // 使 8/16/32 TU 也能带 transform_skip_flag；此时 SPS 必须同时声明 RExt profile
+    // （general_profile_idc=4），否则 FFmpeg 根本不解析这段 extension。
+    int log2_max_transform_skip_block_size = 2;
 };
 
 std::string write_vps(const Vps& vps);

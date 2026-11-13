@@ -150,20 +150,18 @@ IntraModeSignal signal_intra_mode(int target_mode, const MpmCandidates& cands) {
     return s;
 }
 
-void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
-                            int x0, int y0,
-                            int pic_w, int pic_h, std::uint8_t* dst,
-                            ChromaPredPlane chroma) {
+static void predict_intra_impl(int mode, const std::uint8_t* rec, int stride,
+                               int x0, int y0, int pic_w, int pic_h,
+                               std::uint8_t* dst, ChromaPredPlane chroma, int size) {
     // 逐式对齐 FFmpeg hevc/pred_template.c 的 intra_pred(size=2)。
     // HEVC 的亮度帧内预测在 TU 粒度进行（PU 只携带模式）：8x8 CU 用
     // PART_2Nx2N 时整块单一亮度模式，但预测按 4 个 4x4 TU 各做一次，每个 TU
     // 用自身 (x0,y0) 定位参考样本。ffmpeg 解码端同构，故编码端预测与之逐字节一致
     // 即可保证重建 == ffmpeg 解码。
-    const int size = 4;
-    const int size2 = 8;  // 2*size：参考样本数组长度
-    int top[48] = {0}, left[48] = {0};
-    int* T = top + 16;    // T[-1 .. 15]
-    int* L = left + 16;   // L[-1 .. 15]
+    const int size2 = 2 * size;  // 参考样本数组长度
+    int top[176] = {0}, left[176] = {0};
+    int* T = top + 16;    // T[-1 .. 2*size+8]
+    int* L = left + 16;   // L[-1 .. 2*size+8]
 
     // ── 邻居可用性 ───────────────────────────────────────────────────────
     // 可用性按【TU 原点】求值：FFmpeg hevcdec.c:hls_transform_unit 调
@@ -204,7 +202,8 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     // 4:2:0 色度 hshift/vshift 均为 1 ⇒ 色度为 2、亮度为 1。该值参与
     // cand_up_right / cand_bottom_left 的 z-scan 可用性比较，色度沿用 1 会让
     // 角度模式的扩展参考在若干 CU 之后与解码端分叉。
-    const int size_in_tbs = is_chroma ? 2 : 1;
+    // size_in_tbs = (size << hshift) >> log2_min_tb（4:2:0 色度 hshift=1）
+    const int size_in_tbs = (is_chroma ? (2 * size) : size) >> 2;
     auto zscan = [](int x, int y) {
         int z = 0;
         for (int i = 0; i < 4; ++i) {
@@ -228,8 +227,17 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     int cand_up_right    = na_up_right && (cur_tb_addr > z_up_right);
     int cand_bottom_left = na_bottom_left && (cur_tb_addr > z_bottom_left);
 
-    const int top_right_size   = std::min(px + size2, pw) - (px + size);
-    const int bottom_left_size = std::min(py + size2, ph) - (py + size);
+    int top_right_size   = std::min(px + size2, pw) - (px + size);
+    int bottom_left_size = std::min(py + size2, ph) - (py + size);
+    // 大 TU 贴着图像右/下边缘时扩展参考会越出图片：FFmpeg 用 edge_emu 复制
+    // 最后一个样本。这里等价地把该侧判为不可用，让下面的 extend() 复制。
+    // 4x4 保持原行为（既有码流逐字节基线）。
+    if (size > 4) {
+        if (top_right_size <= 0) cand_up_right = 0;
+        if (bottom_left_size <= 0) cand_bottom_left = 0;
+        top_right_size = std::max(0, top_right_size);
+        bottom_left_size = std::max(0, bottom_left_size);
+    }
 
     // POS 按 TU 位置 (x0,y0) 采样重建平面 rec（含负偏移），与 ffmpeg 的
     // src[(x) + stride*(y)] 同义；扩展参考同样用 TU 位置，不跨 CU。
@@ -243,7 +251,8 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     if (cand_up)
         for (int i = 0; i < size; ++i) T[i] = POS(i, -1);
     if (cand_up_right) {
-        for (int i = 0; i < size; ++i) T[size + i] = POS(size + i, -1);
+        for (int i = 0; i < (size > 4 ? top_right_size : size); ++i)
+            T[size + i] = POS(size + i, -1);
         const int last = T[size + top_right_size - 1];
         for (int i = size + top_right_size; i < size2 + 8; ++i) T[i] = last;
     }
@@ -274,8 +283,29 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
     if (!cand_up_right) extend(T + size, T[size - 1], size);
     T[-1] = L[-1];
 
-    // 参考样本平滑：luma 4x4 永远跳过（FFmpeg：size!=4 才 3-tap）。
-    // ref_filter_3tap 保留供 8x8+ 路径，本函数固定 size=4 不触发。
+    // 参考样本平滑（FFmpeg pred_template.c:290-329）：仅亮度、size!=4、非 DC，
+    // 且 min(|mode-26|,|mode-10|) 超过尺寸阈值时做 1-2-1 三抽头。
+    // strong_intra_smoothing_enabled_flag=0 ⇒ 32x32 的双线性替代分支不存在。
+    if (!is_chroma && mode != 1 && size != 4) {
+        const int thresh[] = {7, 1, 0};
+        const int d26 = mode > 26 ? mode - 26 : 26 - mode;
+        const int d10 = mode > 10 ? mode - 10 : 10 - mode;
+        const int min_dist = d26 < d10 ? d26 : d10;
+        if (min_dist > thresh[log2_of(size) - 3]) {
+            int ft[96] = {}, fl[96] = {};
+            int* FT = ft + 1;  // FT[-1 .. 2*size-1]
+            int* FL = fl + 1;
+            const int last_ref = size2 - 1;
+            FT[last_ref] = T[last_ref];
+            FL[last_ref] = L[last_ref];
+            for (int i = last_ref - 1; i >= 0; --i) {
+                FL[i] = (L[i + 1] + 2 * L[i] + L[i - 1] + 2) >> 2;
+                FT[i] = (T[i + 1] + 2 * T[i] + T[i - 1] + 2) >> 2;
+            }
+            FT[-1] = FL[-1] = (L[0] + 2 * L[-1] + T[0] + 2) >> 2;
+            for (int i = -1; i <= last_ref; ++i) { T[i] = FT[i]; L[i] = FL[i]; }
+        }
+    }
 
     const auto put = [&](int x, int y, int v) {
         dst[y * size + x] = static_cast<std::uint8_t>(v);
@@ -294,7 +324,7 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
             for (int x = 0; x < size; ++x) put(x, y, dc);
         // 亮度且 nTbS < 32 时无条件做首行/首列边界滤波（FFmpeg pred_template.c:451-457
         // 与 HEVC 8.4.4.2.5 的 both-available 分支同式）；与“是否图像边界”无关。
-        if (!is_chroma) {
+        if (!is_chroma && size < 32) {
             put(0, 0, (L[0] + 2 * dc + T[0] + 2) >> 2);
             for (int x = 1; x < size; ++x) put(x, 0, (T[x] + 3 * dc + 2) >> 2);
             for (int y = 1; y < size; ++y) put(0, y, (L[y] + 3 * dc + 2) >> 2);
@@ -330,7 +360,7 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
             }
             // FFmpeg pred_template.c:515：mode 26 的首列后处理带 c_idx==0，
             // 色度不做（与 DC 首行/首列滤波、mode 10 同属亮度专属）。
-            if (mode == 26 && !is_chroma)
+            if (mode == 26 && !is_chroma && size < 32)
                 for (int y = 0; y < size; ++y)
                     put(0, y, std::clamp(T[0] + ((L[y] - L[-1]) >> 1), 0, 255));
         } else {  // 水平类（参考 left）
@@ -352,32 +382,52 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                     for (int y = 0; y < size; ++y) put(x, y, ref[y + idx + 1]);
             }
             // FFmpeg pred_template.c:542：mode 10 的首行后处理同样仅 c_idx==0。
-            if (mode == 10 && !is_chroma)
+            if (mode == 10 && !is_chroma && size < 32)
                 for (int x = 0; x < size; ++x)
                     put(x, 0, std::clamp(L[0] + ((T[x] - T[-1]) >> 1), 0, 255));
         }
     }
 }
 
-int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
-                               const std::uint8_t* rec, int rec_stride,
-                               int x0, int y0, int pic_w, int pic_h, int qp) {
-    if (x0 < 0 || y0 < 0 || x0 + 8 > pic_w || y0 + 8 > pic_h) return 1;  // INTRA_DC
+void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
+                            int x0, int y0, int pic_w, int pic_h,
+                            std::uint8_t* dst, ChromaPredPlane chroma) {
+    predict_intra_impl(mode, rec, stride, x0, y0, pic_w, pic_h, dst, chroma, 4);
+}
+
+void predict_intra_luma(int mode, const std::uint8_t* rec, int stride,
+                        int x0, int y0, int log2_size, int pic_w, int pic_h,
+                        std::uint8_t* dst, ChromaPredPlane chroma) {
+    predict_intra_impl(mode, rec, stride, x0, y0, pic_w, pic_h, dst, chroma,
+                       1 << log2_size);
+}
+
+int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
+                           const std::uint8_t* rec, int rec_stride,
+                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2) {
+    if (tu_log2 < 2 || tu_log2 > 5) return 1;  // INTRA_DC
+    // tu_log2==2 表示 8x8 CU 分裂成 4 个 4x4 TU；>=3 表示单个 n×n TU。
+    const bool split4 = (tu_log2 == 2);
+    const int cu = split4 ? 8 : (1 << tu_log2);
+    if (x0 < 0 || y0 < 0 || x0 + cu > pic_w || y0 + cu > pic_h) return 1;
 
     // 逐 TU 预测要读左/上/右上/左下邻域，故在重建平面的副本上模拟，保证候选模式
     // 看到的「块外已重建样本」与最终编码一字不差。
     //
     // 性能：4K 下每个 CU 都「分配整帧 + 整帧 memcpy」约 12 MB × 32640 CU ≈ 390 GB，
-    // 是模式决策 564 秒/帧的主因。predict_intra_luma_4x4 的 POS() 读取范围严格落在
-    // (x0-1..x0+7, y0-1..y0+7) 这个 9x9 窗口内（左上角、上方 4 + top-right 4、
-    // 左侧 4 + bottom-left 4），窗口外的值从不参与预测。故改为复用持久缓冲，
-    // 只在尺寸变化时分配，每次调用仅同步该窗口；语义与整帧副本逐位相同。
+    // 是模式决策 564 秒/帧的主因。POS() 的读取范围严格落在参考窗口内，故复用持久
+    // 缓冲，只在尺寸变化时分配，每次调用仅同步该窗口；语义与整帧副本逐位相同。
+    // 大 TU 的 top-right / bottom-left 扩展会读到 x0+2*cu、y0+2*cu，窗口须同步放大。
     static thread_local std::vector<std::uint8_t> trial;
     const std::size_t total = static_cast<std::size_t>(pic_w) * static_cast<std::size_t>(pic_h);
     if (trial.size() != total) trial.assign(total, 0);
-    for (int y = y0 - 1; y <= y0 + 7; ++y) {
+    // split4 时第 4 个 4x4 TU 位于 (x0+4,y0+4)，其 top-right / bottom-left
+    // 扩展最远读到 x0+11 / y0+11，9x9 窗口不够；窗口外的 trial 残留会让同一
+    // 输入两次调用选出不同模式。同步 16x16 即可覆盖全部 4 个 TU 的参考。
+    const int reach = split4 ? 16 : (2 * cu);
+    for (int y = y0 - 1; y <= y0 + reach - 1; ++y) {
         if (y < 0 || y >= pic_h) continue;
-        for (int x = x0 - 1; x <= x0 + 7; ++x) {
+        for (int x = x0 - 1; x <= x0 + reach - 1; ++x) {
             if (x < 0 || x >= pic_w) continue;
             trial[static_cast<std::size_t>(y) * pic_w + x] =
                 rec[static_cast<std::size_t>(y) * rec_stride + x];
@@ -386,27 +436,51 @@ int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
 
     int best_mode = 1;
     long long best_ssd = 1LL << 60;
+    std::vector<std::uint8_t> pred(static_cast<std::size_t>(cu * cu));
+    std::vector<std::int16_t> level(static_cast<std::size_t>(cu * cu));
     for (int mode = 0; mode < 35; ++mode) {
-        // 每个候选模式都从同一份「本 CU 尚未重建」的基准出发（只回滚本 CU 8x8）。
-        for (int y = 0; y < 8; ++y)
+        // 每个候选模式都从同一份「本 CU 尚未重建」的基准出发（只回滚本 CU）。
+        for (int y = 0; y < cu; ++y)
             std::memcpy(&trial[static_cast<std::size_t>(y0 + y) * pic_w + x0],
-                        &rec[static_cast<std::size_t>(y0 + y) * rec_stride + x0], 8);
+                        &rec[static_cast<std::size_t>(y0 + y) * rec_stride + x0],
+                        static_cast<std::size_t>(cu));
 
         long long ssd = 0;
-        for (int i = 0; i < 4; ++i) {
-            const int tx = x0 + ((i & 1) ? 4 : 0);
-            const int ty = y0 + ((i & 2) ? 4 : 0);
-            std::uint8_t pred[16];
-            predict_intra_luma_4x4(mode, trial.data(), pic_w, tx, ty, pic_w, pic_h, pred);
-            std::int16_t level[16];
-            encode_tu_4x4(&src[static_cast<std::size_t>(ty) * src_stride + tx], src_stride,
-                          pred, &trial[static_cast<std::size_t>(ty) * pic_w + tx], pic_w,
-                          level, qp, /*use_dst=*/true);
-            for (int y = 0; y < 4; ++y)
-                for (int x = 0; x < 4; ++x) {
-                    const int d =
-                        static_cast<int>(src[static_cast<std::size_t>(ty + y) * src_stride + tx + x]) -
-                        static_cast<int>(trial[static_cast<std::size_t>(ty + y) * pic_w + tx + x]);
+        if (split4) {
+            // 4 个 z 序 4x4 TU：与真实编码同次序、逐 TU 写回重建，后续 TU 的
+            // 参考样本演化与最终编码一致。
+            for (int i = 0; i < 4; ++i) {
+                const int tx = x0 + ((i & 1) ? 4 : 0);
+                const int ty = y0 + ((i & 2) ? 4 : 0);
+                predict_intra_luma_4x4(mode, trial.data(), pic_w, tx, ty, pic_w, pic_h,
+                                       pred.data());
+                std::int16_t l16[16];
+                encode_tu_4x4(&src[static_cast<std::size_t>(ty) * src_stride + tx], src_stride,
+                              pred.data(), &trial[static_cast<std::size_t>(ty) * pic_w + tx],
+                              pic_w, l16, qp, /*use_dst=*/true);
+                for (int y = 0; y < 4; ++y)
+                    for (int x = 0; x < 4; ++x) {
+                        const int d = static_cast<int>(
+                                          src[static_cast<std::size_t>(ty + y) * src_stride + tx + x]) -
+                                      static_cast<int>(
+                                          trial[static_cast<std::size_t>(ty + y) * pic_w + tx + x]);
+                        ssd += static_cast<long long>(d) * d;
+                    }
+            }
+        } else {
+            // 单个大 TU：预测尺寸与变换尺寸都等于真实 TU，避免用 4x4 失真模型挑模式。
+            predict_intra_luma(mode, trial.data(), pic_w, x0, y0, tu_log2, pic_w, pic_h,
+                               pred.data());
+            encode_tu(&src[static_cast<std::size_t>(y0) * src_stride + x0], src_stride,
+                      pred.data(), &trial[static_cast<std::size_t>(y0) * pic_w + x0], pic_w,
+                      level.data(), qp, tu_log2, /*use_dst=*/false,
+                      /*transform_skip=*/false);
+            for (int y = 0; y < cu; ++y)
+                for (int x = 0; x < cu; ++x) {
+                    const int d = static_cast<int>(
+                                      src[static_cast<std::size_t>(y0 + y) * src_stride + x0 + x]) -
+                                  static_cast<int>(
+                                      trial[static_cast<std::size_t>(y0 + y) * pic_w + x0 + x]);
                     ssd += static_cast<long long>(d) * d;
                 }
         }
@@ -416,6 +490,13 @@ int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
         }
     }
     return best_mode;
+}
+
+int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
+                               const std::uint8_t* rec, int rec_stride,
+                               int x0, int y0, int pic_w, int pic_h, int qp) {
+    return choose_intra_luma_mode(src, src_stride, rec, rec_stride, x0, y0, pic_w, pic_h,
+                                  qp, /*tu_log2=*/2);
 }
 
 }  // namespace termchart::image::codec::hevc

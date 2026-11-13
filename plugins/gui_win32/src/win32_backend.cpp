@@ -63,6 +63,7 @@ struct Win32Backend::Impl {
     termchart_gui::Bitmap last_frame_;  // 上一帧（resize 时拉伸旧图、消灭黑洞的源）
     bool canvas_fresh_ = false;         // 画布是否已在当前尺寸渲染完成
     std::function<void(std::uint32_t, std::uint32_t)> render_hook_;  // WM_SIZE 同步重渲染钩子
+    bool external = false;  // Take 2：用户拥有窗口（不销毁 hwnd、不跑 OS 消息泵）
 
     Impl(HINSTANCE inst, std::uint32_t width, std::uint32_t height)
         : hinst(inst), w(width), h(height),
@@ -170,8 +171,12 @@ struct Win32Backend::Impl {
     // 热路径：只读引用源（不整图拷贝）+ 复用 BGRA 缓冲 + 裸指针重排。
     void blit(HDC hdc) {
         const termchart_gui::Bitmap& canv = canvas->pixels();
-        const int dw = static_cast<int>(canv.width());  // 目标 = 当前客户区（画布尺寸）
-        const int dh = static_cast<int>(canv.height());
+        blit_to(hdc, static_cast<int>(canv.width()), static_cast<int>(canv.height()));
+    }
+
+    // 指定目标尺寸上屏：外部句柄模式下客户区可能大于/小于画布，StretchDIBits 自动缩放。
+    void blit_to(HDC hdc, int dw, int dh) {
+        const termchart_gui::Bitmap& canv = canvas->pixels();
         if (dw <= 0 || dh <= 0 || hdc == nullptr) {
             return;
         }
@@ -283,21 +288,52 @@ Win32Backend::Win32Backend(std::uint32_t width, std::uint32_t height, std::strin
     impl_->create(std::move(title));
 }
 
+// Take 2：绑定用户已有的 HWND。不注册窗口类、不 CreateWindow、不跑消息泵；
+// present() 直接把画布贴到该窗口客户区（宿主负责把鼠标/键盘消息 inject_event 回来）。
+Win32Backend::Win32Backend(const termchart_gui::NativeSurface& host) {
+    const std::uint32_t w = host.width != 0 ? host.width : 1;
+    const std::uint32_t h = host.height != 0 ? host.height : 1;
+    impl_ = std::make_unique<Impl>(GetModuleHandleW(nullptr), w, h);
+    impl_->external = true;
+    impl_->hwnd = static_cast<HWND>(host.surface);
+    impl_->running = impl_->hwnd != nullptr;
+}
+
 Win32Backend::~Win32Backend() {
-    if (impl_ != nullptr && impl_->hwnd != nullptr) {
+    // 外部模式：窗口归用户所有，绝不在析构里销毁别人的窗口。
+    if (impl_ != nullptr && impl_->hwnd != nullptr && !impl_->external) {
         DestroyWindow(impl_->hwnd);
         impl_->hwnd = nullptr;
     }
 }
 
 bool Win32Backend::valid() const noexcept {
-    return impl_ != nullptr && impl_->hwnd != nullptr;
+    if (impl_ == nullptr || impl_->hwnd == nullptr) {
+        return false;
+    }
+    return impl_->external ? (IsWindow(impl_->hwnd) != 0) : true;
+}
+
+bool Win32Backend::is_external() const noexcept {
+    return impl_ != nullptr && impl_->external;
+}
+
+void Win32Backend::resize(std::uint32_t width, std::uint32_t height) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    impl_->resize_to(width, height);
+    impl_->queue.push_back(termchart_gui::tk_event_map::resize(width, height));
 }
 
 std::unique_ptr<termchart_gui::TkWindow> Win32Backend::create_window(std::uint32_t w,
                                                                      std::uint32_t h,
                                                                      std::string title) {
     if (impl_ == nullptr) {
+        return nullptr;
+    }
+    if (impl_->external) {
+        // 外部模式不接受"由后端建窗"；宿主自己管理窗口与尺寸。
         return nullptr;
     }
     impl_->resize_to(w, h);
@@ -311,15 +347,17 @@ bool Win32Backend::poll_event(termchart_gui::Event& out) {
     if (impl_ == nullptr || impl_->hwnd == nullptr) {
         return false;
     }
-    MSG msg;
-    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-        if (msg.message == WM_QUIT) {
-            impl_->running = false;
-            out = termchart_gui::tk_event_map::quit();
-            return true;
+    if (!impl_->external) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                impl_->running = false;
+                out = termchart_gui::tk_event_map::quit();
+                return true;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
     }
     if (!impl_->queue.empty()) {
         out = impl_->queue.front();
@@ -330,15 +368,39 @@ bool Win32Backend::poll_event(termchart_gui::Event& out) {
 }
 
 void Win32Backend::present() {
-    if (impl_ != nullptr && impl_->hwnd != nullptr) {
-        impl_->canvas_fresh_ = true;  // 应用刚渲染完：画布在当前尺寸有效，后续 WM_PAINT 用它
-        InvalidateRect(impl_->hwnd, nullptr, FALSE);
-        UpdateWindow(impl_->hwnd);  // 同步触发 WM_PAINT → blit
+    if (impl_ == nullptr || impl_->hwnd == nullptr) {
+        return;
     }
+    impl_->canvas_fresh_ = true;  // 应用刚渲染完：画布在当前尺寸有效
+    if (impl_->external) {
+        // 用户窗口：按当前客户区尺寸贴图（客户区与画布不一致时 StretchDIBits 拉伸）。
+        RECT rc{};
+        int cw = static_cast<int>(impl_->w);
+        int ch = static_cast<int>(impl_->h);
+        if (GetClientRect(impl_->hwnd, &rc) != 0) {
+            if (rc.right > 0 && rc.bottom > 0) {
+                cw = rc.right;
+                ch = rc.bottom;
+            }
+        }
+        HDC hdc = GetDC(impl_->hwnd);
+        if (hdc != nullptr) {
+            impl_->blit_to(hdc, cw, ch);
+            ReleaseDC(impl_->hwnd, hdc);
+        }
+        return;
+    }
+    InvalidateRect(impl_->hwnd, nullptr, FALSE);
+    UpdateWindow(impl_->hwnd);  // 同步触发 WM_PAINT → blit
 }
 
 void Win32Backend::run_loop(termchart_gui::EventLoop& loop) {
     if (impl_ == nullptr || impl_->hwnd == nullptr) {
+        return;
+    }
+    if (impl_->external) {
+        // 外部模式：消息泵在宿主手里，这里只跑库自己的事件循环（被动消费 inject_event）。
+        loop.run();
         return;
     }
     MSG msg;
@@ -357,9 +419,16 @@ void Win32Backend::run_loop(termchart_gui::EventLoop& loop) {
 }
 
 void Win32Backend::request_close() {
-    if (impl_ != nullptr && impl_->hwnd != nullptr) {
-        DestroyWindow(impl_->hwnd);
+    if (impl_ == nullptr || impl_->hwnd == nullptr) {
+        return;
     }
+    if (impl_->external) {
+        // 不销毁用户窗口：只让库侧收尾，投递 Quit。
+        impl_->running = false;
+        impl_->queue.push_back(termchart_gui::tk_event_map::quit());
+        return;
+    }
+    DestroyWindow(impl_->hwnd);
 }
 
 void Win32Backend::set_render_hook(std::function<void(std::uint32_t, std::uint32_t)> hook) {

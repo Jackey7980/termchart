@@ -34,7 +34,7 @@ public:
     // 消费已排队的唤醒信号（不清空则下次 wait 立即返回）。
     TERMCHART_API void drain() noexcept;
 
-    [[nodiscard]] TERMCHART_API bool valid() const noexcept { return native_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return native_ != nullptr; }
 
     // 给主循环的 select/poll；Windows 返回 HANDLE，POSIX 返回读端 fd。
     // **平台差异在此收口**：调用方只做转发，不解释类型。

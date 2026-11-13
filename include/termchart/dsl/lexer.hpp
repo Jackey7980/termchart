@@ -83,8 +83,8 @@ public:
     // 一次性取完（含结尾的 End），超过 max_tokens 返回 OutOfRange。
     TERMCHART_API Result<std::vector<Token>> tokenize() noexcept;
 
-    [[nodiscard]] TERMCHART_API std::size_t offset() const noexcept { return offset_; }
-    [[nodiscard]] TERMCHART_API std::string_view source() const noexcept { return source_; }
+    [[nodiscard]] std::size_t offset() const noexcept { return offset_; }
+    [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
 private:
     std::string_view source_;

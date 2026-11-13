@@ -34,7 +34,7 @@ public:
     TERMCHART_API Renderer& operator=(Renderer&&) noexcept;
 
     TERMCHART_API void set_depth(ColorDepth depth) noexcept;
-    [[nodiscard]] TERMCHART_API ColorDepth depth() const noexcept { return depth_; }
+    [[nodiscard]] ColorDepth depth() const noexcept { return depth_; }
 
     // 增量渲染：与内部 prev 比较。首帧或尺寸变化时自动退化为全量。
     TERMCHART_API std::string render(const CellBuffer& current) noexcept;

@@ -69,6 +69,13 @@ jobs:
         run: cmake --build build/ninja -j 4
       - name: 测试
         run: ctest --test-dir build/ninja --output-on-failure
+      # Cocoa 插件由顶层在 APPLE 下自动 add_subdirectory（enable_language(OBJCXX)
+      # + .mm 目标）。以前只做过静态审查，这里显式断言它真被编译并跑无窗口冒烟。
+      - name: Cocoa 后端真编译 + 无窗口冒烟
+        run: |
+          test -f build/ninja/plugins/gui_cocoa/libtermchart_gui_cocoa.a
+          ctest --test-dir build/ninja -N -R cocoa_offscreen | grep -q cocoa_offscreen
+          ctest --test-dir build/ninja --output-on-failure -R cocoa_offscreen
 
   windows:
     name: windows (mingw)
@@ -93,6 +100,35 @@ jobs:
         run: cmake --build build/ci-windows -j 4
       - name: 测试
         run: ctest --test-dir build/ci-windows --output-on-failure
+
+  # 共享库是唯一能暴露符号可见性 / 平台文件重复定义的构建形态：静态构建下
+  # TERMCHART_API 为空、两个 proxy_sys_*.cpp 同名符号也不会同时进链接，
+  # 两类真 bug 都不会显形（2026-11-13 实测）。故单列一个 Windows DLL 作业。
+  shared:
+    name: shared build (windows mingw DLL)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            python
+      - name: 配置（共享库）
+        run: cmake -S . -B build/ci-shared -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTERMCHART_BUILD_SHARED=ON -DTERMCHART_BUILD_EXAMPLES=OFF -DTERMCHART_BUILD_BENCH=OFF
+      - name: 构建并链接全量测试（DLL 导出面回归）
+        run: cmake --build build/ci-shared -j 4
+      - name: 用 DLL 跑全量测试
+        run: |
+          export PATH="$PWD/build/ci-shared:$PATH"
+          ctest --test-dir build/ci-shared --output-on-failure
 
   sanitizers:
     name: ubuntu (asan+ubsan)
@@ -175,6 +211,11 @@ jobs:
               print('PIL OK', f, im.size, im.mode)
           "
           ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 tc_webp.webp
+      - name: HEVC TU 尺寸 / 自动档 / 大 TU transform_skip 真实解码门禁
+        run: |
+          python tools/verify_hevc_tu_sizes.py --quick
+          python tools/verify_hevc_tu_sizes.py --quick --transform-skip
+          python tools/verify_hevc_tu_sizes.py --quick --force-skip
 
   wasm:
     name: wasm (emscripten 真编译)

@@ -52,6 +52,29 @@ TEST_CASE("graph: 节点 id 自增、查找、标签与元数据") {
     CHECK(graph.find(99) == nullptr);
 }
 
+TEST_CASE("graph: 增操作返回类型刻意不对称，长期持有统一走 find") {
+    Graph graph;
+    const NodeId a = graph.add_node("a").id();
+    const NodeId b = graph.add_node("b").id();
+
+    // add_node 不会失败（返回 Node&）；add_edge 端点不存在会失败（返回 nullptr）。
+    CHECK(graph.add_edge(a, 999) == nullptr);
+    CHECK(graph.edge_count() == 0);
+    Edge* e = graph.add_edge(a, b, "flow");
+    REQUIRE(e != nullptr);
+
+    // 后续插入可能让上面的引用 / 指针失效，但按身份找回始终有效。
+    for (int i = 0; i < 32; ++i) (void)graph.add_node("pad");
+    REQUIRE(graph.find(a) != nullptr);
+    CHECK(graph.find(a)->label() == "a");
+    const Edge* stable = graph.find_edge(a, b);
+    REQUIRE(stable != nullptr);
+    CHECK(stable->from() == a);
+    CHECK(stable->to() == b);
+    CHECK(stable->label() == "flow");
+    CHECK(graph.find_edge(a, 999) == nullptr);
+}
+
 TEST_CASE("graph: 边要求端点存在，度数正确") {
     Graph graph;
     const NodeId a = graph.add_node("a").id();

@@ -3,6 +3,12 @@
 // macOS：SystemConfiguration 的 SCDynamicStoreCopyProxies（Surge/ClashX 等
 // 开启"设置为系统代理"时写的就是这里）；其余 POSIX（Linux 等）没有系统级
 // 代理设置标准，恒返回 None——环境变量是那些平台的唯一自动来源。
+// 与 socket_posix.cpp / terminal_posix.cpp 同纪律：Windows 上本文件必须是空 TU。
+// 否则 read_system() 会与 proxy_sys_win32.cpp 重复定义 —— shared 构建直接链接失败，
+// 静态构建更危险：链接器可能取到本文件的 POSIX「恒返回 None」实现，令 Windows
+// 注册表系统代理探测静默失效。2026-11-13 由 shared 构建实测暴露并补齐。
+#if !defined(_WIN32)
+
 #include "src/network/proxy_internal.hpp"
 
 #include <cstring>
@@ -108,3 +114,5 @@ Config read_system(std::string_view, std::string_view) noexcept { return Config{
 }  // namespace termchart::network::proxy
 
 #endif  // __APPLE__
+
+#endif  // !_WIN32

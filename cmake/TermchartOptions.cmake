@@ -32,9 +32,11 @@ option(TERMCHART_BUILD_GUI_QT "构建原生 Qt GUI 后端插件（可选，需 Q
 # 时**配置期报错**（fail-loud，不静默跳过）。
 option(TERMCHART_BUILD_GUI_TK "构建原生 Tk GUI 后端插件（可选，需 Tcl/Tk 开发库；默认关）" OFF)
 
-# Emscripten WASM 目标（可选，需 emsdk；默认关、不进 CI）。开启后，配合 Emscripten
+# Emscripten WASM 目标（可选，需 emsdk；默认关）。开启后，配合 Emscripten
 # 工具链会编出一个把 image::Bitmap 推到网页 <canvas> 的模块（src/wasm/termchart_wasm.cpp）。
-# 普通桌面/CI 构建里 EMSCRIPTEN 为假，此开关无效、不产生任何目标。
+# 普通桌面构建里 EMSCRIPTEN 为假，此开关无效、不产生任何目标。
+# 2026-11-13 更正：CI 有独立 `wasm (emscripten 真编译)` job 显式开启本开关做真编译
+# 验证（见 .github/workflows/ci.yml），「不进 CI」是 2026-11-06 首编时的旧结论。
 option(TERMCHART_BUILD_WASM "构建 Emscripten WASM 目标（需 emsdk；默认关）" OFF)
 
 # ── 静态分析（可选，默认关；开启后构建期自动对每个编译单元跑） ──────────

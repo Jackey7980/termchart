@@ -25,6 +25,16 @@ endif()
 set_target_properties(win32_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
 
+# Take 2 句柄注入演示：用户自建/自销窗口，库只贴像素并接收注入事件。
+# 与 win32_demo（库自建窗口的 Take 1 路径）对照，验证外部模式不破坏既有契约。
+add_executable(embed_demo example/embed_demo.cpp)
+target_link_libraries(embed_demo PRIVATE termchart_gui_win32)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(embed_demo PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+set_target_properties(embed_demo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+
 # 组合图表演示：ChartWidget（柱+折线+面积）+ 悬停信息框 + 窗口缩放自适应。
 add_executable(chart_demo example/chart_demo.cpp)
 target_link_libraries(chart_demo PRIVATE termchart_gui_win32)

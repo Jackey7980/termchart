@@ -43,7 +43,7 @@ public:
     // 每次调用 run() 都会先清除 stop 标志。
     TERMCHART_API std::uint64_t run(std::uint64_t max_iterations);
 
-    [[nodiscard]] TERMCHART_API double max_delta() const noexcept { return max_delta_; }
+    [[nodiscard]] double max_delta() const noexcept { return max_delta_; }
     TERMCHART_API void set_max_delta(double seconds) noexcept;
 
     // 累计帧数（跨多次 run()）。

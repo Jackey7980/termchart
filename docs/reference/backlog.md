@@ -124,7 +124,11 @@
      js 侧靠 `Module["_termchart_blit_canvas"]=wasmExports["f"]` 映射表保证 `ccall` 可用。
   编译缓存：`wasm` 预设的 `environment` 里设 `EM_COMPILER_WRAPPER=ccache`（Emscripten 官方支持的
   ccache 包装方式，实测 100% cacheable），配合 ninja 满核并行。
-  仍**刻意不并入 CI**（runner 生态差异大）。
+  **CI 状态更正（2026-11-13 联网复核）**：WASM **已并入 CI** ——
+  `.github/workflows/ci.yml` 有独立 `wasm (emscripten 真编译)` job（setup-emsdk +
+  `cmake --preset wasm` + `test -s build/wasm/termchart_wasm.wasm`），2026-11-09 的
+  ci run 中该 job 为 success。上面「刻意不并入 CI」是 2026-11-06 首编时的决定，
+  已被后续改动覆盖；本行保留作历史痕迹。
 
 ## 三、质量与一致性（精简，逐条证据见 `quality_todo.md`）
 
@@ -158,7 +162,12 @@
 
 ## 四、文档 / 口径同步（P0，零风险）
 
-> phase7 落地 `dsl`/`widget`/`plugin`/`app`/`diagrams`/`single_include` + 大量 examples 后，下列文档数字已失真，需重数刷新（`capability_matrix` 自身要求"改动后重跑命令再更新"）：
+> phase7 落地 `dsl`/`widget`/`plugin`/`app`/`diagrams`/`single_include` + 大量 examples 后，下列文档数字曾失真并已在当时刷新（`capability_matrix` 自身要求"改动后重跑命令再更新"）。
+> **2026-11-13 按当前源树重数**：`include/termchart/**/*.hpp` **416 头**、`src/**/*.cpp` **366**、
+> `examples/*.cpp` **87**、`tests/**/*.cpp` **193**、golden 14 份；`ctest` **92/92**、
+> doctest **1446 用例 / 261734 断言**、`check_all` **452 头独立编译**全绿、
+> shared 构建链接 + 同一套用例通过、`v1.0.0` tag 在。
+> 下列 `[x]` 条目中的 333 头 / 282 实现 / examples 57 等是 2026-10-13 的历史值，不作现状引用。
 
 - [x] `capability_matrix.md`：第五节"规格差距"按实测刷新（333 头 / 282 实现、缺口 ~26–28、
   examples 57、single_include 已建立、bench 2→3、fuzz 8、fixtures 7/7）；
@@ -179,10 +188,21 @@
   其中 **`backend_tk` 提供 `Backend` 抽象 + `HeadlessBackend`（`BitmapCanvas` + 内部事件队列）**，使整条栈
   能在无窗口系统下编译、测试——`tests/unit/gui/test_gui_stack.cpp` 共 40 用例 / 181 断言（layout 重排、
   widget 命中/回调、ChartWidget 悬停/缩放/淡入、Combo/Gauge/Polar 渲染均落真彩像素断言）**2026-10-28 复核全过**。
-  **真实落地边界（据实更正）**：原生窗口后端 `Win32Backend` / `QtBackend` / `TkBackend` 的完整实现位于
-  **`plugins/gui_win32` / `plugins/gui_qt` / `plugins/gui_tk`**（默认 OFF，仅因依赖外部运行时），**不在**
-  `include/termchart_gui/` 内；`termchart_gui::Backend` 接口目前只有无头实现作为默认路径，真实窗口事件循环
-  需使用者显式启用对应插件（桥接需 Tk/Qt/Win32 运行时）。
+  **真实落地边界（据实更正）**：原生窗口后端 `Win32Backend` / `QtBackend` / `TkBackend` / `X11Backend` /
+  `CocoaBackend` / `JniBackend` 的完整实现位于 **`plugins/gui_win32` / `gui_qt` / `gui_tk` / `gui_x11` /
+  `gui_cocoa` / `gui_jni`**，**不在** `include/termchart_gui/` 内；`termchart_gui::Backend` 接口默认只有无头
+  实现，真实事件循环需宿主启用对应插件（桥接需 Tk/Qt/Win32/Xlib/AppKit/JRE 运行时）。
+  **2026-11-11 新增三套 Take 2「句柄注入」后端**（窗口归宿主，后端只贴 `BitmapCanvas` + 收剥壳事件）：
+  `gui_x11`（`XPutImage` 上屏，按 15/16/24/32 位深打包，`x11_smoke` 在 Xvfb 下通过）、
+  `gui_cocoa`（宿主 `drawRect:` 里画 `CGImage`，按 `isFlipped` 决定是否翻 Y）、
+  `gui_jni`（`jintArray` ARGB 回写，真 JVM 下 `jni_smoke` 通过）。三者由顶层按平台自动纳入
+  （Unix→X11、Apple→Cocoa、有 JDK→JNI），缺依赖时插件自行 `STATUS` 跳过，不再是开关 + fail-loud。
+  **Cocoa 真编译状态（2026-11-13 更正）**：顶层 `CMakeLists.txt` 在 `APPLE` 下自动
+  `add_subdirectory(plugins/gui_cocoa)`，插件 CMake `enable_language(OBJCXX)` 编译
+  `cocoa_backend.mm` 并注册 `cocoa_offscreen` 无窗口冒烟；CI `macos` job 已加显式断言
+  （静态库产物存在 + 用例已注册 + 冒烟通过），不再是「只做过静态审查」。
+  本机无 macOS，且最新 CI run 早于 11-11 的 Take 2 改动，故仍待**下一次推送触发的
+  macOS CI 实际跑过**才算闭环。
   **Qt 侧 2026-11-07 已真编译 + 冒烟验证**：Qt 6.8.3（`mingw_64` 动态构建）、GCC 15.2，
   `-DTERMCHART_BUILD_GUI_QT=ON` 下 355 个 TU 全过，产出 `examples/qt_demo.exe`，`--smoke` 输出
   `frame rendered, window closed cleanly`；`objdump -p` 依赖为 `Qt6Core/Gui/Widgets.dll`（**动态链接**）。

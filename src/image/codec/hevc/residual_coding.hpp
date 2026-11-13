@@ -42,11 +42,32 @@ extern const std::uint8_t kDiagScan4x4Inv[4][4];
 // log2_trafo_size==2 / SCAN_DIAG 的 significant_coeff_flag ctx 映射。
 extern const std::uint8_t kSigCoeffCtxMap4x4[16];
 
+// ── 泛化到 log2_size 2..5 的残差语法 ────────────────────────────────────
+// coeff 按【行主序】存放 size*size 个量化 level（含符号），index = y*size+x，
+// size = 1<<log2_size。log2_size==2 时 CG 网格只有 1 个，语法退化成 4x4 单 CG；
+// log2_size>=3 时按 4x4 编码组（CG）从最后一个 CG 往 (0,0) 逐组编码。
+//
+// 与 ff_hevc_hls_residual_coding 的对应：last_sig prefix/suffix、CG flag
+// （i==num_last_subset 与 (0,0) 两处推断为 1、不写 bin）、sig_coeff_flag
+// （ctx_idx_map 按 prev_sig 选块）、greater1/2、sign（sign_data_hiding=0，
+// 每系数一个 bypass 位）、Rice（每 CG 从 0 起、上限 4）。
+// 全零时返回空序列（调用方应写 cbf=0，不进入 residual_coding）。
+// log2_size 越界或 level 超出 Rice 可表达范围时 ok=false 并返回空序列。
+std::vector<Bin> encode_residual(const std::int16_t* coeff, int log2_size,
+                                 bool* ok = nullptr,
+                                 ScanIdx scan_idx = kScanDiag, int c_idx = 0);
+
+// 按 FFmpeg 解码语义独立回读；成功时把 level 写回【行主序】coeff 并给消耗 bin 数。
+bool decode_residual(const Bin* bins, std::size_t count, std::int16_t* coeff,
+                     int log2_size, std::size_t* consumed,
+                     ScanIdx scan_idx = kScanDiag, int c_idx = 0);
+
 // coeff[16] 按【scan_idx 对应的扫描序】存放量化 level（含符号）。
+// 旧接口保留：内部转成行主序后调 encode_residual(..., 2, ...)，bin 序列不变。
 // 全零时返回空序列（调用方应写 cbf=0，不进入 residual_coding）。
 //
-// 当前子集：log2_trafo_size=2、单 CG、sign_data_hiding_flag=0、
-// 无 transform_skip / scaling_list；c_idx=0 为亮度、1/2 为 U/V 色度。
+// c_idx=0 为亮度、1/2 为 U/V 色度；sign_data_hiding_flag=0、
+// 无 transform_skip / scaling_list。
 // Rice 的 escape 分支（prefix>=3）已实现（对齐 FFmpeg coeff_abs_level_remaining_decode）。
 // ok 为 false 表示量化 level 超出 Rice 可表达范围（返回空序列）。
 //

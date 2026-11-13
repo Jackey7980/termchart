@@ -90,11 +90,11 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | 编号 | 缺口 | 证据 / 现状 |
 | --- | --- | --- |
 | ~~P0-5~~ **已修（2026-11-10）** | 跨 CTB 行的 **bottom-left 扩展参考** | 根因是 `end_of_tiles_y` 被误当成整帧高度：FFmpeg `hevcdec.c:2753` 它是**当前 CTB 行底部**，故每个 CTB 行最后一行的 TU 关闭 bottom-left 扩展（`mvs.c:58`）。编码端按 `pic_h` 判定会读下一 CTB 行尚未编码的 `rec` 区。改为按 `min(((y0>>6)<<6)+64, pic_h)` 判定后，35 模式在 128×64 / 256×128 / 640×384 全部 `recon == dec` maxdiff=0，默认模式决策已**放开此前排除的 mode 0/2..9**。注：此前文档写的「top-right」是误判——坏的是用 L 参考的 2..9，用 T 参考的 26..34 一直正常。 |
-| P1 | 8×8 / 16×16 / 32×32 TU、`transform_skip` | SPS `log2_diff_max_min_transform_block_size = 0`（MaxTb=4px）；`transform.cpp` 只有 4×4 DCT-II / DST-VII。 |
+| ~~P1~~ **已完成（2026-11-12）** | 8×8 / 16×16 / 32×32 TU + 自动档 + 大 TU `transform_skip` | 多 CG 残差语法、n×n 帧内预测、CU/transform 树分裂已落地；`tools/verify_hevc_tu_sizes.py` 三模式 360 条码流 ffmpeg 软解 `recon == dec`（`neq=0`）全绿，自动档比最佳单一档省 20.7%（关闭 skip）/ 相对关闭 skip 的最佳固定档省 21.0%（开启 skip）。`transform_skip` 已解除 4×4 互斥：RExt profile（`general_profile_idc=4`）+ `sps_range_extension` 配套开关 + **`pps_range_extension.log2_max_transform_skip_block_size_minus2`**（该字段在 PPS 而非 SPS，旧文档把它写错了）；8/16/32 TU 与色度（4×4 及大 TU 两条路径）都按各自平面 QP 的 RD 选 skip，`--force-skip` 端到端验证 `flag=1` 语法。`trace_headers` 逐字段核对已接入 `tools/verify_hevc_tu_sizes.py`，关闭 skip 的 Main 档核对不写 extension。 |
 | ~~P1~~ **已完成（2026-11-10）** | 色度预测与色度残差 | DM 模式色度预测（复用亮度 35 模式逻辑 + `c_idx` 语义）、4×4 色度 DCT-II、`qPi→qPc` 色度 QP、`cbf_cb/cr` 与 U/V 残差 CABAC（`c_idx>0` 固定 ctx 偏移）全部落地。5 形态 × 4 QP 的 `recon U/V == ffmpeg dec U/V` maxdiff=0，彩色图 U/V PSNR 37.9~50.6 dB。 |
 | P3 | DBF 精确化 | `deblocking.cpp` 是 bS 恒 2、仅亮度、单 tc 的近似，与 FFmpeg 差 maxdiff≈4（只影响编码端 recon，不进码流）；SAO 在 SPS 中关闭。 |
 | P2 | 阶段二 | `inter_prediction` / `motion_estimate` / `dpb` / `sao` / `rd_optimization` / `bitstream_control` **全仓库 0 实现文件**；`VideoEncodeMode::Inter` 显式返回空串（fail-loud 契约，不是半成品）。"P 帧功能清理"的结论是：没有可清理的代码，需要的是把该占位语义写进公开头并锁定（已完成）。 |
-| P4 | MP4 路径 QP | `EncodeOptions::video_qp` 已可配置，但 `encode_mp4` 尚未透传。 |
+| ~~P4~~ **功能已完成（2026-11-13 复核）** | MP4 路径 QP | `encode_mp4` → `encode_hevc_annexb(frames, opts)` → `std::clamp(opts.video_qp, 0, 51)` → `slice_qp_delta` 已全链路透传（旧文档「尚未透传」已更正）；`tests/unit/image/test_hevc_qp.cpp` 覆盖 slice_qp_delta，`test_mp4_encode.cpp` 新增「video_qp 经 MP4 路径透传」用例（QP10/40 码流不同且体积单调）。**注意**：`video_mode` 默认 `Pcm`（I_PCM 档刻意忽略 QP 以保基线字节不变），按 QP 产出必须显式设 `VideoEncodeMode::Intra`。 |
 
 ### 2.4 本轮修复记录（2026-11-09 ~ 11-10，均为真 bug）
 
@@ -125,7 +125,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
    是误判，已一并更正。
 8. **4K 模式决策性能（2026-11-10）**：`choose_intra_luma_mode_8x8` 原本每个 CU 都
    「分配整帧 + 整帧 memcpy」（4K 约 12 MB × 32640 CU ≈ 390 GB），是 564 秒/帧的主因。
-   改为复用持久缓冲、每次只同步预测真正会读的 9×9 邻域窗口（窗口外 `POS()` 从不访问），
+   改为复用持久缓冲、每次只同步预测真正会读的邻域窗口（8x8 分裂档 16×16、单 TU 档 `2*cu`；早期写成固定 9×9 覆盖不到第 4 个 4x4 TU，会读到 trial 残留导致非确定性，已修），
    语义逐位不变；实测 **39.1 秒/帧**，码流 62 KB，d3d11va 与软解 Y 平面仍 maxdiff=0。
 9. **色度预测与色度残差（2026-11-10）**：此前 `cbf_cb/cr` 恒 0、`rec.u/v` 恒 128，
    彩色内容全变灰度。按 FFmpeg `hevcdec.c:1484-1506` 在第 4 个亮度 TU（blk_idx==3）
@@ -170,7 +170,7 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | P1-1 | `transform.cpp` | 8×8 整数 DCT 蝶形（FFmpeg `dsp_template.c` 的 `TR_8`），逐常量对齐 | 往返单测 |
 | P1-2 | `quantize.cpp` | 8×8 的 `shift = bd + log2 - 5` 与 `level_scale` 复用 | 逐常量对拍 `_ff_cabac.c:1173-1176` |
 | P1-3 | `cabac_syntax.cpp` / `residual_coding.cpp` | 多 CG 的 `significant_coeff_group_flag`、`ctx_idx_map` 按 `prev_sig` 分支、`scan_2x2` CG 顺序 | 外部解码逐位一致 |
-| P1-4 | `parameter_sets.cpp` | `transform_skip_enabled_flag` 与 `log2_max_transform_skip_block_size` 开关 | G5 + trace_headers |
+| P1-4 **已完成** | `parameter_sets.cpp` | `Pps::transform_skip_enabled_flag` + `Pps::log2_max_transform_skip_block_size`（写在 **PPS** range extension）；`Sps/Vps::general_profile_idc=4`(RExt) 与 `Sps::range_extension` 配套 | 360 条码流软解 `recon == dec neq=0`；`trace_headers` 逐字段核对 profile / extension / minus2；单测锁住 max=2 不写 extension、3/4/5 写出不同 `ue(v)`、Main 位宽不变 |
 
 **风险**：多 CG 的 `ctx_idx_map` 与 `prev_sig` 是失步高发区；先做"仅 DC、多 CG"
 的最小用例跑通，再放开任意系数。
@@ -201,18 +201,22 @@ ffmpeg 解码像素反推。**自往返测试不能替代外部 oracle**。
 | P3-3 | `rd_optimization.{hpp,cpp}` | SATD/SSD + λ·bits 决定 CU 切分 / 预测模式 / CBF | 关闭 RD 仍合法；打开后体积 −≥10% |
 | P3-4 | `bitstream_control.*`（可选） | 固定 QP → 简单 CBR/VBR | 帧间码率波动收敛 |
 
-**注意**：当前真压缩档靠 PPS `pps_deblocking_filter_disabled_flag=1` 让解码端
-不做滤波，从而保证逐像素判据。打开 DBF/SAO 后，`enc vs dec` 判据要改成
-「编码端同步滤波后的重建 == 解码输出」，G5 的 Y 平面逐位比对也必须保留。
+**注意（2026-11-13 更正）**：真压缩档传默认 `Pps{}`，
+`deblocking_filter_control_present_flag=0` ⇒ 解码端
+`pps_deblocking_filter_disabled_flag` 推断为 0，**DBF 生效**（旧文档写「靠禁滤波保证判据」已过时）。
+编码端重建出口有 `deblock_frame_luma` 近似实现（bS 恒 2、仅亮度、单 tc），与 FFmpeg 差
+`maxdiff≈4`；逐像素门禁 `tools/verify_hevc_tu_sizes.py` 用 `TERMCHART_HEVC_NO_DBLOCK=1`
++ `ffmpeg -skip_loop_filter all` 让两端都关 DBF，故 `recon == dec neq=0` 成立。
+P3-1 要做的是把编码端 DBF 精确化，使**开启 DBF 时**也能逐位一致；G5 的 Y 平面逐位比对保留。
 
 ### P4 — 工程收口
 
 | 步骤 | 内容 | 验收 |
 | --- | --- | --- |
-| P4-1 | `EncodeOptions::video_qp` 透传到 `encode_mp4` / `api::save_image` | MP4 路径可按 QP 产出，单测覆盖 |
-| P4-2 | 新增文件按四件套：CMake 引用、`src/` 同名 cpp、单测、`check_header_only` 登记 | G1~G4 |
-| P4-3 | `docs/reference/hevc_encoder_handoff.md` §0 现状更新为「逐位一致 + 硬解通过」 | 文档与代码一致 |
-| P4-4 | `ROADMAP.md` 顶部「修订记录」按阶段勾选，附实测数字 | CONTRIBUTING 提交规范 |
+| ~~P4-1~~ 已完成 | `EncodeOptions::video_qp` 透传到 `encode_mp4` / `api::save_image` | 全链路已通；`test_mp4_encode.cpp` 已补 QP10/40 透传单测（需 `video_mode=Intra`） |
+| P4-2 | 新增文件按四件套：CMake 引用、`src/` 同名 cpp、单测、`check_header_only` 登记 | G1~G4（长期纪律，非一次性待办） |
+| ~~P4-3~~ 已完成 | `docs/reference/hevc_encoder_handoff.md` 现状更新 | §0 已写「逐位一致 + 硬解通过」，2026-11-13 补 §0a 后续扩展现状指针 |
+| ~~P4-4~~ 已完成 | `ROADMAP.md` 顶部「修订记录」按阶段附实测数字 | 2026-11-09~11-13 多行修订记录 |
 
 ---
 
@@ -251,13 +255,13 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
 [已完成] 模式决策性能：4K 单帧 564 s → 41.8 s（13.5×，含色度残差），语义不变、硬解仍 maxdiff=0
 [已完成] 色度预测与色度残差：DM + DCT-II + c_idx CABAC，U/V 逐像素一致
    ↓
-P1（8×8 / 16×16 / 32×32 TU → transform_skip）
+~~P1（8×8 / 16×16 / 32×32 TU + 自动档 + 大 TU transform_skip）~~ 已完成 2026-11-12
    ↓
 P2（DPB → ME → inter_prediction → I+P+P；G5 扩成 3 帧序列硬解）
    ↓
 P3（DBF 精确 bS + 色度通路 → SAO → RDO / 码率控制）
    ↓
-P4（MP4 QP 透传 / 文档 / ROADMAP 勾选）
+~~P4（MP4 QP 透传 / 文档 / ROADMAP 勾选）~~ 已完成 2026-11-13（含 QP 透传单测）
 ```
 
 > 纪律补充：P 帧（阶段二）**未开工且无半成品**。`VideoEncodeMode::Inter`

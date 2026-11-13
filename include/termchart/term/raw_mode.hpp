@@ -36,7 +36,7 @@ public:
         return *this;
     }
 
-    [[nodiscard]] TERMCHART_API bool active() const noexcept { return active_; }
+    [[nodiscard]] bool active() const noexcept { return active_; }
 
     // 测试探针：不进真实原始模式，只翻转内部标志（用于终端恢复回归测试）。
     static TERMCHART_API RawMode make_noop(bool pretend_active) noexcept;

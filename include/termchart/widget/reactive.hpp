@@ -34,7 +34,7 @@ class ListenerBook;  // 与值类型无关的订阅簿记（类型擦除后）�
 // 句柄以裸指针回指簿记，因此 Observable 不可拷贝/移动（见下）。
 class Subscription {
 public:
-    TERMCHART_API Subscription() noexcept = default;
+    Subscription() noexcept = default;
     TERMCHART_API ~Subscription();
     TERMCHART_API Subscription(Subscription&& other) noexcept;
     TERMCHART_API Subscription& operator=(Subscription&& other) noexcept;
@@ -62,7 +62,7 @@ public:
     // 类型擦除后的回调：拿到 new/old 两个值的只读指针。
     using ErasedFn = std::function<void(const void* new_value, const void* old_value)>;
 
-    TERMCHART_API ListenerBook() = default;
+    ListenerBook() = default;
     TERMCHART_API ~ListenerBook();
     ListenerBook(const ListenerBook&) = delete;
     ListenerBook& operator=(const ListenerBook&) = delete;

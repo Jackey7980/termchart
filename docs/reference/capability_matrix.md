@@ -8,10 +8,14 @@
 - 计划（什么时候做）：`ROADMAP.md`
 - 本文件（当前真实能力与缺口）：这里
 
-数字口径（2026-10-28 复核文件计数；doctest 用例/断言为 2026-10-22 全量跑值）：`include/termchart/**/*.hpp`（399 个）+ 并列 `termchart_gui`（35 头）、`src/**/*.cpp`（335 个）、
-`examples/`（81 个源）、`tests/`（173 个源）、golden 14 份（与 `tests/golden/` 一致）。
-`ctest`：5 套件 + 81 示例（个别 bench 经 `--quick` 进冒烟；`ctest --preset fuzz` 另有 fuzz 自检）。
-doctest：**termchart_tests 单套件 1053 用例 / 194246 断言**；含 golden/render/core/util 共 5 套件。
+数字口径（**2026-11-13 按源树重数 + 全量实跑**，替代此前 10-28 / 10-22 的旧值）：
+`include/termchart/**/*.hpp` **416 头** + 并列 `include/termchart_gui/**/*.hpp` **36 头**、
+`src/**/*.cpp` **366**、`examples/*.cpp` **87**、`tests/**/*.cpp` **193**、golden 14 份。
+`ctest`：**92 项全通过**（5 套件 + 87 示例；个别 bench 经 `--quick` 进冒烟；
+`ctest --preset fuzz` 另有 fuzz 自检）。
+doctest：**termchart_tests 1446 用例 / 261734 断言 / 0 失败**；`check_all` 全绿（**452 头**独立编译、生成物一致、分层通过）；仓库已有 `v1.0.0` tag。
+共享库构建（`TERMCHART_BUILD_SHARED=ON`，Windows MinGW DLL）亦链接通过并跑同一套 1446 用例，CI 有独立 `shared build` job 守符号导出面。
+下文各节里 396/399/333 头、81 示例、173 测试源、1053 用例等均为历史口径，不作现状引用。
 改动后请重跑下列命令再更新本文件。
 
 ```bash
@@ -151,11 +155,12 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 ## 五、规格差距总览（由代码清点得出，非估计）
 
-- 按 `结构.md` 的具名文件表核对：`include/` 现有 **396 头**，`src/` **332 个 `.cpp`**。
+- 按 `结构.md` 的具名文件表核对（2026-11-13 重数）：`include/termchart/` 现有 **416 头**，
+  `src/` **366 个 `.cpp`**（另有并列 `termchart_gui` 36 头）。
   规格具名头文件约 336–338 个，**经 `math3d`/`chart3d`/`math4d`/`chart4d`/`network`/`math`/`io`/`data`
-  八轮扩展后已远超规格（396 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
-  （此前为零代码），`termchart_gui/` 属于 GUI 平行栈、已开工（见第六节）。
-- `examples/`：规格 60 个，实存 **81 个源**（规格编号示例 01–54 全部齐备；
+  八轮扩展后已远超规格（416 > 338），缺口由负转正**；`dsl/ widget/ plugin/ app/` 四个目录**均已落地**
+  （此前为零代码），`termchart_gui/` 属于 GUI 平行栈（见第六节；原生事件循环在 `plugins/gui_*`）。
+- `examples/`：规格 60 个，实存 **87 个源**（规格编号示例 01–59 全部齐备；
   `03_function_plot`、`04_heatmap`、`05_showcase`、`06_dashboard`、`07_fractal`、
   `08_fractal_levels`、`40_advanced_master`、`71_fetch_stb`、`72_3d` 等为规格外补充，
   部分来自并行会话）。
@@ -207,10 +212,12 @@ build/ninja/bench/bench_<name> --quick    # ctest 冒烟档
 
 **已落地（2026-10-14）**：渲染核心改在 `include/termchart/gui/`（层 22）先期开工——`gui/font` 与 `gui/scene_renderer`（复用 `scene::StatefulVisitor` 时序），`examples/55_gui_scene_png` 全链路出图；上表共享面（scene 时序 / resolve / bounds / Bitmap / convert / raster）已接线。
 
-**仍待开工**（GUI 侧剩余工作量）：`include/termchart_gui/` 与 `src_gui/` 规划共 25 个文件，目前涉及
-（伞形头、`render/scene_renderer` `render/style_map`、`widget_tree/*`、`native_loop/*`、
-`layout/*`（GUI 自己的约束/弹性/网格）、`backend_tk/*`）。规格把它们标为**平行项目**，
-不阻塞库本体。
+**已落地（2026-11-13 复核，替代「仍待开工」旧结论）**：`include/termchart_gui/` 现 **36 头**，
+`layout` / `widget_tree` / `native_loop` / `render::style_map` / `backend_tk`（无头 + TUI）齐备；
+规格里列的 `render/scene_renderer` 复用主库 `gui/scene_renderer`，未另造一份。
+**真原生窗口后端在 `plugins/gui_*`**（Win32 / Tk / Qt / X11 / Cocoa / JNI 六套完整实现，
+默认 OFF 仅因外部运行时依赖），这是设计边界而非缺口。唯一遗留：`gui_cocoa` 尚缺 macOS CI
+真编译（见 `docs/reference/backlog.md`）。
 
 > 提醒：GUI 侧不要把终端路径的 `cell`/`SGR` 概念带进去。终端字符格是"低分辨率 +
 > 颜色对"的表示法，GUI 的原子是**像素矩形 + 真彩色**；两者共用的应该是 `Scene`

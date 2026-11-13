@@ -29,6 +29,7 @@ class Backend;
 class TkWindow;
 class TkCanvas;
 struct Event;
+struct NativeSurface;  // Take 2：外部宿主表面描述（backend_tk/native_surface.hpp）
 
 }  // namespace termchart_gui
 

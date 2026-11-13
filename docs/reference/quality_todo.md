@@ -34,21 +34,33 @@
   （与全库 `XxxOptions` 一致），`using Opts = ApiOptions;` 保留为兼容别名，`fwd.hpp` 同步。
 - [x] **`Renderer` 不可移动**（2026-10-13）：改为 `std::unique_ptr<Impl>` + 移动构造/移动赋值
   （定义在 `.cpp`，那里 `Impl` 才完整）；移出后对象只剩"可析构 / 可重赋值"，各入口加了断言。
-- [ ] **公共 chart 入口 `TERMCHART_API` 标记不一致**：兄弟 chart 类型有的标有的没标
-  （`bar_chart.hpp:21` `set_values` 等）。**未做**——这是"给全部公共 chart 入口统一加导出标记"
-  的机械清扫，涉及上百个声明且无法靠类型系统验证对错，本轮没有可靠手段一次改对；
-  建议单开一个"导出标记清扫"任务，配合 shared 构建（`TERMCHART_BUILD_SHARED=ON`）验证。
+- [x] **公共入口 `TERMCHART_API` 标记（2026-11-13 结案；方向与旧描述不同）**：
+  真问题不是「该标没标」，而是 **shared 构建从未跑过**，一开就暴露两类硬错误：
+  ① 头文件内联定义（类内 `{ return ...; }` 访问器、`inline` 自由函数、`= default`
+  构造）标了 `TERMCHART_API` ⇒ MinGW 报 "definition is marked dllimport"，共修 15 处，
+  纪律写进 `export.hpp` 顶部；② Windows DLL 只导出显式 dllexport 的符号，大量定义在
+  `.cpp` 的公共声明没标记 ⇒ 链接期上百个 `undefined reference`。
+  「给上百个声明逐个补标记」既无法靠类型系统验证，又会把内部实现误当 ABI 承诺，
+  故**不采用**；改由 CMake 在 `TERMCHART_BUILD_SHARED AND WIN32` 下加
+  `-Wl,--export-all-symbols` 导出全库符号，`TERMCHART_API` 只保留「显式 ABI 承诺」语义。
+  **连带修掉一个真 bug**：`proxy_sys_posix.cpp` 缺 `#if !defined(_WIN32)` 保护，
+  `read_system` 与 `proxy_sys_win32.cpp` 重复定义（shared 直接链接失败；静态构建更危险，
+  可能静默取到 POSIX「恒返回 None」实现，令 Windows 注册表代理探测失效）。
+  shared 构建 + 全量 doctest 实测通过，并接入 CI 做回归。
 - [x] **chart 默认配色统一**（2026-10-13）：抽出 `chart::default_color(DefaultColor::*)`
   （放在 `chart/series.hpp`，因为 `chart.hpp` 反向 include 它），把 93 个文件里的
   `Color::ansi16(7/2/1/4/8/6/3)` 全部替换为命名枚举。**色号逐字未变**，只是从散落的魔数
   变成一个真源；将来换 palette 只改一处。
 - [x] **`FunnelOptions` 封装破裂**（2026-10-13）：`FunnelChart` 改为
   `set_options()` / `options()`，裸公有成员收回 `private`（全仓无调用点依赖旧写法）。
-- [~] **`Graph` 增操作返回类型不一致**：**半做**。补齐了 `Graph::find_edge(from, to)`
-  （此前只有节点能按 id 找回，边只能靠当时拿到的指针）；
-  **未做**的是把 `add_node`(返回 `Node&`) 与 `add_edge`(返回 `Edge*`) 的返回类型统一——
-  这会动到 195 处调用点里真正使用返回值的那批，是纯破坏性改名，**需先拍板方向**：
-  ① 统一返回引用（加边失败时如何表达？）② 统一返回 `NodeId`/`EdgeId`（改动面最大）。
+- [x] **`Graph` 增操作返回类型（2026-11-13 结案：判定刻意不对称，不做破坏性统一）**：
+  `find_edge` 此前已补齐（边可按端点找回）。复核结论：`add_node` 返回 `Node&`（不会失败）
+  与 `add_edge` 返回 `Edge*`（端点不存在 = nullptr）承载**不同语义**，统一成引用会丢掉
+  失败通道，统一成 Id 要改 195 处调用点且零功能收益；与本文「`Opts` 访问器返回类型
+  不对称是刻意的」是同一判据。故不改 API，改为把约定写进 `graph.hpp` 顶部：
+  「返回值仅供即时使用，长期持有统一走 `find(NodeId)` / `find_edge(from, to)`」，
+  并补回归用例 `graph: 增操作返回类型刻意不对称，长期持有统一走 find`
+  锁住失败语义与容器重排后的找回。
 - [x] **`parse_mermaid` 出参风格**（2026-10-13 复核）：四个方言入口
   （`parse_mermaid` / `parse_flowchart` / `parse_class_diagram` / `parse_state_diagram` /
   `parse_sequence`）**一律 `Result<T>` 返回值 + 可选 `ParseDiagnostic*`**，风格本就统一，

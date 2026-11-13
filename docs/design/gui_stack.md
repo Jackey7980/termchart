@@ -48,13 +48,23 @@ widget/plugin/app 已在 `include/termchart/` 落地（终端栈使用）。GUI 
 `native_loop`（事件循环抽象 + 定时器）、`render/style_map`。控件/布局/绘制只面向
 `TkCanvas` 抽象，换后端零改动。
 
-**真实后端矩阵**（均为可选插件，默认 OFF，遵循 fail-loud——缺依赖配置期报错）：
+**真实后端矩阵**（均为可选插件：由顶层按平台自动纳入，缺依赖时插件自行跳过并打印
+`STATUS`，不拖累核心零依赖构建；显式 `-DTERMCHART_BUILD_GUI_QT/TK/WIN32=ON` 才编 Windows/Qt/Tk）：
 
 | 后端 | 位置 | 依赖 | 状态 |
 | --- | --- | --- | --- |
 | Win32 | `plugins/gui_win32` | 系统 user32/gdi32 | 已编译验证（`--smoke` 实证） |
-| Qt | `plugins/gui_qt` | Qt5/Qt6 Widgets | 代码已写，本机无 Qt 未编译验证 |
+| Qt | `plugins/gui_qt` | Qt5/Qt6 Widgets | 已真编译 + 冒烟（Qt 6.8.3 动态链接，2026-11-07） |
 | Tk | `plugins/gui_tk` | Tcl/Tk 开发库 | 代码已写，本机无 Tcl/Tk 未编译验证 |
+| X11 | `plugins/gui_x11` | libX11 | 已编译 + Xvfb 无头冒烟（`x11_smoke` ctest，2026-11-11） |
+| Cocoa | `plugins/gui_cocoa` | AppKit / CoreGraphics（系统框架） | 代码已写，待 macOS CI 编译验证（`cocoa_offscreen`） |
+| JNI | `plugins/gui_jni` | JDK（`jni.h`） | 已编译 + 真 JVM 冒烟（`jni_smoke`，2026-11-11） |
+
+X11 / Cocoa / JNI 走 **Take 2「句柄注入」**：窗口与视图都归宿主所有，后端只把
+`BitmapCanvas` 贴到宿主表面、把宿主剥壳后的原生事件排队回 `inject_event`；平台类型
+（`<X11/Xlib.h>` / `<AppKit/AppKit.h>` / `jni.h`）只出现在插件 `src/*.cpp|.mm`，公开头
+里只有 `NativeSurface`（`void*` + 尺寸）。许可上 Xlib 与系统框架均宽松/内置；JNI 仅在
+编译期用宿主 JDK 的 `jni.h`，运行期 JRE 由使用者提供，**不 vendoring** 任何 JDK 二进制。
 
 接真实工具包 = 外部依赖 + 编译型平台代码，违背核心零强制依赖硬约束，故一律归为
 可选插件不进核心；`widget_tree/layout/native_loop` 对全部后端不变。

@@ -7,6 +7,7 @@
 #define TERMCHART_GUI_GUI_HPP
 
 #include "termchart_gui/backend_tk/backend.hpp"
+#include "termchart_gui/backend_tk/native_surface.hpp"
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/backend_tk/tk_event_map.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"

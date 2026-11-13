@@ -52,6 +52,18 @@ set_target_properties(termchart PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Windows DLL 只导出显式 __declspec(dllexport) 的符号。库里有大量「定义在
+# src/*.cpp、声明在公开头」的入口没有逐个标 TERMCHART_API —— 静态构建下该宏为
+# 空，问题从不暴露。手工给上百个声明补标记既无法靠类型系统验证，又会把内部
+# 实现符号误当 ABI 承诺（本库只承诺 PIMPL 门面，见 ABI_POLICY.md）。改用
+# 由链接器导出全库符号；TERMCHART_API 只保留「显式 ABI 承诺」语义。
+# 实测 CMake 的 WINDOWS_EXPORT_ALL_SYMBOLS 在本机 MinGW 不生效（不生成 .def，
+# DLL 仍只导出显式 dllexport 的成员函数，构造/析构缺失 → 链接期 undefined
+# reference），故用 GNU ld 的 --export-all-symbols。2026-11-13 实测修正。
+if(TERMCHART_BUILD_SHARED AND WIN32)
+    target_link_options(termchart PRIVATE -Wl,--export-all-symbols)
+endif()
+
 # network/socket_win32.cpp 的 Winsock2 符号与 network/tls/schannel.cpp 的
 # SChannel/证书 API 来自操作系统库——ws2_32 / schannel / secur32 / crypt32
 # 是平台系统库而非第三方依赖，"零强制依赖"口径不变。
@@ -130,6 +142,20 @@ endif()
 if(TERMCHART_BUILD_GUI_TK)
     add_subdirectory(plugins/gui_tk)
 endif()
+
+# 原生 X11 GUI 后端（Take 2 句柄注入，Unix 桌面）：插件即可选，按平台自动纳入；
+# 宿主缺 libX11 开发库时插件自己跳过（不拖累核心构建）。
+if(UNIX AND NOT APPLE)
+    add_subdirectory(plugins/gui_x11)
+endif()
+
+# 原生 Cocoa GUI 后端（Take 2 NSView 注入）：仅 macOS，按平台自动纳入。
+if(APPLE)
+    add_subdirectory(plugins/gui_cocoa)
+endif()
+
+# JNI 后端（Take 2 句柄注入）：Android / 桌面 Java；有 JDK 即构建，缺失时插件自己跳过。
+add_subdirectory(plugins/gui_jni)
 
 # Emscripten WASM 目标（可选，需 emsdk；默认关、不进 CI）。把 image::Bitmap 推到网页
 # <canvas>，让库能在浏览器里出真彩图。仅当 Emscripten 工具链生效且显式开启时才编。

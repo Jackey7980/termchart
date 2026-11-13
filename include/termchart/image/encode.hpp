@@ -62,11 +62,25 @@ struct EncodeOptions {
     // 真压缩档（Intra）的 slice QP，合法区间 [0,51]（越界夹到边界）。
     // 默认 26 ⇒ slice_qp_delta=0，与既有码流字节级一致；Pcm 档忽略本字段。
     int video_qp = 26;
-    // 真压缩档（Intra）是否启用 transform_skip：4x4 TU 跳过 DCT/DST，残差直接
+    // 真压缩档（Intra）是否启用 transform_skip：跳过 DCT/DST，残差在像素域直接
     // 量化。默认 false ⇒ PPS transform_skip_enabled_flag=0、CU 无额外 bin，
     // 码流与既有基线逐字节一致。显式置 true 才在 PPS 打开开关，并对每个
-    // cbf=1 的 TU 写 transform_skip_flag。Pcm 档忽略本字段。
+    // cbf=1 的 TU 写 transform_skip_flag；是否真 skip 按 RD（SSD+λ·bins）
+    // 逐 TU 选优，亮度与色度各自按本平面 QP 取 λ、按本块坐标算 SSD。
+    // 可用尺寸由 hevc_log2_tu_size 决定：固定档声明到该档，自动档声明到 32x32；
+    // 超过 4x4 时会在参数集写 RExt profile（general_profile_idc=4）+
+    // sps/pps_range_extension 的 log2_max_transform_skip_block_size_minus2。
+    // Pcm 档忽略本字段。
     bool hevc_transform_skip = false;
+    // 真压缩档亮度 TU 边长档位（log2）：
+    //   0 = 自动档（逐区域按内容在 4/8/16/32 间自适应，推荐）
+    //   2 = 4x4（默认，既有字节级基线）、3 = 8x8、4 = 16x16、5 = 32x32
+    // 固定档下 CU 与 TU 同尺寸（<=3 都是 8x8 CU）；自动档下 CU 树按局部复杂度
+    // 停在 8/16/32，8x8 CU 再决定是否分裂成 4 个 4x4 TU。
+    // SPS 的 MaxTb 与变换层次深度随档位调整；transform_skip 与任意档位都能组合
+    //（4x4 沿用 PPS 默认 max=2，更大 TU 走 RExt 参数集，见上一字段）。
+    // 色度 TU 恒为亮度的一半（4:2:0）。Pcm 档忽略本字段；其它值返回空串。
+    int hevc_log2_tu_size = 2;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。

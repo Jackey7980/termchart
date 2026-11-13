@@ -43,6 +43,14 @@ void predict_intra_luma_4x4(int mode, const std::uint8_t* rec, int stride,
                             int pic_w, int pic_h, std::uint8_t* dst,
                             ChromaPredPlane chroma = {});
 
+// 与尺寸无关的入口：log2_size 2..5 ⇒ 块边长 4/8/16/32。参考样本构造、可用性、
+// 1-2-1 平滑（仅亮度 size>=8）、DC/角度首行首列后处理（size<32）均按块尺寸切换。
+// 4x4 与 predict_intra_luma_4x4 逐像素一致（后者内部已委托同一实现）。
+void predict_intra_luma(int mode, const std::uint8_t* rec, int stride,
+                        int x0, int y0, int log2_size,
+                        int pic_w, int pic_h, std::uint8_t* dst,
+                        ChromaPredPlane chroma = {});
+
 // HEVC 8.4.4.2.3 / FFmpeg hevcdec.c:luma_intra_pred_mode 的 MPM 候选表推导。
 // cand_left / cand_up 为左、上 PU 的帧内模式；不可用时由调用方传 INTRA_DC(1)。
 struct MpmCandidates {
@@ -63,12 +71,19 @@ struct IntraModeSignal {
 
 IntraModeSignal signal_intra_mode(int target_mode, const MpmCandidates& cands);
 
-// 逐 8x8 CU 的亮度帧内模式决策（P0-4）：对 35 个模式各模拟一遍
+// 逐 CU 的亮度帧内模式决策：对 35 个模式各模拟一遍
 // 「预测 → 变换量化 → 逆量化重建」，按重建块对源块的 SSD 选最小。
-// 模拟使用与真实编码相同的 4 个 4x4 TU 次序，且逐 TU 写回重建，故后续 TU
-// 的参考样本演化与最终编码完全一致；只影响模式选择，不产生任何新语法，
-// 任意返回值都能被 FFmpeg 正确解码。暂不含 λ·bits（阶段三 RDO 再补）。
-// 要求 (x0,y0) 8 对齐、x0+8<=pic_w、y0+8<=pic_h；越界返回 INTRA_DC(1)。
+//
+// tu_log2 必须是【真实使用的 TU 尺寸】：2 表示 8x8 CU 分裂成 4 个 4x4 TU，
+// 3/4/5 表示单个 8/16/32 TU。模拟必须与真实编码同尺寸、同 TU 次序，否则
+// 大 TU 下会用 4x4 的失真模型挑模式（历史缺陷）。只影响模式选择，不产生新
+// 语法，任意返回值都能被 FFmpeg 正确解码。暂不含 λ·bits。
+// 要求 (x0,y0) 按 CU 对齐、整块在图像内；越界返回 INTRA_DC(1)。
+int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
+                           const std::uint8_t* rec, int rec_stride,
+                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2);
+
+// 旧的 4x4 TU 档接口，等价于 tu_log2=2。
 int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,
                                const std::uint8_t* rec, int rec_stride,
                                int x0, int y0, int pic_w, int pic_h, int qp);

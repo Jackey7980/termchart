@@ -19,6 +19,7 @@
 #include <string>
 
 #include "termchart_gui/backend_tk/backend.hpp"
+#include "termchart_gui/backend_tk/native_surface.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"
 
 namespace termchart_gui_win32 {
@@ -30,12 +31,24 @@ public:
     struct Impl;
 
     Win32Backend(std::uint32_t width, std::uint32_t height, std::string title);
+
+    // Take 2：句柄注入。绑定到一个**用户已创建并拥有**的 HWND 的客户区，后端不再
+    // 创建/销毁窗口，present() 直接把画布贴进该客户区。surface.width/height 为初始
+    // 客户区尺寸；宿主尺寸变化时由用户调 resize()（或每次 present 自动同步）。
+    explicit Win32Backend(const termchart_gui::NativeSurface& host);
+
     ~Win32Backend() override;
     Win32Backend(const Win32Backend&) = delete;
     Win32Backend& operator=(const Win32Backend&) = delete;
 
     // 窗口是否成功创建（无交互桌面/会话时 CreateWindow 可能失败）。
     [[nodiscard]] bool valid() const noexcept;
+
+    // 是否处于「外部句柄注入」模式（用户拥有窗口；析构不销毁该窗口）。
+    [[nodiscard]] bool is_external() const noexcept;
+
+    // 外部模式下由宿主在尺寸变化时调用：重排画布缓冲并投递 Resize 事件。
+    void resize(std::uint32_t width, std::uint32_t height);
 
     // Backend 接口。
     [[nodiscard]] std::unique_ptr<termchart_gui::TkWindow> create_window(

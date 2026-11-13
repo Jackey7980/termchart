@@ -48,6 +48,13 @@
 //
 // 所有需要跨库边界（或被应用程序直接链接）的符号都标注 TERMCHART_API。
 // 静态库构建时为空，避免污染。
+//
+// 使用纪律（2026-11-13 由 `TERMCHART_BUILD_SHARED=ON` 实测确立）：
+//   * 只标【定义在 src/*.cpp】的声明。头文件里的内联定义（含 `inline` 自由函数、
+//     类内 `{ return ...; }` 访问器）**绝不标** —— MinGW 下 `dllimport` + 函数体
+//     会直接报 "definition is marked dllimport"；且 inline 函数在每个 TU 各生成
+//     一份，导出本就无意义。
+//   * 静态构建下本宏为空，标错不会暴露，必须用 shared 构建做回归（CI 已有该 job）。
 
 #if defined(TERMCHART_STATIC)
 #define TERMCHART_API
@@ -8513,11 +8520,11 @@ namespace termchart::image {
 [[nodiscard]] TERMCHART_API Result<Bitmap> decode_bmp(const std::uint8_t* data,
                                                       std::size_t size);
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_bmp(std::string_view bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_bmp(std::string_view bytes) {
     return decode_bmp(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_bmp(const std::vector<std::uint8_t>& bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_bmp(const std::vector<std::uint8_t>& bytes) {
     return decode_bmp(bytes.data(), bytes.size());
 }
 
@@ -8623,11 +8630,25 @@ struct EncodeOptions {
     // 真压缩档（Intra）的 slice QP，合法区间 [0,51]（越界夹到边界）。
     // 默认 26 ⇒ slice_qp_delta=0，与既有码流字节级一致；Pcm 档忽略本字段。
     int video_qp = 26;
-    // 真压缩档（Intra）是否启用 transform_skip：4x4 TU 跳过 DCT/DST，残差直接
+    // 真压缩档（Intra）是否启用 transform_skip：跳过 DCT/DST，残差在像素域直接
     // 量化。默认 false ⇒ PPS transform_skip_enabled_flag=0、CU 无额外 bin，
     // 码流与既有基线逐字节一致。显式置 true 才在 PPS 打开开关，并对每个
-    // cbf=1 的 TU 写 transform_skip_flag。Pcm 档忽略本字段。
+    // cbf=1 的 TU 写 transform_skip_flag；是否真 skip 按 RD（SSD+λ·bins）
+    // 逐 TU 选优，亮度与色度各自按本平面 QP 取 λ、按本块坐标算 SSD。
+    // 可用尺寸由 hevc_log2_tu_size 决定：固定档声明到该档，自动档声明到 32x32；
+    // 超过 4x4 时会在参数集写 RExt profile（general_profile_idc=4）+
+    // sps/pps_range_extension 的 log2_max_transform_skip_block_size_minus2。
+    // Pcm 档忽略本字段。
     bool hevc_transform_skip = false;
+    // 真压缩档亮度 TU 边长档位（log2）：
+    //   0 = 自动档（逐区域按内容在 4/8/16/32 间自适应，推荐）
+    //   2 = 4x4（默认，既有字节级基线）、3 = 8x8、4 = 16x16、5 = 32x32
+    // 固定档下 CU 与 TU 同尺寸（<=3 都是 8x8 CU）；自动档下 CU 树按局部复杂度
+    // 停在 8/16/32，8x8 CU 再决定是否分裂成 4 个 4x4 TU。
+    // SPS 的 MaxTb 与变换层次深度随档位调整；transform_skip 与任意档位都能组合
+    //（4x4 沿用 PPS 默认 max=2，更大 TU 走 RExt 参数集，见上一字段）。
+    // 色度 TU 恒为亮度的一半（4:2:0）。Pcm 档忽略本字段；其它值返回空串。
+    int hevc_log2_tu_size = 2;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。
@@ -8900,7 +8921,7 @@ inline constexpr std::uint64_t kPngMaxRawBytes = 512ull * 1024ull * 1024ull;
 [[nodiscard]] TERMCHART_API Result<Bitmap> decode_png(const std::uint8_t* data,
                                                       std::size_t size);
 
-[[nodiscard]] TERMCHART_API inline Result<Bitmap> decode_png(std::string_view bytes) {
+[[nodiscard]] inline Result<Bitmap> decode_png(std::string_view bytes) {
     return decode_png(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
 
@@ -9957,7 +9978,7 @@ public:
         return *this;
     }
 
-    [[nodiscard]] TERMCHART_API bool active() const noexcept { return active_; }
+    [[nodiscard]] bool active() const noexcept { return active_; }
 
     // 测试探针：不进真实原始模式，只翻转内部标志（用于终端恢复回归测试）。
     static TERMCHART_API RawMode make_noop(bool pretend_active) noexcept;
@@ -10043,8 +10064,8 @@ public:
     TERMCHART_API Status leave() noexcept;
     TERMCHART_API void restore() noexcept;  // leave() 的 noexcept 版，给析构/信号处理用
 
-    [[nodiscard]] TERMCHART_API bool entered() const noexcept { return entered_; }
-    [[nodiscard]] TERMCHART_API const TerminalOptions& options() const noexcept { return options_; }
+    [[nodiscard]] bool entered() const noexcept { return entered_; }
+    [[nodiscard]] const TerminalOptions& options() const noexcept { return options_; }
 
     // 写入 / 立即生效：不使用 iostream，避免 locale 与缓冲策略差异。
     TERMCHART_API Status write(std::string_view bytes) noexcept;
@@ -10140,7 +10161,7 @@ public:
     // 消费已排队的唤醒信号（不清空则下次 wait 立即返回）。
     TERMCHART_API void drain() noexcept;
 
-    [[nodiscard]] TERMCHART_API bool valid() const noexcept { return native_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return native_ != nullptr; }
 
     // 给主循环的 select/poll；Windows 返回 HANDLE，POSIX 返回读端 fd。
     // **平台差异在此收口**：调用方只做转发，不解释类型。
@@ -16097,8 +16118,11 @@ private:
 // 布局（graph/layout）、路由（graph/route）、形状（graph/shape）与图元
 // （graph/diagrams）都在这之上构建，因此同一张 Graph 可以被多种渲染消费。
 //
-// 注意：add_node 返回的是 vector 内元素的引用，后续 add_node 可能使引用失效；
-// 需要长期持有请用 id() 再 find()。
+// 增操作的返回类型**刻意不对称**（2026-11-13 复核后定稿，不做破坏性统一）：
+//   add_node 不会失败 ⇒ Node&；add_edge 端点可能不存在 ⇒ Edge*（失败 = nullptr）。
+// 统一成引用会丢掉失败通道，统一成 Id 则要改动 195 处调用点且无功能收益。
+// 真正统一的是使用约定：**返回值仅供即时使用**，两者都可能因后续插入失效；
+// 长期持有一律走身份查询 find(NodeId) / find_edge(from, to)。
 
 
 
@@ -17482,8 +17506,8 @@ public:
     [[nodiscard]] TERMCHART_API std::span<const Run> runs_of(std::uint32_t row) const noexcept;
     [[nodiscard]] TERMCHART_API std::size_t run_count() const noexcept;
 
-    [[nodiscard]] TERMCHART_API std::uint32_t width() const noexcept { return width_; }
-    [[nodiscard]] TERMCHART_API std::uint32_t height() const noexcept { return height_; }
+    [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
+    [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
 
 private:
     TERMCHART_API void insert(std::uint32_t row, Run run) noexcept;
@@ -17553,7 +17577,7 @@ public:
     TERMCHART_API Renderer& operator=(Renderer&&) noexcept;
 
     TERMCHART_API void set_depth(ColorDepth depth) noexcept;
-    [[nodiscard]] TERMCHART_API ColorDepth depth() const noexcept { return depth_; }
+    [[nodiscard]] ColorDepth depth() const noexcept { return depth_; }
 
     // 增量渲染：与内部 prev 比较。首帧或尺寸变化时自动退化为全量。
     TERMCHART_API std::string render(const CellBuffer& current) noexcept;
@@ -19526,8 +19550,8 @@ public:
     // 一次性取完（含结尾的 End），超过 max_tokens 返回 OutOfRange。
     TERMCHART_API Result<std::vector<Token>> tokenize() noexcept;
 
-    [[nodiscard]] TERMCHART_API std::size_t offset() const noexcept { return offset_; }
-    [[nodiscard]] TERMCHART_API std::string_view source() const noexcept { return source_; }
+    [[nodiscard]] std::size_t offset() const noexcept { return offset_; }
+    [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
 private:
     std::string_view source_;
@@ -20189,7 +20213,7 @@ class ListenerBook;  // 与值类型无关的订阅簿记（类型擦除后）�
 // 句柄以裸指针回指簿记，因此 Observable 不可拷贝/移动（见下）。
 class Subscription {
 public:
-    TERMCHART_API Subscription() noexcept = default;
+    Subscription() noexcept = default;
     TERMCHART_API ~Subscription();
     TERMCHART_API Subscription(Subscription&& other) noexcept;
     TERMCHART_API Subscription& operator=(Subscription&& other) noexcept;
@@ -20217,7 +20241,7 @@ public:
     // 类型擦除后的回调：拿到 new/old 两个值的只读指针。
     using ErasedFn = std::function<void(const void* new_value, const void* old_value)>;
 
-    TERMCHART_API ListenerBook() = default;
+    ListenerBook() = default;
     TERMCHART_API ~ListenerBook();
     ListenerBook(const ListenerBook&) = delete;
     ListenerBook& operator=(const ListenerBook&) = delete;
@@ -21522,7 +21546,7 @@ public:
     // 每次调用 run() 都会先清除 stop 标志。
     TERMCHART_API std::uint64_t run(std::uint64_t max_iterations);
 
-    [[nodiscard]] TERMCHART_API double max_delta() const noexcept { return max_delta_; }
+    [[nodiscard]] double max_delta() const noexcept { return max_delta_; }
     TERMCHART_API void set_max_delta(double seconds) noexcept;
 
     // 累计帧数（跨多次 run()）。

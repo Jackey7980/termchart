@@ -46,6 +46,23 @@ struct CuIntra8x8 {
     // 每个 TU 的 flag 值（0/1）；仅 cbf=1 时消费。色度 c_idx=1/2 → ctx 48。
     int transform_skip_luma[4] = {0, 0, 0, 0};
     int transform_skip_chroma[2] = {0, 0};
+
+    // log2_tu_size=2 ⇒ 上面四个 4x4 TU（既有基线）；3/4/5 ⇒ 单个 8/16/32
+    // 亮度 TU（MaxTb 随档位、max_transform_hierarchy_depth_intra=0，解码端
+    // 不读分裂标志）。luma_large 为行主序 (1<<log2)^2 个量化 level；
+    // log2>=4 时色度也是大 TU，(1<<(log2-1))^2，见 chroma_large。
+    int log2_tu_size = 2;
+    const std::int16_t* luma_large = nullptr;
+    const std::int16_t* chroma_large[2] = {nullptr, nullptr};
+    // CU 边长 > MinCb(8) 时解码端推断 PART_2Nx2N，不读 part_mode。
+    bool emit_part_mode = true;
+    // 自动档（MaxTb=32、max_transform_hierarchy_depth_intra=1）：每个 CU 的
+    // transform_tree 根节点都要显式写 split_transform_flag。固定档下 MaxTb 就等于
+    // TU 尺寸（<=3 时为 4），根节点隐式分裂/不分裂，不写这一 bin。
+    // log2_root 是根节点的 log2_trafo_size（= CU 的 log2），决定 ctx=37+5-log2。
+    bool emit_split_transform_flag = false;
+    bool split_transform_flag = false;
+    int log2_root = 3;
 };
 
 // 返回空序列表示输入超出当前支持范围（残差编码失败）。

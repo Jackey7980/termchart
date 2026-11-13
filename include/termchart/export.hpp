@@ -2,6 +2,13 @@
 //
 // 所有需要跨库边界（或被应用程序直接链接）的符号都标注 TERMCHART_API。
 // 静态库构建时为空，避免污染。
+//
+// 使用纪律（2026-11-13 由 `TERMCHART_BUILD_SHARED=ON` 实测确立）：
+//   * 只标【定义在 src/*.cpp】的声明。头文件里的内联定义（含 `inline` 自由函数、
+//     类内 `{ return ...; }` 访问器）**绝不标** —— MinGW 下 `dllimport` + 函数体
+//     会直接报 "definition is marked dllimport"；且 inline 函数在每个 TU 各生成
+//     一份，导出本就无意义。
+//   * 静态构建下本宏为空，标错不会暴露，必须用 shared 构建做回归（CI 已有该 job）。
 #ifndef TERMCHART_EXPORT_HPP
 #define TERMCHART_EXPORT_HPP
 
