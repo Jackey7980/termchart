@@ -51,7 +51,11 @@ int quant(const std::int32_t* coeff, std::int16_t* level, int qp, int log2_size,
     const int n = 1 << (2 * log2_size);
     int nonzero = 0;
     for (int k = 0; k < n; ++k) {
-        const std::int64_t a = std::llabs(static_cast<std::int64_t>(coeff[k]));
+        // 不要 std::llabs：它不是 C++ 标准保证的名字，Emscripten 的 libc++
+        // 没有该成员（CI wasm job 实测编译失败）。系数来自 int16_t，转 int64
+        // 后取负不会溢出，手写绝对值即可。
+        const std::int64_t c = static_cast<std::int64_t>(coeff[k]);
+        const std::int64_t a = c < 0 ? -c : c;
         const std::int64_t v = (a * (1LL << shift) + add) / den;
         const std::int64_t m = std::min<std::int64_t>(v, 32767);
         level[k] = static_cast<std::int16_t>(coeff[k] < 0 ? -m : m);

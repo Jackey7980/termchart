@@ -41,14 +41,28 @@ if(Java_FOUND)
     add_custom_command(
         OUTPUT "${TERMCHART_JNI_CLASSES_DIR}/TermchartEmbed.class"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${TERMCHART_JNI_CLASSES_DIR}"
-        COMMAND ${Java_JAVAC_EXECUTABLE} -d "${TERMCHART_JNI_CLASSES_DIR}"
+        # 源文件是 UTF-8（含中文注释）；不显式指定时 Windows runner 用
+        # windows-1252 解码，javac 直接报 "unmappable character"。
+        COMMAND ${Java_JAVAC_EXECUTABLE} -encoding UTF-8 -d "${TERMCHART_JNI_CLASSES_DIR}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/java/TermchartEmbed.java"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/java/TermchartEmbed.java"
         COMMENT "javac TermchartEmbed.java")
     add_custom_target(termchart_jni_java ALL
         DEPENDS "${TERMCHART_JNI_CLASSES_DIR}/TermchartEmbed.class")
 
-    if(TERMCHART_BUILD_TESTS)
+    # JVM 无法加载 sanitizer 插桩的 native 库（TSan 实测报
+    # "libtsan.so.2: cannot allocate memory in static TLS block"）。
+    # jni_smoke 是宿主集成冒烟，不是库逻辑测试，所有 sanitizer 构建都跳过它；
+    # native 库本身仍照常编译，正常构建 / CI 其它 job 仍跑该用例。
+    set(_jni_sanitized OFF)
+    if(TERMCHART_ENABLE_ASAN OR TERMCHART_ENABLE_UBSAN OR TERMCHART_ENABLE_TSAN)
+        set(_jni_sanitized ON)
+    endif()
+    string(FIND "${CMAKE_CXX_FLAGS}" "-fsanitize=" _jni_san_flag_pos)
+    if(NOT _jni_san_flag_pos EQUAL -1)
+        set(_jni_sanitized ON)
+    endif()
+    if(TERMCHART_BUILD_TESTS AND NOT _jni_sanitized)
         add_test(NAME jni_smoke
             COMMAND ${Java_JAVA_EXECUTABLE}
                     -Djava.library.path=$<TARGET_FILE_DIR:termchart_gui_jni>

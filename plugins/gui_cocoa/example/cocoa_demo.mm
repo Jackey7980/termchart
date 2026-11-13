@@ -136,7 +136,11 @@ int main(int argc, char** argv) {
                     view.backend = &backend;
                 }
                 Container root("root");
-                root.set_bounds(Rect{0, 0, static_cast<double>(w), static_cast<double>(h)});
+                // macOS SDK 有全局 QuickDraw `Rect`（short 字段）；未限定的 `Rect`
+                // 在 Objective-C++ 下会歧义并误把 double 窄化成 short。显式限定到
+                // termchart::Rect（浮点矩形），CI 的 macos job 才会真编译通过。
+                root.set_bounds(termchart::Rect{0, 0, static_cast<double>(w),
+                                                static_cast<double>(h)});
                 root.emplace_child<Label>("title", "Take 2 - Cocoa user-owned view",
                                           Rgb{240, 240, 245}, Rgb{28, 32, 40});
                 auto& slider = root.emplace_child<Slider>("slider");
