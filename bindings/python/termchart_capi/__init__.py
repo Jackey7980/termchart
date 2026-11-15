@@ -472,3 +472,31 @@ class Chart:
             with open(str(path), "wb") as fh:
                 fh.write(text.encode("utf-8"))
         return text
+
+    def to_png(self, path=None, *, width=0, height=0, title=None, show_legend=False):
+        h = self._alive()
+        o = self._opts(width, height, title, show_legend, "truecolor")
+        need = ctypes.c_uint64(0)
+        err = ctypes.c_void_p()
+        st = _c.tc_chart_to_png(
+            h, ctypes.byref(o), None, 0, ctypes.byref(need), ctypes.byref(err)
+        )
+        if st != 0:
+            _raise("to_png", st, err)
+        buf = ctypes.create_string_buffer(need.value)
+        got = ctypes.c_uint64(0)
+        st = _c.tc_chart_to_png(
+            h,
+            ctypes.byref(o),
+            ctypes.cast(buf, ctypes.c_char_p),
+            need.value,
+            ctypes.byref(got),
+            ctypes.byref(err),
+        )
+        if st != 0:
+            _raise("to_png", st, err)
+        data = bytes(buf.raw[: got.value])
+        if path is not None:
+            with open(str(path), "wb") as fh:
+                fh.write(data)
+        return data

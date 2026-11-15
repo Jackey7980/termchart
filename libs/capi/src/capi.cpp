@@ -29,6 +29,10 @@
 #include "termchart/chart/cartesian/scatter_chart.hpp"
 #include "termchart/chart/cartesian/sparkline.hpp"
 #include "termchart/chart/polar/pie.hpp"
+#include "termchart/canvas/canvas.hpp"
+#include "termchart/chart/context.hpp"
+#include "termchart/gui/cells.hpp"
+#include "termchart/image/encode.hpp"
 #include "termchart/chart/series.hpp"
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/error.hpp"
@@ -576,6 +580,39 @@ tc_status tc_auto_plot(const char* filepath, tc_error_handle* err) {
 // ── 释放 / 错误消息 ─────────────────────────────────────────────────────────
 
 void tc_free_string(char* s) { delete[] s; }
+
+tc_status tc_chart_to_png(tc_chart_handle chart, const tc_plot_opts* o, char* buf,
+                          uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (!has_data(*c)) return fail(err, "empty chart data", TC_ERR_INVALID_ARG);
+    const std::uint32_t cols = (o && o->width) ? o->width : 80u;
+    const std::uint32_t rows = (o && o->height) ? o->height : 24u;
+    if (cols == 0 || rows == 0 || cols > 0xFFFF || rows > 0xFFFF)
+        return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
+
+    chart::Chart& ch = apply_display(*c, o);
+    canvas::Canvas canvas(cols, rows);
+    chart::DrawContext ctx{canvas};
+    ch.draw(ctx);
+    CellBuffer cells = canvas.to_buffer();
+    gui::CellBitmapOptions copts{};  // 默认 9×16、深色底
+    image::Bitmap bmp = gui::render_cells_to_bitmap(cells, copts);
+    std::string png = image::encode(bmp, image::ImageFormat::Png);
+    if (png.empty()) return fail(err, "png encode failed", TC_ERR_RENDER);
+
+    if (cap == 0) {
+        if (out_len) *out_len = png.size();
+        return TC_OK;
+    }
+    if (png.size() > cap) {
+        if (out_len) *out_len = png.size();  // 回写所需长度，便于调用方扩容
+        return TC_ERR_BUFFER_TOO_SMALL;
+    }
+    std::memcpy(buf, png.data(), png.size());
+    if (out_len) *out_len = png.size();
+    return TC_OK;
+}
 
 void tc_error_message(tc_error_handle err, char* buf, uint64_t cap) {
     if (!err || !buf || cap == 0) return;

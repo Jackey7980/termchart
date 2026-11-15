@@ -84,7 +84,7 @@ def _load(path=None):
 
 
 def _bind(lib):
-    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create_line, tc_chart_create_scatter, tc_chart_create_bar, tc_chart_create_pie, tc_chart_create_sparkline, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_prop, tc_chart_to_svg, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
+    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create_line, tc_chart_create_scatter, tc_chart_create_bar, tc_chart_create_pie, tc_chart_create_sparkline, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
     f = lib.tc_version_string
     f.restype = ctypes.c_char_p
     f.argtypes = []
@@ -195,6 +195,11 @@ def _bind(lib):
     f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
     tc_chart_to_svg = f
 
+    f = lib.tc_chart_to_png
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_chart_to_png = f
+
     f = lib.tc_write_stdout
     f.restype = ctypes.c_int
     f.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p]
@@ -253,6 +258,7 @@ tc_chart_print = None
 tc_chart_add_series = None
 tc_chart_set_prop = None
 tc_chart_to_svg = None
+tc_chart_to_png = None
 tc_write_stdout = None
 tc_write_stderr = None
 tc_flush_stdout = None

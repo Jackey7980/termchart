@@ -223,6 +223,14 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
 tc_status tc_chart_to_svg(tc_chart_handle chart, const tc_plot_opts* opts, char* buf,
                           uint64_t cap, uint64_t* out_len, tc_error_handle* err);
 
+/* 把图渲染成 PNG 字节（与 to_svg 同款两段式缓冲）。
+ * 链路全在核心库内：Canvas（格粒度绘制）→ CellBuffer → gui::render_cells_to_bitmap
+ * （字符格栅格化为像素，含盲文/半块语义）→ image::encode(Png)。**不牵任何 GUI
+ * 窗口/控件后端**，字体光栅化是核心的一部分。opts 的 width/height 即格数
+ * （默认 80×24）；每格像素尺寸与底色取 gui::CellBitmapOptions 默认（9×16、深色底）。 */
+tc_status tc_chart_to_png(tc_chart_handle chart, const tc_plot_opts* opts, char* buf,
+                          uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+
 /* ── 输出（对齐 api::write_stdout / write_stderr / flush_stdout）───────────── */
 tc_status tc_write_stdout(const char* bytes, uint64_t n, tc_error_handle* err);
 tc_status tc_write_stderr(const char* bytes, uint64_t n, tc_error_handle* err);
