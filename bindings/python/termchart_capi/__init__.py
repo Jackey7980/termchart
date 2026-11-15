@@ -305,6 +305,8 @@ class Chart:
         "line": _c.tc_chart_create_line,
         "scatter": _c.tc_chart_create_scatter,
         "bar": _c.tc_chart_create_bar,
+        "pie": _c.tc_chart_create_pie,
+        "sparkline": _c.tc_chart_create_sparkline,
     }
 
     def __init__(self, kind="line"):
@@ -372,6 +374,22 @@ class Chart:
     def add_points(self, x, y):
         """追加单条无名系列（与库内 add_* 约定一致）。"""
         self.add_series(x, y)
+
+    def add_values(self, values, labels=None):
+        """喂入"值 + 类别标签"（柱状 / 饼图 / 迷你图通用）。"""
+        h = self._alive()
+        n = len(values)
+        vals = (ctypes.c_double * n)(*values)
+        keep = [vals]
+        labs = None
+        if labels is not None:
+            ls = [l.encode("utf-8") if l else None for l in labels]
+            keep.append(ls)
+            labs = (ctypes.c_char_p * len(ls))(*ls)
+        err = ctypes.c_void_p()
+        st = _c.tc_chart_set_values(h, vals, n, labs, len(labels) if labels else 0, ctypes.byref(err))
+        if st != 0:
+            _raise("add_values", st, err)
 
     # ── 属性 ──
     def set_prop(self, prop, value=None):

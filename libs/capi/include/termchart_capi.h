@@ -121,6 +121,8 @@ tc_status tc_hello(const tc_api_opts* opts, tc_error_handle* err);
 tc_chart_handle tc_chart_create_line(void);
 tc_chart_handle tc_chart_create_scatter(void);
 tc_chart_handle tc_chart_create_bar(void);
+tc_chart_handle tc_chart_create_pie(void);       /* 饼图：值 + 类别标签 */
+tc_chart_handle tc_chart_create_sparkline(void); /* 迷你图：单行趋势 */
 void tc_chart_free(tc_chart_handle chart);
 
 /* 折线 / 散点：喂入 (x[i], y[i])，n 为点数。 */
@@ -130,6 +132,13 @@ tc_status tc_chart_add_points(tc_chart_handle chart, const double* x, const doub
 /* 柱状：values[i]；labels 可为 NULL（按序号），n_labels 为标签数。 */
 tc_status tc_chart_add_bar(tc_chart_handle chart, const double* values, uint64_t n,
                            const char* const* labels, uint64_t n_labels);
+
+/* 通用"值 + 类别标签"入口（柱状 / 饼图 / 迷你图共用）。labels 可 NULL。
+ * 这是对 tc_chart_add_bar 的泛化：返回 tc_status 且对不适用图种报
+ * TC_ERR_UNSUPPORTED，而不是静默丢弃。 */
+tc_status tc_chart_set_values(tc_chart_handle chart, const double* values, uint64_t n,
+                              const char* const* labels, uint64_t n_labels,
+                              tc_error_handle* err);
 
 /* 渲染成 ANSI 字节流（UTF-8 + 真彩 SGR），不写 stdout。
  * 成功：*out_ansi 指向 C 侧分配、须用 tc_free_string 释放的堆串；*err 不变。

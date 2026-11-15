@@ -27,6 +27,8 @@
 #include "termchart/chart/cartesian/bar_chart.hpp"
 #include "termchart/chart/cartesian/line_chart.hpp"
 #include "termchart/chart/cartesian/scatter_chart.hpp"
+#include "termchart/chart/cartesian/sparkline.hpp"
+#include "termchart/chart/polar/pie.hpp"
 #include "termchart/chart/series.hpp"
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/error.hpp"
@@ -42,7 +44,7 @@ namespace {
 // 惰性 + 缓存是**性能**的关键：同一张图先 render_ansi 再 print 只构建一次；
 // 任何模型改动都经 invalidate() 丢弃缓存，不存在"改了没生效"。
 struct ChartData {
-    enum class Kind { Line, Scatter, Bar } kind = Kind::Line;
+    enum class Kind { Line, Scatter, Bar, Pie, Sparkline } kind = Kind::Line;
 
     // 折线 / 散点：多系列，每系列自带名字与颜色
     std::vector<chart::Series> series;
@@ -59,6 +61,7 @@ struct ChartData {
     bool include_zero = false;
     bool emphasize_zero = false;
     bool shade_negative = false;
+    bool legend = false;  // 展示属性，按次渲染时设置；饼图在构建期据此设 PieOptions
     std::vector<double> x_ticks;
 
     std::unique_ptr<chart::Chart> cached;
@@ -185,6 +188,19 @@ std::unique_ptr<chart::Chart> build_chart(ChartData& d) {
             if (d.y_domain) ch->set_y_domain(d.y_domain->first, d.y_domain->second);
             return ch;
         }
+        case ChartData::Kind::Pie: {
+            auto ch = std::make_unique<chart::PieChart>();
+            chart::PieOptions po;
+            po.show_legend = d.legend;  // 图例在 PieOptions 里，构建期定
+            ch->set_options(po);
+            ch->set_values(d.values, d.categories);  // 标签已存于 categories
+            return ch;
+        }
+        case ChartData::Kind::Sparkline: {
+            auto ch = std::make_unique<chart::SparklineChart>();
+            ch->set_values(d.values);
+            return ch;
+        }
     }
     return nullptr;
 }
@@ -198,18 +214,21 @@ chart::Chart& ensure_chart(ChartData& d) {
 // 图例开关在基类上不可虚调用（各图种各自实现），故按 kind 下发到具体类型；
 // 不为 C 面的便利去给 C++ 基类加虚函数（接口方向不能反）。
 chart::Chart& apply_display(ChartData& d, const tc_plot_opts* o) {
+    d.legend = o && (o->show_legend != 0);  // 饼图在构建期据此设 PieOptions
     chart::Chart& ch = ensure_chart(d);
     ch.set_title(o && o->title ? std::string(o->title) : std::string());
-    const bool legend = o && (o->show_legend != 0);
     switch (d.kind) {
         case ChartData::Kind::Line:
-            static_cast<chart::LineChart&>(ch).set_show_legend(legend);
+            static_cast<chart::LineChart&>(ch).set_show_legend(d.legend);
             break;
         case ChartData::Kind::Scatter:
-            static_cast<chart::ScatterChart&>(ch).set_show_legend(legend);
+            static_cast<chart::ScatterChart&>(ch).set_show_legend(d.legend);
             break;
         case ChartData::Kind::Bar:
-            static_cast<chart::BarChart&>(ch).set_show_legend(legend);
+            static_cast<chart::BarChart&>(ch).set_show_legend(d.legend);
+            break;
+        // Pie：图例在构建期设过；Sparkline：无图例概念
+        default:
             break;
     }
     return ch;
@@ -217,7 +236,11 @@ chart::Chart& apply_display(ChartData& d, const tc_plot_opts* o) {
 
 // 空数据显式报错：不产出"看起来像空白的图"。
 bool has_data(const ChartData& d) {
-    if (d.kind == ChartData::Kind::Bar) return !d.values.empty();
+    // 值类图种（柱状 / 饼图 / 迷你图）看 values；系列类（折线 / 散点）看 series。
+    if (d.kind == ChartData::Kind::Bar || d.kind == ChartData::Kind::Pie ||
+        d.kind == ChartData::Kind::Sparkline) {
+        return !d.values.empty();
+    }
     for (const auto& s : d.series) {
         if (!s.points.empty()) return true;
     }
@@ -318,6 +341,16 @@ tc_chart_handle tc_chart_create_bar(void) {
     if (c) c->kind = ChartData::Kind::Bar;
     return reinterpret_cast<tc_chart_handle>(c);
 }
+tc_chart_handle tc_chart_create_pie(void) {
+    auto* c = new (std::nothrow) ChartData();
+    if (c) c->kind = ChartData::Kind::Pie;
+    return reinterpret_cast<tc_chart_handle>(c);
+}
+tc_chart_handle tc_chart_create_sparkline(void) {
+    auto* c = new (std::nothrow) ChartData();
+    if (c) c->kind = ChartData::Kind::Sparkline;
+    return reinterpret_cast<tc_chart_handle>(c);
+}
 void tc_chart_free(tc_chart_handle chart) { delete reinterpret_cast<ChartData*>(chart); }
 
 tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, uint64_t count,
@@ -363,10 +396,21 @@ tc_status tc_chart_add_points(tc_chart_handle chart, const double* x, const doub
 
 tc_status tc_chart_add_bar(tc_chart_handle chart, const double* values, uint64_t n,
                            const char* const* labels, uint64_t n_labels) {
-    if (!chart) return TC_ERR_INVALID_HANDLE;
-    if (!values && n) return TC_ERR_INVALID_ARG;
+    return tc_chart_set_values(chart, values, n, labels, n_labels, nullptr);
+}
+
+// 通用"值 + 类别标签"入口：柱状 / 饼图 / 迷你图共用一套数据形状。
+// 对只收系列的图种（折线 / 散点）显式报 Unsupported，不静默丢弃数据。
+tc_status tc_chart_set_values(tc_chart_handle chart, const double* values, uint64_t n,
+                              const char* const* labels, uint64_t n_labels,
+                              tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (!values && n) return fail(err, "null values with n>0", TC_ERR_INVALID_ARG);
     auto* c = reinterpret_cast<ChartData*>(chart);
-    if (c->kind != ChartData::Kind::Bar) return TC_ERR_UNSUPPORTED;
+    if (c->kind != ChartData::Kind::Bar && c->kind != ChartData::Kind::Pie &&
+        c->kind != ChartData::Kind::Sparkline) {
+        return fail(err, "this chart kind takes series, not values", TC_ERR_UNSUPPORTED);
+    }
     c->values.clear();
     if (n) c->values.assign(values, values + n);
     c->categories.clear();
