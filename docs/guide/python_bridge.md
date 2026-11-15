@@ -16,6 +16,12 @@ print(tc.plot([0, 1, 2, 3], [1, 4, 2, 8]))
 tc.save_png([0, 1, 2, 3], [1, 4, 2, 8], "out.png")
 ```
 
+> **两套 Python 绑定**：上面是基于 pybind11、直接吃 C++ 头的 `termchart`（高层 `plot`/
+> `save_png`/`to_rgba` 等）。另有基于 **C ABI** 的 `termchart_capi` 包（纯 ctypes，无需编译
+> 扩展，且与 Rust/Java 桥共用同一 C 前置），提供句柄式 `Chart` / `set_prop` / `ansi` /
+> `to_svg` / `to_png`，并能在不碰 C++ 核心的前提下加坐标轴标签。新项目与跨语言桥对齐优先
+> 选它，详见 [C ABI 与 Python 桥](c_api.md)。
+
 ## numpy 零拷贝
 
 `x / y / values` 接受 `numpy.ndarray`（任意数值 dtype：f32/f64/int/uint），

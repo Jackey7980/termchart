@@ -1,11 +1,13 @@
 # FFI / 语言桥方案（Rust 桥、Java 桥）
 
-> 状态：**方案设计完成，暂未实现**（2026-11-13）。按需求，Rust 桥与 Java 桥
-> 在这一轮**只规划、不落地**，待你拍板开始后再写代码。
+> 状态：**C ABI 适配层（`termchart_capi`）已落地**（v1.1 工作，见
+> [C ABI 与 Python 桥](../guide/c_api.md)）。**Rust 桥与 Java 桥仍只规划、未落地**——
+> 两者都依赖 capi 先就位，故未来开工时 `搭桥` 在 todo 中须排**较前位置**（优先于其它扩展项）：
+> capi 是它俩的共同前置，先搭 capi 才能让两桥并行推进。
 >
-> **规划归属（2026-11-13 决策）**：`termchart_capi`（C ABI 适配层）可列入 **v1.1 规划**；
-> 但 **Rust/Java 搭桥推迟**——不在 v1.1，也不在本轮落地。未来一旦开工，`搭桥` 在 todo 中
-> 须排**较前位置**（优先于其它扩展项）：capi 是它俩的共同前置，先搭 capi 才能让两桥并行推进。
+> **规划归属（2026-11-13 决策）**：`termchart_capi` 可列入 v1.1；Rust/Java 搭桥推迟。
+> 2026-11-15 更新：capi 已实际实现（文本渲染、多系列图表、属性通道含轴标签、SVG/PNG 两段式
+> 导出、Python ctypes 绑定），本文件降级为设计记录。
 
 ## 0. 现状缺口
 
@@ -52,6 +54,11 @@ void tc_error_free(tc_error_handle);
   真要 GUI 注入，Java 继续用现成 `plugins/gui_jni`，Rust 复用 `gui_*` 的 Take 2 思路
   另写（`tc_native_surface` 句柄 + `tc_backend_blit`）。
 
+> 实现时暴露面已扩展（上面的代码片段是设计草图，非最终签名）：实际新增了 `tc_chart_*`
+> 图表工厂、`tc_chart_add_series` 多系列、`tc_chart_set_prop` 模型属性通道（含
+> `TC_PROP_X_LABEL` / `TC_PROP_Y_LABEL` 轴标签）、`tc_chart_to_svg` / `tc_chart_to_png`
+> 两段式导出。完整签名与示例见 [C ABI 与 Python 桥](../guide/c_api.md)。
+
 ## 2. Java 桥（基于现有 JNI 后端 + 新 CAPI）
 
 两条腿：
@@ -82,13 +89,15 @@ void tc_error_free(tc_error_handle);
 | Java 桥 | 中 | 中（JNI 签名/JVM 加载/ LGPL 动态链接） |
 | Rust 桥（cxx） | 中 | 中（cxx 版本/跨编译） |
 
-## 5. 落地节奏（2026-11-13 决策）
+## 5. 落地节奏（2026-11-13 决策 → 2026-11-15 更新）
 
-- **`termchart_capi` → v1.1 规划**：C ABI 适配层方案已就绪（见 §1），可排进 v1.1 的规划清单；
-  进入 v1.1 实现时再敲定 §1 暴露面与发布形式（crates.io / Maven Central / 仅仓库内 vendored）。
+- **`termchart_capi` → 已落地**：C ABI 适配层方案（见 §1）已在 v1.1 实现，真实暴露面与示例见
+  [C ABI 与 Python 桥](../guide/c_api.md)。开工时曾列的待敲定项已随实现收敛：
+  ① 暴露面 = 高层出图（`render/print` 文本、`chart_*` 图表、`to_svg`/`to_png` 两段式导出、
+  `set_prop` 模型属性通道），**不含 GUI 注入**（GUI 仍走 `plugins/gui_*` 原生后端）；
+  ② 发布形式暂定仓库内 vendored（Rust/Java 开工时再定 crates.io / Maven Central）；
+  ③ Rust 路线仍倾向 cxx。
 - **Rust/Java 搭桥 → 推迟**：不在 v1.1，也不在本轮落地。两者都依赖 capi 先就位，故未来开工时
   `搭桥` 这一项在 todo 中排**较前**（先于其它扩展项），让 capi 先行、两桥随后并行。
-- 仍待敲定的问题（capi 开工前）：① C API 暴露面（仅高层出图？还是 GUI 注入也统一到 C API？）；
-  ② 发布形式；③ Rust 走 cxx 还是 bindgen（倾向 cxx）。
 
 开始实现后，本文件降级为设计记录，落到对应 `bindings/` 子目录与 CI job。

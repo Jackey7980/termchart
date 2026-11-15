@@ -37,6 +37,7 @@ int main() {
 | 在终端里显示位图 | guide/images.md |
 | 解析 Mermaid / PlantUML / DOT | guide/dsl_reference.md |
 | 自定义图表 / 光栅器 / 后端 | guide/custom_*.md |
+| 用 C / Python 调 termchart（含坐标轴标签） | guide/c_api.md |
 | 遇到显示异常 | reference/faq.md |
 
 ## 当前能力口径

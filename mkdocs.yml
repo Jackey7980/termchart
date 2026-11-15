@@ -36,6 +36,10 @@ nav:
           - 自定义图表: guide/custom_chart.md
           - 自定义后端: guide/custom_backend.md
           - 自定义光栅器: guide/custom_rasterizer.md
+  - 语言桥与 FFI:
+      - C ABI 与 Python 桥: guide/c_api.md
+      - Python（pybind11）: guide/python_bridge.md
+      - FFI / 桥方案: design/ffi_plan.md
   - 参考:
       - 能力矩阵: reference/capability_matrix.md
       - 模块矩阵: reference/module_matrix.md
