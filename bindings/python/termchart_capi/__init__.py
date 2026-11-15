@@ -284,8 +284,11 @@ _PROP = {
     "emphasize_zero": _c.TC_PROP_EMPHASIZE_ZERO,
     "shade_negative": _c.TC_PROP_SHADE_NEGATIVE,
     "x_ticks": _c.TC_PROP_X_TICKS,
+    "x_label": _c.TC_PROP_X_LABEL,
+    "y_label": _c.TC_PROP_Y_LABEL,
 }
 _BOOL_PROPS = {"auto_domain", "include_zero", "emphasize_zero", "shade_negative"}
+_STR_PROPS = {"x_label", "y_label"}
 
 
 class Chart:
@@ -404,6 +407,13 @@ class Chart:
         elif prop in _BOOL_PROPS:
             v.kind = _c.TC_VAL_BOOL
             v.i = 1 if value else 0
+        elif prop in _STR_PROPS:
+            if not isinstance(value, str):
+                raise TermchartError("property %r expects a string" % (prop,))
+            enc = value.encode("utf-8")
+            keep.append(enc)
+            v.kind = _c.TC_VAL_STRING
+            v.s = enc
         else:
             arr = (ctypes.c_double * len(value))(*value)
             keep.append(arr)

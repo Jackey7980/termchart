@@ -24,19 +24,25 @@
 #include "termchart/api/autoviz_plot.hpp"
 #include "termchart/api/chart.hpp"
 #include "termchart/api/quick.hpp"
+#include "termchart/backend/vector/backend.hpp"
+#include "termchart/backend/vector/svg_backend.hpp"
+#include "termchart/canvas/canvas.hpp"
 #include "termchart/chart/cartesian/bar_chart.hpp"
 #include "termchart/chart/cartesian/line_chart.hpp"
 #include "termchart/chart/cartesian/scatter_chart.hpp"
 #include "termchart/chart/cartesian/sparkline.hpp"
-#include "termchart/chart/polar/pie.hpp"
-#include "termchart/canvas/canvas.hpp"
 #include "termchart/chart/context.hpp"
-#include "termchart/gui/cells.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/chart/polar/pie.hpp"
 #include "termchart/chart/series.hpp"
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/error.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/gui/cells.hpp"
+#include "termchart/image/encode.hpp"
+#include "termchart/render/compositor.hpp"
+#include "termchart/render/renderer.hpp"
+#include "termchart/scene/command.hpp"
+#include "termchart/scene/scene.hpp"
 #include "termchart/version.hpp"
 
 using namespace termchart;
@@ -67,6 +73,10 @@ struct ChartData {
     bool shade_negative = false;
     bool legend = false;  // 展示属性，按次渲染时设置；饼图在构建期据此设 PieOptions
     std::vector<double> x_ticks;
+
+    // 轴标签：纯 C-ABI 层语义，不在 C++ 核心 Chart 上。渲染时后置绘制到边距里。
+    std::string x_label;
+    std::string y_label;
 
     std::unique_ptr<chart::Chart> cached;
     void invalidate() noexcept { cached.reset(); }
@@ -251,21 +261,105 @@ bool has_data(const ChartData& d) {
     return false;
 }
 
+// 轴标签不进 C++ 核心 Chart 基类（核心把 Chart 定义为"能画到 Canvas 的抽象"，
+// 轴标签语义属于 Dataset 层）。这里在 C-ABI 层把"图"和"轴标签"分层合成：
+// 图占主区，轴标签画在预留边距里，互不覆盖。
+//
+// 返回 false 表示 width/height 非法（调用方转为 TC_ERR_INVALID_ARG）。
+bool build_plot_with_labels(ChartData& d, const tc_plot_opts* o, CellBuffer& out) {
+    const std::uint32_t req_cols = (o && o->width) ? o->width : 80u;
+    const std::uint32_t req_rows = (o && o->height) ? o->height : 24u;
+    if (req_cols == 0 || req_rows == 0 || req_cols > 0xFFFF || req_rows > 0xFFFF) return false;
+
+    canvas::Canvas plot_cv(req_cols, req_rows);
+    chart::DrawContext ctx{plot_cv};
+    chart::Chart& ch = apply_display(d, o);
+    ch.draw(ctx);
+    CellBuffer plot = plot_cv.to_buffer();
+
+    const bool has_x = !d.x_label.empty();
+    const bool has_y = !d.y_label.empty();
+    const std::uint32_t y_margin = has_y ? 2u : 0u;  // 左侧留 2 列给纵向 y 轴标题
+    const std::uint32_t x_margin = has_x ? 2u : 0u;  // 底部留 2 行给 x 轴标题
+    const std::uint32_t out_w = req_cols + y_margin;
+    const std::uint32_t out_h = req_rows + x_margin;
+
+    std::vector<render::Layer> layers;
+    layers.push_back(render::Layer{&plot, static_cast<std::int32_t>(y_margin), 0});
+
+    CellBuffer xlab, ylab;
+    if (has_x) {
+        canvas::Canvas lab(req_cols, x_margin);
+        const std::string& s = d.x_label;
+        const std::uint32_t start = (req_cols > s.size())
+                                       ? (req_cols - static_cast<std::uint32_t>(s.size())) / 2u
+                                       : 0u;
+        lab.draw_text(Point{static_cast<double>(start), x_margin > 1 ? 1.0 : 0.0}, s);
+        xlab = lab.to_buffer();
+        layers.push_back(render::Layer{&xlab, static_cast<std::int32_t>(y_margin),
+                                      static_cast<std::int32_t>(req_rows)});
+    }
+    if (has_y) {
+        canvas::Canvas lab(y_margin, req_rows);
+        const std::string& s = d.y_label;
+        const long mid = static_cast<long>(req_rows) / 2;
+        const long top = mid + static_cast<long>(s.size()) / 2;  // 第一个字的最高行
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            const long row = top - static_cast<long>(i);
+            if (row < 0) break;
+            lab.draw_text(Point{0.0, static_cast<double>(row)}, std::string(1, s[i]));
+        }
+        ylab = lab.to_buffer();
+        layers.push_back(render::Layer{&ylab, 0, 0});
+    }
+    out = CellBuffer(out_w, out_h);
+    render::Compositor::composite(layers, out);
+    return true;
+}
+
+// SVG 走矢量 Scene 路径（与 Canvas 不同）。Text 不计入 Scene::bounds()，而 SVG
+// viewBox 默认用 bounds() 自动定——所以框外的轴标签会被裁掉。这里在 C-ABI 层追加
+// TextOp 画标签，并用两个退化 MoveTo（零长、即便被描边也不可见）撑开包围盒。
+void decorate_scene_labels(scene::Scene& scene, const ChartData& d) {
+    if (d.x_label.empty() && d.y_label.empty()) return;
+    const Rect b = scene.bounds();  // 仅几何，即"图"的包围盒
+    if (!d.x_label.empty()) {
+        const double cx = b.x + b.w / 2.0 - static_cast<double>(d.x_label.size()) / 2.0;
+        scene.push(scene::Command{scene::TextOp{Point{cx, b.bottom() + 1.0}, d.x_label, Style{}}});
+    }
+    if (!d.y_label.empty()) {
+        const double cy = b.y + b.h / 2.0 + static_cast<double>(d.y_label.size()) / 2.0;
+        for (std::size_t i = 0; i < d.y_label.size(); ++i) {
+            scene.push(scene::Command{
+                scene::TextOp{Point{b.x - 1.0, cy - static_cast<double>(i)},
+                              std::string(1, d.y_label[i]), Style{}}});
+        }
+    }
+    // 用极值角的零长 LineTo 撑开 bounds（autofit 据此定 viewBox）。留足左右边距，
+    // 让 y 轴标题（位于 b.x-1）落在框内；bounds() 只统计 MoveTo/LineTo/Arc。
+    const double m = 5.0;
+    const double minx = b.x - m, miny = b.y - m;
+    const double maxx = b.right() + m, maxy = b.bottom() + m;
+    auto corner = [&](double x, double y) {
+        scene.push(scene::Command{scene::MoveTo{Point{x, y}}});
+        scene.push(scene::Command{scene::LineTo{Point{x, y}}});
+    };
+    corner(minx, miny);
+    corner(maxx, maxy);
+}
+
 // 统一渲染入口：三种图种走同一条路（不重复造渲染逻辑）。
 inline tc_status render_chart_bytes(ChartData& c, const tc_plot_opts* opts, std::string& out,
                                     tc_error_handle* err) {
     if (!has_data(c)) return fail(err, "empty chart data", TC_ERR_INVALID_ARG);
-    api::ApiOptions ao;
-    if (!to_render_opts(opts, ao)) {
+    CellBuffer cells;
+    if (!build_plot_with_labels(c, opts, cells)) {
         return fail(err, "width/height out of range", TC_ERR_INVALID_ARG);
     }
-    chart::Chart& ch = apply_display(c, opts);
-    const Result<std::string> r = api::render_chart(ch, ao);
-    if (!r.has_value()) {
-        return fail(err, std::string("render failed (") + describe(r.error()) + ")",
-                    TC_ERR_RENDER);
-    }
-    out = r.value();
+    const ColorDepth depth = (opts && opts->depth != TC_DEPTH_NONE) ? to_depth(opts->depth)
+                                                                   : ColorDepth::TrueColor;
+    render::Renderer renderer(depth);
+    out = renderer.render_full(cells);
     return 0;
 }
 
@@ -496,6 +590,24 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
             c->x_ticks.assign(v.p, v.p + v.n);
             break;
         }
+        case TC_PROP_X_LABEL:
+        case TC_PROP_Y_LABEL: {
+            if (clear) {
+                if (prop == TC_PROP_X_LABEL)
+                    c->x_label.clear();
+                else
+                    c->y_label.clear();
+                break;
+            }
+            if (v.kind != TC_VAL_STRING || !v.s) {
+                return fail(err, "X/Y_LABEL expects a string", TC_ERR_INVALID_ARG);
+            }
+            if (prop == TC_PROP_X_LABEL)
+                c->x_label = v.s;
+            else
+                c->y_label = v.s;
+            break;
+        }
         default:
             return fail(err, "unknown chart property", TC_ERR_INVALID_ARG);
     }
@@ -533,12 +645,19 @@ tc_status tc_chart_to_svg(tc_chart_handle chart, const tc_plot_opts* opts, char*
     if (opts && opts->width) w = opts->width;
     if (opts && opts->height) h = opts->height;
     chart::Chart& ch = apply_display(*c, opts);
-    const Result<std::string> r = api::chart_to_svg(ch, w, h, backend::vector::VectorOptions{});
-    if (!r.has_value()) {
-        return fail(err, std::string("chart_to_svg failed (") + describe(r.error()) + ")",
+    const auto sc = api::chart_to_scene(ch, w, h);
+    if (!sc.has_value()) {
+        return fail(err, std::string("chart_to_scene failed (") + describe(sc.error()) + ")",
                     TC_ERR_RENDER);
     }
-    const std::string& s = r.value();
+    scene::Scene scene = std::move(sc.value());
+    decorate_scene_labels(scene, *c);
+    backend::vector::VectorOptions vo;
+    vo.font_size = 1.0;  // 以"格"为场景单位：字号设 1.0，避免被 scale 放大 scale 倍
+    backend::vector::SvgBackend svg;
+    svg.set_options(vo);
+    const std::string s = backend::vector::render_vector(svg, scene);
+    if (s.empty()) return fail(err, "svg encode failed", TC_ERR_RENDER);
     *out_len = static_cast<uint64_t>(s.size());
     if (!buf || cap == 0) return 0;  // 第一段：只问所需长度
     if (cap < s.size()) return TC_ERR_BUFFER_TOO_SMALL;
@@ -592,10 +711,10 @@ tc_status tc_chart_to_png(tc_chart_handle chart, const tc_plot_opts* o, char* bu
         return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
 
     chart::Chart& ch = apply_display(*c, o);
-    canvas::Canvas canvas(cols, rows);
-    chart::DrawContext ctx{canvas};
-    ch.draw(ctx);
-    CellBuffer cells = canvas.to_buffer();
+    CellBuffer cells;
+    if (!build_plot_with_labels(*c, o, cells)) {
+        return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
+    }
     gui::CellBitmapOptions copts{};  // 默认 9×16、深色底
     image::Bitmap bmp = gui::render_cells_to_bitmap(cells, copts);
     std::string png = image::encode(bmp, image::ImageFormat::Png);

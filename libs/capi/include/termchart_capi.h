@@ -208,8 +208,10 @@ typedef enum tc_chart_prop {
     TC_PROP_INCLUDE_ZERO = 3,   /* bool；折线 / 散点，仅在 AUTO_DOMAIN 开启时生效 */
     TC_PROP_EMPHASIZE_ZERO = 4, /* bool；仅折线 */
     TC_PROP_SHADE_NEGATIVE = 5, /* bool；仅折线 */
-    TC_PROP_X_TICKS = 6         /* TC_VAL_DOUBLE_ARRAY 显式 x 刻度（时间轴用）；仅折线，
+    TC_PROP_X_TICKS = 6,        /* TC_VAL_DOUBLE_ARRAY 显式 x 刻度（时间轴用）；仅折线，
                                    空数组 = 恢复自动刻度 */
+    TC_PROP_X_LABEL = 7,        /* TC_VAL_STRING：X 轴标签。C-ABI 层后置绘制，不碰 C++ 核心 */
+    TC_PROP_Y_LABEL = 8         /* TC_VAL_STRING：Y 轴标签。C-ABI 层后置绘制，不碰 C++ 核心 */
 } tc_chart_prop;
 
 tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_value* value,

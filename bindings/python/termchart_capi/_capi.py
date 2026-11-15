@@ -33,6 +33,8 @@ TC_PROP_INCLUDE_ZERO = 3
 TC_PROP_EMPHASIZE_ZERO = 4
 TC_PROP_SHADE_NEGATIVE = 5
 TC_PROP_X_TICKS = 6
+TC_PROP_X_LABEL = 7
+TC_PROP_Y_LABEL = 8
 
 # ── 结构体（POD）──────────────────────────────────────────
 class PlotOpts(ctypes.Structure):
