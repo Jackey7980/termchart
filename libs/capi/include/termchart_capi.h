@@ -117,7 +117,15 @@ tc_status tc_print_line(const char* text, const tc_style* style, const tc_api_op
                         tc_error_handle* err);
 tc_status tc_hello(const tc_api_opts* opts, tc_error_handle* err);
 
-/* ── 图表（折线 / 散点 / 柱状）─────────────────────────────────────────────── */
+/* ── 图表创建 ────────────────────────────────────────────────────────────────
+ * tc_chart_create：按 kind 字符串建任意已登记图种；未知名返回 NULL（并填 err）。
+ * tc_chart_kinds：两段式枚举全部可用 kind（空格分隔，字典序），供绑定/CLI 发现能力：
+ *   1) 先传 cap=0（buf 可 NULL）→ *out_len 回写所需字节数；
+ *   2) 再按 *out_len 分配缓冲重调 → 写入全部 kind 名。
+ * 下面五个 tc_chart_create_* 是兼容胶水，等价于 tc_chart_create("...")。 */
+tc_chart_handle tc_chart_create(const char* kind, tc_error_handle* err);
+tc_status tc_chart_kinds(char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+
 tc_chart_handle tc_chart_create_line(void);
 tc_chart_handle tc_chart_create_scatter(void);
 tc_chart_handle tc_chart_create_bar(void);
@@ -195,8 +203,17 @@ typedef struct tc_series {
     uint64_t n;        /* 点数；0 = 非法 */
 } tc_series;
 
-/* 追加系列（append 语义，与库内 add_* 约定一致）。柱状图用 tc_chart_add_bar。 */
+/* 追加系列（append 语义，与库内 add_* 约定一致）。仅 Series / Points 形状图种可用。
+ * 柱状等 Values 形状用 tc_chart_add_bar / set_values；矩阵图种用 tc_chart_set_matrix。 */
 tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, uint64_t count,
+                              tc_error_handle* err);
+
+/* 二维矩阵入口（仅 Matrix 形状图种，如 contour/corr/mosaic/violin/pca/parallel）。
+ * rows[i] 指向第 i 行 col_count 个 double；row_labels/col_labels 可 NULL。 */
+tc_status tc_chart_set_matrix(tc_chart_handle chart, const double* const* rows,
+                              uint64_t row_count, uint64_t col_count,
+                              const char* const* row_labels, uint64_t n_row_labels,
+                              const char* const* col_labels, uint64_t n_col_labels,
                               tc_error_handle* err);
 
 /* 模型属性。不支持该属性的图种返回 TC_ERR_UNSUPPORTED（不静默忽略）。 */

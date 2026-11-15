@@ -27,13 +27,35 @@
 #include "termchart/backend/vector/backend.hpp"
 #include "termchart/backend/vector/svg_backend.hpp"
 #include "termchart/canvas/canvas.hpp"
+#include "termchart/chart/cartesian/area.hpp"
 #include "termchart/chart/cartesian/bar_chart.hpp"
+#include "termchart/chart/cartesian/contour.hpp"
+#include "termchart/chart/cartesian/heatmap.hpp"
+#include "termchart/chart/cartesian/hist.hpp"
 #include "termchart/chart/cartesian/line_chart.hpp"
+#include "termchart/chart/cartesian/mosaic.hpp"
+#include "termchart/chart/cartesian/parallel.hpp"
+#include "termchart/chart/cartesian/qq.hpp"
 #include "termchart/chart/cartesian/scatter_chart.hpp"
 #include "termchart/chart/cartesian/sparkline.hpp"
+#include "termchart/chart/cartesian/step.hpp"
+#include "termchart/chart/cartesian/streamgraph.hpp"
+#include "termchart/chart/cartesian/violin.hpp"
 #include "termchart/chart/context.hpp"
+#include "termchart/chart/flow/stream.hpp"
+#include "termchart/chart/polar/donut.hpp"
 #include "termchart/chart/polar/pie.hpp"
+#include "termchart/chart/polar/polar_bar.hpp"
+#include "termchart/chart/polar/radar.hpp"
+#include "termchart/chart/polar/rose.hpp"
 #include "termchart/chart/series.hpp"
+#include "termchart/chart/statistical/autocorr.hpp"
+#include "termchart/chart/statistical/corr.hpp"
+#include "termchart/chart/statistical/distribution.hpp"
+#include "termchart/chart/statistical/ecdf.hpp"
+#include "termchart/chart/statistical/pca.hpp"
+#include "termchart/chart/statistical/regression.hpp"
+#include "termchart/chart/statistical/seasonal.hpp"
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/error.hpp"
 #include "termchart/core/style.hpp"
@@ -49,19 +71,51 @@ using namespace termchart;
 
 namespace {
 
-// 句柄背后只有这一种数据：模型（系列 / 柱 / 属性）+ 惰性构建的图表对象。
+struct ChartData;  // 前向声明：ChartSpec::apply 与 ChartData::spec 互相引用
+
+// 数据形状：决定哪个数据入口能灌、has_data 看哪个容器。加图种时只需在 spec 表里
+// 声明形状，不必再改 add_series / set_values / set_matrix / has_data 的 if-else。
+enum class DataShape {
+    Series,  // 多系列（line / scatter / streamgraph / stream）
+    Values,  // 一组 double + 类别标签（bar / pie / hist / polar-* …）
+    Points,  // 一组 (x,y)（area / step / heatmap / regression …）
+    Matrix,  // 二维表（contour / corr / mosaic / violin / pca / parallel）
+};
+
+// 能力位：模型属性按图种支持情况显式拒绝，不静默忽略。
+struct Capabilities {
+    bool y_domain = false;
+    bool auto_domain = false;   // 同时控制 include_zero
+    bool emphasize_zero = false;
+    bool shade_negative = false;
+    bool x_ticks = false;
+};
+
+// 图种描述：工厂 + 数据灌入器 + 形状 + 能力 + 图例下发方式。
+// 这是"加图种只加一行"的唯一落点——核心零改动、C 头零改动、渲染层零改动。
+struct ChartSpec {
+    const char* name;
+    std::unique_ptr<chart::Chart> (*make)();
+    void (*apply)(chart::Chart&, const ChartData&);
+    DataShape shape;
+    Capabilities caps;
+    void (*set_legend)(chart::Chart&, bool);  // 可为 nullptr（该图种无图例概念）
+};
+
+// 句柄背后只有这一种数据：模型（按 shape 装的通用容器）+ 惰性构建的图表对象。
 //
 // 惰性 + 缓存是**性能**的关键：同一张图先 render_ansi 再 print 只构建一次；
 // 任何模型改动都经 invalidate() 丢弃缓存，不存在"改了没生效"。
 struct ChartData {
-    enum class Kind { Line, Scatter, Bar, Pie, Sparkline } kind = Kind::Line;
+    std::string kind = "line";  // 图种名，对应 ChartSpec::name
 
-    // 折线 / 散点：多系列，每系列自带名字与颜色
-    std::vector<chart::Series> series;
-
-    // 柱状：单系列模型（一组类别 + 一组值）
-    std::vector<double> values;
-    std::vector<std::string> categories;
+    // 通用数据容器：按 spec.shape 选用其一（其余为空）
+    std::vector<chart::Series> series;        // Series / Points 形状（Points 只用第一条的 points）
+    std::vector<double> values;               // Values 形状
+    std::vector<std::string> categories;      // Values 形状的类别 / 标签
+    std::vector<std::vector<double>> matrix;  // Matrix 形状
+    std::vector<std::string> row_labels;      // Matrix 形状的可选行/列标签
+    std::vector<std::string> col_labels;
     std::string bar_name = "series";
     Color bar_color = chart::default_color(chart::DefaultColor::Accent);
 
@@ -71,7 +125,7 @@ struct ChartData {
     bool include_zero = false;
     bool emphasize_zero = false;
     bool shade_negative = false;
-    bool legend = false;  // 展示属性，按次渲染时设置；饼图在构建期据此设 PieOptions
+    bool legend = false;  // 展示属性，按次渲染时设置
     std::vector<double> x_ticks;
 
     // 轴标签：纯 C-ABI 层语义，不在 C++ 核心 Chart 上。渲染时后置绘制到边距里。
@@ -80,6 +134,8 @@ struct ChartData {
 
     std::unique_ptr<chart::Chart> cached;
     void invalidate() noexcept { cached.reset(); }
+
+    const ChartSpec& spec() const noexcept;  // 定义见 spec 表之后
 };
 
 // 属性通道的两个小工具：bool 取值（BOOL/INT 都收）、"清除"判定（NONE 或空数组）。
@@ -149,6 +205,143 @@ inline bool to_render_opts(const tc_plot_opts* o, api::ApiOptions& out) {
     return true;
 }
 
+// ── 图种表：工厂 / 数据灌入 / 能力，一处登记 ─────────────────────────────────
+// 模板让同形状图种共享 applier；新图种通常只需在 kSpecs 里加一行。
+
+template <class T>
+std::unique_ptr<chart::Chart> make_chart() {
+    return std::make_unique<T>();
+}
+
+// Series 形状：line / scatter / streamgraph / stream 都用 set_series。
+template <class T>
+void apply_series(chart::Chart& ch, const ChartData& d) {
+    static_cast<T&>(ch).set_series(d.series);
+}
+
+// Values 形状：不同图种 setter 末参不同，用几个模板分流。
+template <class T>
+void apply_values_labels(chart::Chart& ch, const ChartData& d) {  // (values, labels)
+    static_cast<T&>(ch).set_values(d.values, d.categories);
+}
+template <class T>
+void apply_values_color(chart::Chart& ch, const ChartData& d) {  // (values, color)
+    static_cast<T&>(ch).set_values(d.values, d.bar_color);
+}
+template <class T>
+void apply_values_color_name(chart::Chart& ch, const ChartData& d) {  // (values, color, name)
+    static_cast<T&>(ch).set_values(d.values, d.bar_color, d.bar_name);
+}
+template <class T>
+void apply_values_plain(chart::Chart& ch, const ChartData& d) {  // (values) 单系列
+    static_cast<T&>(ch).set_values(d.values);
+}
+inline void apply_qq(chart::Chart& ch, const ChartData& d) {  // QQChart::set_sample
+    static_cast<chart::QQChart&>(ch).set_sample(d.values);
+}
+
+// Points 形状：series[0].points 作为 (x,y) 序列灌入。
+template <class T>
+void apply_points(chart::Chart& ch, const ChartData& d) {
+    std::vector<Point> pts;
+    if (!d.series.empty()) pts = d.series.front().points;
+    static_cast<T&>(ch).set_values(std::move(pts), d.bar_color, d.bar_name);
+}
+template <class T>
+void apply_points_colormap(chart::Chart& ch, const ChartData& d) {  // heatmap: 第二参是 colormap
+    std::vector<Point> pts;
+    if (!d.series.empty()) pts = d.series.front().points;
+    static_cast<T&>(ch).set_values(std::move(pts));  // 用默认 colormap
+}
+// RegressionChart::set_points（方法名不同）
+inline void apply_regression_points(chart::Chart& ch, const ChartData& d) {
+    std::vector<Point> pts;
+    if (!d.series.empty()) pts = d.series.front().points;
+    static_cast<chart::RegressionChart&>(ch).set_points(std::move(pts), d.bar_color, d.bar_name);
+}
+
+// Matrix 形状：各图种矩阵 setter 形态不同，逐个适配（每处 3-5 行）。
+inline void apply_contour(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::ContourChart&>(ch).set_field(d.matrix);
+}
+inline void apply_corr(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::CorrMatrixChart&>(ch).set_matrix(d.row_labels, d.matrix);
+}
+inline void apply_mosaic(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::MosaicChart&>(ch).set_counts(d.matrix, d.row_labels, d.col_labels);
+}
+inline void apply_violin(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::ViolinChart&>(ch).set_data(d.matrix);
+}
+inline void apply_pca(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::PcaChart&>(ch).set_data(d.matrix);
+}
+inline void apply_parallel(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::ParallelChart&>(ch).set_axes(d.row_labels, d.matrix);
+}
+
+// 图例下发：能 set_show_legend 的图种走这个模板；Pie 的选项在构建期另设。
+template <class T>
+void set_legend_of(chart::Chart& ch, bool on) {
+    static_cast<T&>(ch).set_show_legend(on);
+}
+
+// 能力快捷构造
+inline Capabilities caps_xy() {
+    return Capabilities{true, true, true, true, true};
+}
+
+// spec 表。列：name / make / apply / shape / caps / legend-setter。
+// 加一个图种 = 加一行；ABI、渲染层、影子模型其余部分都不动。
+const std::vector<ChartSpec> kSpecs = {
+    // ── Series（tc_chart_add_series / add_points）──
+    {"line",        make_chart<chart::LineChart>,        apply_series<chart::LineChart>,        DataShape::Series, caps_xy(),   set_legend_of<chart::LineChart>},
+    {"scatter",     make_chart<chart::ScatterChart>,     apply_series<chart::ScatterChart>,     DataShape::Series, Capabilities{false,true,false,false,false}, set_legend_of<chart::ScatterChart>},
+    {"streamgraph", make_chart<chart::StreamgraphChart>, apply_series<chart::StreamgraphChart>, DataShape::Series, Capabilities{}, nullptr},
+    {"stream",      make_chart<chart::StreamChart>,   apply_series<chart::StreamChart>,     DataShape::Series, Capabilities{}, nullptr},
+
+    // ── Values（tc_chart_set_values）──
+    {"bar",        make_chart<chart::BarChart>,       nullptr, DataShape::Values, Capabilities{true,false,false,false,false}, set_legend_of<chart::BarChart>},
+    {"pie",        make_chart<chart::PieChart>,       nullptr, DataShape::Values, Capabilities{}, nullptr},
+    {"donut",      make_chart<chart::DonutChart>,     apply_values_labels<chart::DonutChart>,     DataShape::Values, Capabilities{}, nullptr},
+    {"rose",       make_chart<chart::RoseChart>,      apply_values_labels<chart::RoseChart>,      DataShape::Values, Capabilities{}, nullptr},
+    {"radar",      make_chart<chart::RadarChart>,     apply_values_labels<chart::RadarChart>,     DataShape::Values, Capabilities{}, nullptr},
+    {"polar_bar",  make_chart<chart::PolarBarChart>,  apply_values_labels<chart::PolarBarChart>,  DataShape::Values, Capabilities{}, nullptr},
+    {"hist",       make_chart<chart::HistChart>,      apply_values_color_name<chart::HistChart>,  DataShape::Values, Capabilities{}, set_legend_of<chart::HistChart>},
+    {"sparkline",  make_chart<chart::SparklineChart>, apply_values_plain<chart::SparklineChart>,  DataShape::Values, Capabilities{}, nullptr},
+    {"autocorr",   make_chart<chart::AutocorrChart>,  apply_values_color<chart::AutocorrChart>,   DataShape::Values, Capabilities{}, nullptr},
+    {"distribution", make_chart<chart::DistributionChart>, apply_values_color_name<chart::DistributionChart>, DataShape::Values, Capabilities{}, nullptr},
+    {"ecdf",       make_chart<chart::EcdfChart>,      apply_values_color_name<chart::EcdfChart>,  DataShape::Values, Capabilities{}, nullptr},
+    {"seasonal",   make_chart<chart::SeasonalChart>,  apply_values_color<chart::SeasonalChart>,   DataShape::Values, Capabilities{}, nullptr},
+    {"qq",         make_chart<chart::QQChart>,        apply_qq,                                    DataShape::Values, Capabilities{}, nullptr},
+
+    // ── Points（tc_chart_add_points）──
+    {"area",       make_chart<chart::AreaChart>,      apply_points<chart::AreaChart>,       DataShape::Points, Capabilities{}, set_legend_of<chart::AreaChart>},
+    {"step",       make_chart<chart::StepChart>,      apply_points<chart::StepChart>,       DataShape::Points, Capabilities{}, set_legend_of<chart::StepChart>},
+    {"heatmap",    make_chart<chart::HeatmapChart>,   apply_points_colormap<chart::HeatmapChart>, DataShape::Points, Capabilities{}, set_legend_of<chart::HeatmapChart>},
+    {"regression", make_chart<chart::RegressionChart>,apply_regression_points,              DataShape::Points, Capabilities{}, set_legend_of<chart::RegressionChart>},
+
+    // ── Matrix（tc_chart_set_matrix）──
+    {"contour",    make_chart<chart::ContourChart>,   apply_contour,  DataShape::Matrix, Capabilities{}, nullptr},
+    {"corr",       make_chart<chart::CorrMatrixChart>,apply_corr,     DataShape::Matrix, Capabilities{}, nullptr},
+    {"mosaic",     make_chart<chart::MosaicChart>,    apply_mosaic,   DataShape::Matrix, Capabilities{}, nullptr},
+    {"violin",     make_chart<chart::ViolinChart>,    apply_violin,   DataShape::Matrix, Capabilities{}, nullptr},
+    {"pca",        make_chart<chart::PcaChart>,       apply_pca,      DataShape::Matrix, Capabilities{}, nullptr},
+    {"parallel",   make_chart<chart::ParallelChart>,  apply_parallel, DataShape::Matrix, Capabilities{}, nullptr},
+};
+
+const ChartSpec* find_spec(std::string_view name) noexcept {
+    for (const auto& s : kSpecs) {
+        if (name == s.name) return &s;
+    }
+    return nullptr;
+}
+
+const ChartSpec& ChartData::spec() const noexcept {
+    const ChartSpec* s = find_spec(kind);
+    return s ? *s : kSpecs.front();  // kind 由 create 校验，理论上不会落到这里
+}
+
 // ── 错误 / 输出辅助 ──────────────────────────────────────────────────────────
 
 inline void set_err(tc_error_handle* err, const std::string& msg) {
@@ -178,45 +371,51 @@ inline std::string_view sv_of(const char* p, std::uint64_t n) {
 // ── 图表：惰性构建 + 缓存 ───────────────────────────────────────────────────
 
 // 把模型灌进具体图种。只在缓存缺失时调用一次（之后由缓存持有，不再深拷贝）。
+// 全部经 spec 表：工厂生成对象 → applier 灌数据 → 能力位下发模型属性。
 std::unique_ptr<chart::Chart> build_chart(ChartData& d) {
-    switch (d.kind) {
-        case ChartData::Kind::Line: {
-            auto ch = std::make_unique<chart::LineChart>();
-            ch->set_series(d.series);
-            ch->set_auto_domain(d.auto_domain, d.include_zero);
-            ch->set_emphasize_zero(d.emphasize_zero);
-            ch->set_shade_negative(d.shade_negative);
-            if (d.y_domain) ch->set_y_domain(d.y_domain->first, d.y_domain->second);
-            if (!d.x_ticks.empty()) ch->set_x_ticks(d.x_ticks);
-            return ch;
-        }
-        case ChartData::Kind::Scatter: {
-            auto ch = std::make_unique<chart::ScatterChart>();
-            ch->set_series(d.series);
-            ch->set_auto_domain(d.auto_domain, d.include_zero);
-            return ch;
-        }
-        case ChartData::Kind::Bar: {
-            auto ch = std::make_unique<chart::BarChart>();
-            ch->set_values(d.values, d.categories, d.bar_color, d.bar_name);
-            if (d.y_domain) ch->set_y_domain(d.y_domain->first, d.y_domain->second);
-            return ch;
-        }
-        case ChartData::Kind::Pie: {
-            auto ch = std::make_unique<chart::PieChart>();
-            chart::PieOptions po;
-            po.show_legend = d.legend;  // 图例在 PieOptions 里，构建期定
-            ch->set_options(po);
-            ch->set_values(d.values, d.categories);  // 标签已存于 categories
-            return ch;
-        }
-        case ChartData::Kind::Sparkline: {
-            auto ch = std::make_unique<chart::SparklineChart>();
-            ch->set_values(d.values);
-            return ch;
+    const ChartSpec& sp = d.spec();
+    auto ch = sp.make();
+    if (!ch) return nullptr;
+
+    // bar / pie 的数据灌入带额外构建期副作用（bar 的 y_domain、pie 的图例选项），
+    // 其余图种（含全部 Series/Points/Matrix）都由 spec.apply 统一处理。
+    if (d.kind == "bar") {
+        static_cast<chart::BarChart&>(*ch).set_values(d.values, d.categories, d.bar_color,
+                                                      d.bar_name);
+        if (d.y_domain)
+            static_cast<chart::BarChart&>(*ch).set_y_domain(d.y_domain->first,
+                                                            d.y_domain->second);
+    } else if (d.kind == "pie") {
+        chart::PieOptions po;
+        po.show_legend = d.legend;  // 图例在 PieOptions 里，构建期定
+        static_cast<chart::PieChart&>(*ch).set_options(po);
+        static_cast<chart::PieChart&>(*ch).set_values(d.values, d.categories);
+    } else if (sp.apply) {
+        sp.apply(*ch, d);
+    }
+
+    // 能力位下发：line/scatter 的域与零线等，全部按 spec.caps 决定，不硬编码 kind。
+    if (sp.caps.auto_domain) {
+        if (auto* lc = dynamic_cast<chart::LineChart*>(ch.get())) {
+            lc->set_auto_domain(d.auto_domain, d.include_zero);
+        } else if (auto* sc = dynamic_cast<chart::ScatterChart*>(ch.get())) {
+            sc->set_auto_domain(d.auto_domain, d.include_zero);
         }
     }
-    return nullptr;
+    if (sp.caps.y_domain) {
+        if (auto* lc = dynamic_cast<chart::LineChart*>(ch.get())) {
+            if (d.y_domain) lc->set_y_domain(d.y_domain->first, d.y_domain->second);
+        }
+    }
+    if (sp.caps.emphasize_zero) {
+        auto* lc = static_cast<chart::LineChart*>(ch.get());
+        lc->set_emphasize_zero(d.emphasize_zero);
+        lc->set_shade_negative(d.shade_negative);
+    }
+    if (sp.caps.x_ticks && !d.x_ticks.empty()) {
+        static_cast<chart::LineChart&>(*ch).set_x_ticks(d.x_ticks);
+    }
+    return ch;
 }
 
 chart::Chart& ensure_chart(ChartData& d) {
@@ -225,38 +424,27 @@ chart::Chart& ensure_chart(ChartData& d) {
 }
 
 // 展示属性按次应用：可重复调用，不进缓存（缓存里只有模型）。
-// 图例开关在基类上不可虚调用（各图种各自实现），故按 kind 下发到具体类型；
+// 图例开关在基类上不可虚调用（各图种各自实现），故按 spec.set_legend 下发；
 // 不为 C 面的便利去给 C++ 基类加虚函数（接口方向不能反）。
 chart::Chart& apply_display(ChartData& d, const tc_plot_opts* o) {
-    d.legend = o && (o->show_legend != 0);  // 饼图在构建期据此设 PieOptions
+    d.legend = o && (o->show_legend != 0);
     chart::Chart& ch = ensure_chart(d);
     ch.set_title(o && o->title ? std::string(o->title) : std::string());
-    switch (d.kind) {
-        case ChartData::Kind::Line:
-            static_cast<chart::LineChart&>(ch).set_show_legend(d.legend);
-            break;
-        case ChartData::Kind::Scatter:
-            static_cast<chart::ScatterChart&>(ch).set_show_legend(d.legend);
-            break;
-        case ChartData::Kind::Bar:
-            static_cast<chart::BarChart&>(ch).set_show_legend(d.legend);
-            break;
-        // Pie：图例在构建期设过；Sparkline：无图例概念
-        default:
-            break;
-    }
+    if (const auto fn = d.spec().set_legend) fn(ch, d.legend);
     return ch;
 }
 
-// 空数据显式报错：不产出"看起来像空白的图"。
+// 空数据显式报错：不产出"看起来像空白的图"。按 spec.shape 看对应容器。
 bool has_data(const ChartData& d) {
-    // 值类图种（柱状 / 饼图 / 迷你图）看 values；系列类（折线 / 散点）看 series。
-    if (d.kind == ChartData::Kind::Bar || d.kind == ChartData::Kind::Pie ||
-        d.kind == ChartData::Kind::Sparkline) {
-        return !d.values.empty();
-    }
-    for (const auto& s : d.series) {
-        if (!s.points.empty()) return true;
+    switch (d.spec().shape) {
+        case DataShape::Values: return !d.values.empty();
+        case DataShape::Matrix: return !d.matrix.empty();
+        case DataShape::Series:
+        case DataShape::Points:
+            for (const auto& s : d.series) {
+                if (!s.points.empty()) return true;
+            }
+            return false;
     }
     return false;
 }
@@ -424,31 +612,42 @@ tc_status tc_hello(const tc_api_opts* opts, tc_error_handle* err) {
 
 // ── 图表句柄 ────────────────────────────────────────────────────────────────
 
-tc_chart_handle tc_chart_create_line(void) {
+// 通用创建：kind 字符串查 spec 表。未知名返回 NULL（调用方可查 tc_chart_kinds）。
+tc_chart_handle tc_chart_create(const char* kind, tc_error_handle* err) {
+    if (!kind || !find_spec(kind)) {
+        fail(err, "unknown chart kind", TC_ERR_INVALID_ARG);
+        return nullptr;
+    }
     auto* c = new (std::nothrow) ChartData();
-    if (c) c->kind = ChartData::Kind::Line;
+    if (!c) {
+        fail(err, "out of memory", TC_ERR_NOMEM);
+        return nullptr;
+    }
+    c->kind = kind;
     return reinterpret_cast<tc_chart_handle>(c);
 }
-tc_chart_handle tc_chart_create_scatter(void) {
-    auto* c = new (std::nothrow) ChartData();
-    if (c) c->kind = ChartData::Kind::Scatter;
-    return reinterpret_cast<tc_chart_handle>(c);
+
+// 两段式枚举可用图种（字典序，与 spec 表顺序一致）。
+tc_status tc_chart_kinds(char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    std::string joined;
+    for (const auto& s : kSpecs) {
+        if (!joined.empty()) joined.push_back(' ');
+        joined += s.name;
+    }
+    *out_len = static_cast<uint64_t>(joined.size());
+    if (!buf || cap == 0) return 0;
+    if (cap < joined.size()) return TC_ERR_BUFFER_TOO_SMALL;
+    std::memcpy(buf, joined.data(), joined.size());
+    return 0;
 }
-tc_chart_handle tc_chart_create_bar(void) {
-    auto* c = new (std::nothrow) ChartData();
-    if (c) c->kind = ChartData::Kind::Bar;
-    return reinterpret_cast<tc_chart_handle>(c);
-}
-tc_chart_handle tc_chart_create_pie(void) {
-    auto* c = new (std::nothrow) ChartData();
-    if (c) c->kind = ChartData::Kind::Pie;
-    return reinterpret_cast<tc_chart_handle>(c);
-}
-tc_chart_handle tc_chart_create_sparkline(void) {
-    auto* c = new (std::nothrow) ChartData();
-    if (c) c->kind = ChartData::Kind::Sparkline;
-    return reinterpret_cast<tc_chart_handle>(c);
-}
+
+// 旧工厂保留为兼容胶水：等价于 tc_chart_create("...")，不动 ABI。
+tc_chart_handle tc_chart_create_line(void)     { return tc_chart_create("line", nullptr); }
+tc_chart_handle tc_chart_create_scatter(void)  { return tc_chart_create("scatter", nullptr); }
+tc_chart_handle tc_chart_create_bar(void)      { return tc_chart_create("bar", nullptr); }
+tc_chart_handle tc_chart_create_pie(void)      { return tc_chart_create("pie", nullptr); }
+tc_chart_handle tc_chart_create_sparkline(void){ return tc_chart_create("sparkline", nullptr); }
 void tc_chart_free(tc_chart_handle chart) { delete reinterpret_cast<ChartData*>(chart); }
 
 tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, uint64_t count,
@@ -456,9 +655,9 @@ tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, ui
     if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
     if (!series && count) return fail(err, "null series array", TC_ERR_INVALID_ARG);
     auto* c = reinterpret_cast<ChartData*>(chart);
-    if (c->kind == ChartData::Kind::Bar) {
-        return fail(err, "bar chart takes values/labels: use tc_chart_add_bar",
-                    TC_ERR_UNSUPPORTED);
+    const DataShape shape = c->spec().shape;
+    if (shape != DataShape::Series && shape != DataShape::Points) {
+        return fail(err, "this chart kind takes values/matrix, not series", TC_ERR_UNSUPPORTED);
     }
     const std::size_t base = c->series.size();
     c->series.reserve(base + static_cast<std::size_t>(count));
@@ -497,17 +696,16 @@ tc_status tc_chart_add_bar(tc_chart_handle chart, const double* values, uint64_t
     return tc_chart_set_values(chart, values, n, labels, n_labels, nullptr);
 }
 
-// 通用"值 + 类别标签"入口：柱状 / 饼图 / 迷你图共用一套数据形状。
-// 对只收系列的图种（折线 / 散点）显式报 Unsupported，不静默丢弃数据。
+// 通用"值 + 类别标签"入口：全部 Values 形状图种共用（bar / pie / hist / polar-* …）。
+// 对只收系列/矩阵的图种显式报 Unsupported，不静默丢弃数据。
 tc_status tc_chart_set_values(tc_chart_handle chart, const double* values, uint64_t n,
                               const char* const* labels, uint64_t n_labels,
                               tc_error_handle* err) {
     if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
     if (!values && n) return fail(err, "null values with n>0", TC_ERR_INVALID_ARG);
     auto* c = reinterpret_cast<ChartData*>(chart);
-    if (c->kind != ChartData::Kind::Bar && c->kind != ChartData::Kind::Pie &&
-        c->kind != ChartData::Kind::Sparkline) {
-        return fail(err, "this chart kind takes series, not values", TC_ERR_UNSUPPORTED);
+    if (c->spec().shape != DataShape::Values) {
+        return fail(err, "this chart kind takes series/matrix, not values", TC_ERR_UNSUPPORTED);
     }
     c->values.clear();
     if (n) c->values.assign(values, values + n);
@@ -522,6 +720,41 @@ tc_status tc_chart_set_values(tc_chart_handle chart, const double* values, uint6
     return 0;
 }
 
+// 二维矩阵入口：Matrix 形状图种（contour / corr / mosaic / violin / pca / parallel）。
+// rows 为 row_count 个行指针，每行 col_count 个 double；row_labels/col_labels 可 NULL。
+tc_status tc_chart_set_matrix(tc_chart_handle chart, const double* const* rows,
+                              uint64_t row_count, uint64_t col_count,
+                              const char* const* row_labels, uint64_t n_row_labels,
+                              const char* const* col_labels, uint64_t n_col_labels,
+                              tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (!rows && row_count) return fail(err, "null rows with row_count>0", TC_ERR_INVALID_ARG);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (c->spec().shape != DataShape::Matrix) {
+        return fail(err, "this chart kind takes series/values, not matrix", TC_ERR_UNSUPPORTED);
+    }
+    c->matrix.clear();
+    c->matrix.reserve(static_cast<std::size_t>(row_count));
+    for (uint64_t i = 0; i < row_count; ++i) {
+        if (!rows[i] && col_count) {
+            c->matrix.clear();
+            c->invalidate();
+            return fail(err, "null row with col_count>0", TC_ERR_INVALID_ARG);
+        }
+        c->matrix.emplace_back(rows[i], rows[i] + col_count);
+    }
+    auto fill_labels = [](std::vector<std::string>& dst, const char* const* src, uint64_t n) {
+        dst.clear();
+        if (!src || !n) return;
+        dst.reserve(static_cast<std::size_t>(n));
+        for (uint64_t i = 0; i < n; ++i) dst.emplace_back(src[i] ? src[i] : "");
+    };
+    fill_labels(c->row_labels, row_labels, n_row_labels);
+    fill_labels(c->col_labels, col_labels, n_col_labels);
+    c->invalidate();
+    return 0;
+}
+
 tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_value* value,
                             tc_error_handle* err) {
     if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
@@ -532,8 +765,8 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
 
     switch (prop) {
         case TC_PROP_Y_DOMAIN: {
-            if (c->kind == ChartData::Kind::Scatter) {
-                return fail(err, "scatter chart has no y-domain", TC_ERR_UNSUPPORTED);
+            if (!c->spec().caps.y_domain) {
+                return fail(err, "this chart kind has no y-domain", TC_ERR_UNSUPPORTED);
             }
             if (clear) {
                 c->y_domain.reset();
@@ -550,8 +783,8 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
         }
         case TC_PROP_AUTO_DOMAIN:
         case TC_PROP_INCLUDE_ZERO: {
-            if (c->kind == ChartData::Kind::Bar) {
-                return fail(err, "bar chart is always auto-domain", TC_ERR_UNSUPPORTED);
+            if (!c->spec().caps.auto_domain) {
+                return fail(err, "this chart kind is always auto-domain", TC_ERR_UNSUPPORTED);
             }
             if (clear) return fail(err, "bool property has no clear state", TC_ERR_INVALID_ARG);
             if (!bool_of(v, b)) return fail(err, "expects bool", TC_ERR_INVALID_ARG);
@@ -564,8 +797,8 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
         }
         case TC_PROP_EMPHASIZE_ZERO:
         case TC_PROP_SHADE_NEGATIVE: {
-            if (c->kind != ChartData::Kind::Line) {
-                return fail(err, "line chart only", TC_ERR_UNSUPPORTED);
+            if (!c->spec().caps.emphasize_zero) {
+                return fail(err, "this chart kind has no zero-line emphasis", TC_ERR_UNSUPPORTED);
             }
             if (clear) return fail(err, "bool property has no clear state", TC_ERR_INVALID_ARG);
             if (!bool_of(v, b)) return fail(err, "expects bool", TC_ERR_INVALID_ARG);
@@ -577,8 +810,8 @@ tc_status tc_chart_set_prop(tc_chart_handle chart, tc_chart_prop prop, const tc_
             break;
         }
         case TC_PROP_X_TICKS: {
-            if (c->kind != ChartData::Kind::Line) {
-                return fail(err, "line chart only", TC_ERR_UNSUPPORTED);
+            if (!c->spec().caps.x_ticks) {
+                return fail(err, "this chart kind has no explicit x-ticks", TC_ERR_UNSUPPORTED);
             }
             if (clear) {
                 c->x_ticks.clear();

@@ -66,29 +66,72 @@ int main(void) {
 `tc_plot_opts` 里的 `width/height/title/show_legend/depth` 属于「展示」属性，按次传；
 只有「模型」属性（域、刻度、零线、轴标签）走下面 §4 的属性通道。
 
-## 3. 图表与系列
+## 3. 图表创建与数据形状
 
-| 工厂 | 图种 | 喂数据 |
+### 3.1 通用创建入口
+
+图种不是「一个图种一个工厂函数」——C 面用**一条通用入口**覆盖全部已登记图种：
+
+```c
+tc_error_handle err = NULL;
+tc_chart_handle c = tc_chart_create("hist", &err);   /* kind 字符串；未知名返回 NULL */
+```
+
+`tc_chart_kinds` 用两段式枚举当前可用 kind（空格分隔、字典序），绑定/CLI 据此发现能力，
+不硬编码列表：
+
+```c
+uint64_t need = 0;
+tc_chart_kinds(NULL, 0, &need, &err);                /* 问长度 */
+char* names = malloc(need);
+tc_chart_kinds(names, need, &need, &err);            /* 取全部 */
+/* names = "line scatter streamgraph ... corr pca parallel" */
+```
+
+旧工厂 `tc_chart_create_line/scatter/bar/pie/sparkline` 保留为兼容胶水（等价于
+`tc_chart_create("...")`），已编译调用方不受影响。
+
+### 3.2 四种数据形状
+
+每个图种属于且仅属于一种数据形状，决定用哪个入口灌数据；形状不匹配显式报
+`TC_ERR_UNSUPPORTED`，不静默丢弃：
+
+| 形状 | 数据入口 | 图种（首批 27 个） |
 | --- | --- | --- |
-| `tc_chart_create_line` | 折线 | `tc_chart_add_points` / `tc_chart_add_series` |
-| `tc_chart_create_scatter` | 散点 | 同上 |
-| `tc_chart_create_bar` | 柱状 | `tc_chart_add_bar`（值 + 类别标签）/ `tc_chart_set_values` |
-| `tc_chart_create_pie` | 饼图 | `tc_chart_set_values`（值 + 类别标签） |
-| `tc_chart_create_sparkline` | 迷你图 | `tc_chart_set_values` |
+| **Series**（多系列 `(x,y)`） | `tc_chart_add_series` / `tc_chart_add_points` | `line` `scatter` `streamgraph` `stream` |
+| **Values**（一组值 + 标签） | `tc_chart_set_values` / `tc_chart_add_bar` | `bar` `pie` `donut` `rose` `radar` `polar_bar` `hist` `sparkline` `autocorr` `distribution` `ecdf` `seasonal` `qq` |
+| **Points**（单条 `(x,y)`） | `tc_chart_add_points` | `area` `step` `heatmap` `regression` |
+| **Matrix**（二维表） | `tc_chart_set_matrix` | `contour` `corr` `mosaic` `violin` `pca` `parallel` |
 
-- **多系列**（折线/散点）：用 `tc_chart_add_series`，一次调用传 `count` 条、点集一次性构造，
-  不经逐点 setter。每条系列可带 `name`（图例）与 `color`（`tc_color`，`kind=TC_COLOR_NONE`
-  走图表默认色）。
-- **不支持该图种的数据形状** → 显式 `TC_ERR_UNSUPPORTED`，不静默丢弃：例如给折线调
-  `tc_chart_add_bar` 会报错；给只收系列的图种调 `tc_chart_set_values` 同样报错。
+> `heatmap` 名字虽有 "map"，输入是散点 `(x,y)` 而非矩阵（核心语义如此）；真正的二维场是
+> `contour`。图种会随版本增加——以 `tc_chart_kinds` 的输出为准。
+
+**多系列**（Series 形状）：`tc_chart_add_series` 一次传 `count` 条、点集一次性构造，不经逐点
+setter；每条可带 `name`（图例）与 `color`（`tc_color`，`kind=TC_COLOR_NONE` 走默认色）：
 
 ```c
 tc_series s[2] = {
     { .name="sq",  .x=x, .y=y1, .n=5 },
     { .name="lin", .x=x, .y=y2, .n=5 },
 };
-tc_chart_add_series(c, s, 2, &err);              /* append 语义 */
+tc_chart_add_series(c, s, 2, &err);              /* append 语义，批量非法则整批回滚 */
 ```
+
+**矩阵**（Matrix 形状）：行指针数组 + 行列数，标签可选：
+
+```c
+const double* rows[] = {row0, row1, row2};        /* 每行为 col_count 个 double */
+const char* rlab[] = {"a", "b", "c"};
+tc_chart_handle corr = tc_chart_create("corr", NULL);
+tc_chart_set_matrix(corr, rows, 3, 3, rlab, 3, NULL, 0, &err);
+```
+
+### 3.3 可扩展架构（维护成本）
+
+图种能力集中在 CAPI 内部一张 `kind → {工厂, 数据灌入器, 数据形状, 能力位, 图例方式}` 表：
+同形状图种共享 applier 模板，新图种通常**只加一行表项**——C 头、渲染层、属性通道都不动。
+需要处理专属 C++ 结构的图种（K 线 `OHLC`、箱线图 `BoxStats`、层次树 `HierNode`、地理
+`GeoRegion` 等）留待后续，届时同样只在表里加行，不新增 C 函数。
 
 ## 4. 模型属性通道
 
@@ -189,7 +232,9 @@ free(buf);
 它的 API 与 C 一一对应：
 
 ```python
-from termchart_capi import Chart
+from termchart_capi import Chart, kinds
+
+print(kinds())   # 发现当前 C 库登记的全部图种（元组，随版本增长）
 
 with Chart("line") as c:
     c.add_series([1, 2, 3, 4, 5], [5, 3, 4, 2, 6], name="a", color=(255, 140, 0))
@@ -201,13 +246,21 @@ with Chart("line") as c:
     print(c.ansi(width=60, height=16, title="demo", show_legend=True))
     open("out.svg", "w").write(c.to_svg(width=60, height=16))
     png: bytes = c.to_png(width=60, height=16)   # 返回 PNG 字节；传 path= 可直接落盘
+
+with Chart("corr") as c:                      # 矩阵形状图种
+    c.set_matrix([[1, .8], [.8, 1]], row_labels=["a", "b"])
+    print(c.ansi(width=40, height=12))
 ```
 
 要点：
 
-- `Chart(kind)` 的 `kind` ∈ `line / scatter / bar / pie / sparkline`，对应 C 的工厂函数。
-- `add_series(x, y, name=None, color=None)`：`color` 可为 RGB 三元组 `(r,g,b)` 或 ANSI16/256
-  索引整数；`None` 走默认色。
+- `Chart(kind)` 的 `kind` 是图种字符串（见 `kinds()` 或 C 侧 `tc_chart_kinds`），经 C 通用入口
+  创建；未知名抛 `TermchartError`。首批支持 27 个，见 §3.2 的表。
+- `add_series(x, y, name=None, color=None)`：**Series / Points** 形状；`add_points(x, y)` 是单条
+  无名系列的简写。`color` 可为 RGB 三元组 `(r,g,b)` 或 ANSI16/256 索引整数；`None` 走默认色。
+- `add_values(values, labels=None)`：**Values** 形状（bar/pie/hist/polar-* …）。
+- `set_matrix(rows, row_labels=None, col_labels=None)`：**Matrix** 形状（contour/corr/mosaic/
+  violin/pca/parallel）；`rows` 为行优先二维序列。
 - `set_prop(prop, value)`：
   - 模型属性（`y_domain` 等）传**元组/列表** → `TC_VAL_DOUBLE_ARRAY`；
   - 布尔属性（`auto_domain` 等）传 Python `bool` → `TC_VAL_BOOL`；

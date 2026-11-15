@@ -291,33 +291,47 @@ _BOOL_PROPS = {"auto_domain", "include_zero", "emphasize_zero", "shade_negative"
 _STR_PROPS = {"x_label", "y_label"}
 
 
-class Chart:
-    """句柄式图表：多系列 + 模型属性 + ANSI / SVG 输出。
+def kinds():
+    """返回当前 C 库登记的全部图种名（元组，字典序）。
 
-    与 C 侧 ``tc_chart_*`` 一一对应；同一对象可反复渲染（ANSIS 缓存只构建一次图）。
+    图种会随版本增加；用本函数发现可用 kind，而不是硬编码列表。
+    """
+    need = ctypes.c_uint64(0)
+    st = _c.tc_chart_kinds(None, 0, ctypes.byref(need), None)
+    if st != 0:
+        raise TermchartError("tc_chart_kinds failed (%d)" % (st,))
+    buf = ctypes.create_string_buffer(need.value)
+    got = ctypes.c_uint64(0)
+    st = _c.tc_chart_kinds(buf, need.value, ctypes.byref(got), None)
+    if st != 0:
+        raise TermchartError("tc_chart_kinds failed (%d)" % (st,))
+    return tuple(buf.raw[: got.value].decode("utf-8").split())
+
+
+class Chart:
+    """句柄式图表：多系列 / 值 / 矩阵 + 模型属性 + ANSI / SVG / PNG 输出。
+
+    ``kind`` 为图种字符串（见 :func:`kinds`），经 C 侧通用入口 ``tc_chart_create``
+    创建；同一对象可反复渲染（图在 C 侧缓存，只构建一次）。
 
         with Chart("line") as c:
             c.add_series([0,1,2,3], [1,4,9,16], name="sq", color=(255,140,0))
-            c.add_series([0,1,2,3], [2,3,5,7], name="lin", color=6)  # 6 = ANSI16 cyan
             c.set_prop("y_domain", (0, 18))
-            print(c.ansi(width=60, height=16, title="demo", show_legend=True))
-            open("out.svg", "w").write(c.to_svg(width=60, height=16))
+            print(c.ansi(width=60, height=16, title="demo"))
+
+        with Chart("corr") as c:
+            c.set_matrix([[1,.8],[.8,1]], row_labels=["a","b"])
+            open("corr.svg", "w").write(c.to_svg())
     """
 
-    _FACTORY = {
-        "line": _c.tc_chart_create_line,
-        "scatter": _c.tc_chart_create_scatter,
-        "bar": _c.tc_chart_create_bar,
-        "pie": _c.tc_chart_create_pie,
-        "sparkline": _c.tc_chart_create_sparkline,
-    }
-
     def __init__(self, kind="line"):
-        if kind not in self._FACTORY:
-            raise TermchartError("unknown chart kind: %r" % (kind,))
-        self._h = self._FACTORY[kind]()
+        enc = kind.encode("utf-8") if isinstance(kind, str) else None
+        if enc is None:
+            raise TermchartError("kind must be a string")
+        err = ctypes.c_void_p()
+        self._h = _c.tc_chart_create(enc, ctypes.byref(err))
         if not self._h:
-            raise TermchartError("failed to create chart handle")
+            raise TermchartError("unknown chart kind: %r" % (kind,))
         self.kind = kind
 
     # ── 生命周期 ──
@@ -393,6 +407,44 @@ class Chart:
         st = _c.tc_chart_set_values(h, vals, n, labs, len(labels) if labels else 0, ctypes.byref(err))
         if st != 0:
             _raise("add_values", st, err)
+
+    def set_matrix(self, rows, *, row_labels=None, col_labels=None):
+        """喂入二维矩阵（contour / corr / mosaic / violin / pca / parallel 等）。
+
+        ``rows`` 为行优先的二维序列（list of list，行数/列数须一致）。
+        """
+        h = self._alive()
+        nrow = len(rows)
+        if nrow == 0:
+            return
+        ncol = len(rows[0])
+        keep = []
+        row_ptrs = []
+        for r in rows:
+            if len(r) != ncol:
+                raise TermchartError("set_matrix: ragged rows")
+            arr = (ctypes.c_double * ncol)(*r)
+            keep.append(arr)
+            row_ptrs.append(ctypes.cast(arr, ctypes.POINTER(ctypes.c_double)))
+        ptrs = (ctypes.POINTER(ctypes.c_double) * nrow)(*row_ptrs)
+
+        def enc_labels(labels):
+            if labels is None:
+                return None, 0, []
+            ls = [x.encode("utf-8") if x else None for x in labels]
+            return (ctypes.c_char_p * len(ls))(*ls), len(ls), ls
+
+        rl, nrl, keep_rl = enc_labels(row_labels)
+        cl, ncl, keep_cl = enc_labels(col_labels)
+        keep.extend(keep_rl)
+        keep.extend(keep_cl)
+        err = ctypes.c_void_p()
+        st = _c.tc_chart_set_matrix(
+            h, ptrs, nrow, ncol,
+            rl, nrl, cl, ncl, ctypes.byref(err),
+        )
+        if st != 0:
+            _raise("set_matrix", st, err)
 
     # ── 属性 ──
     def set_prop(self, prop, value=None):

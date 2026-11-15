@@ -86,7 +86,7 @@ def _load(path=None):
 
 
 def _bind(lib):
-    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create_line, tc_chart_create_scatter, tc_chart_create_bar, tc_chart_create_pie, tc_chart_create_sparkline, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
+    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_create_line, tc_chart_create_scatter, tc_chart_create_bar, tc_chart_create_pie, tc_chart_create_sparkline, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
     f = lib.tc_version_string
     f.restype = ctypes.c_char_p
     f.argtypes = []
@@ -126,6 +126,16 @@ def _bind(lib):
     f.restype = ctypes.c_int
     f.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     tc_hello = f
+
+    f = lib.tc_chart_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_chart_create = f
+
+    f = lib.tc_chart_kinds
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_chart_kinds = f
 
     f = lib.tc_chart_create_line
     f.restype = ctypes.c_void_p
@@ -187,6 +197,11 @@ def _bind(lib):
     f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
     tc_chart_add_series = f
 
+    f = lib.tc_chart_set_matrix
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes.c_double)), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.c_void_p]
+    tc_chart_set_matrix = f
+
     f = lib.tc_chart_set_prop
     f.restype = ctypes.c_int
     f.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
@@ -246,6 +261,8 @@ tc_core_initialized = None
 tc_render_line = None
 tc_print_line = None
 tc_hello = None
+tc_chart_create = None
+tc_chart_kinds = None
 tc_chart_create_line = None
 tc_chart_create_scatter = None
 tc_chart_create_bar = None
@@ -258,6 +275,7 @@ tc_chart_set_values = None
 tc_chart_render_ansi = None
 tc_chart_print = None
 tc_chart_add_series = None
+tc_chart_set_matrix = None
 tc_chart_set_prop = None
 tc_chart_to_svg = None
 tc_chart_to_png = None
