@@ -135,7 +135,6 @@
 #include "termchart/core/rgb.hpp"
 #include "termchart/core/span_utils.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/deprecate.hpp"
 #include "termchart/detail/ansi_tables.hpp"
 #include "termchart/detail/block_chars.hpp"
 #include "termchart/detail/box_chars.hpp"

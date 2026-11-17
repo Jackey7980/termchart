@@ -1,12 +1,10 @@
-// opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）
+// opts.hpp —— ApiOptions 链式配置
 //
 // 面向"一行出图"的入口：所有可选参数都在这一处，且**每个都有默认值**，
-// 于是 tc::quick::hello() 之类的调用可以完全零配置。
+// 于是 api::hello() 之类的调用可以完全零配置。
 // 语义：未设置的项（std::optional 为空）表示"由库自行决定"。
 //
-// 命名：全库其余位置一律 `XxxOptions`（MetroOptions / SankeyOptions / …），
-// 这里原名 `Opts` 是唯一的例外；为"同一语义同一命名"收敛成 `ApiOptions`，
-// 旧名以别名保留，因此**不破坏**任何既有调用点。
+// 命名与全库一致：`XxxOptions`（MetroOptions / SankeyOptions / …）。
 #ifndef TERMCHART_API_OPTS_HPP
 #define TERMCHART_API_OPTS_HPP
 
@@ -55,9 +53,6 @@ private:
     bool newline_ = true;
     bool reset_ = true;
 };
-
-// 兼容别名：老代码写 `api::Opts` 仍然成立（全库只有这一处叫 Opts）。
-using Opts = ApiOptions;
 
 }  // namespace termchart::api
 

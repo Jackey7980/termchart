@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 416 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 414 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -16,32 +16,6 @@
 #ifndef TERMCHART_STATIC
 #define TERMCHART_STATIC
 #endif
-
-// ===== include/termchart/deprecate.hpp =====
-// deprecate.hpp —— 弃用标记宏
-//
-// 弃用流程（docs/contrib/deprecation.md）：
-//   第一步加 TERMCHART_DEPRECATED("将于 vX.Y 移除，改用 xxx")，至少一个 minor 周期保留；
-//   第二步在下个 major 删除。测试用 -Werror=deprecated-declarations 时，
-//   内部调用点必须显式加 TERMCHART_DEPRECATED_IGNORE_BEGIN/END。
-
-#if defined(__GNUC__) || defined(__clang__)
-#define TERMCHART_DEPRECATED(msg) __attribute__((deprecated(msg)))
-#define TERMCHART_DEPRECATED_IGNORE_BEGIN \
-    _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
-#define TERMCHART_DEPRECATED_IGNORE_END _Pragma("GCC diagnostic pop")
-#elif defined(_MSC_VER)
-#define TERMCHART_DEPRECATED(msg) __declspec(deprecated(msg))
-#define TERMCHART_DEPRECATED_IGNORE_BEGIN __pragma(warning(push)) __pragma(warning(disable : 4996))
-#define TERMCHART_DEPRECATED_IGNORE_END __pragma(warning(pop))
-#else
-#define TERMCHART_DEPRECATED(msg)
-#define TERMCHART_DEPRECATED_IGNORE_BEGIN
-#define TERMCHART_DEPRECATED_IGNORE_END
-#endif
-
-// 枚举值级弃用：保留原值，新增替代值。
-#define TERMCHART_DEPRECATED_ENUM(msg) TERMCHART_DEPRECATED(msg)
 
 // ===== include/termchart/export.hpp =====
 // export.hpp —— 符号可见性宏
@@ -129,10 +103,7 @@ class Renderer;
 
 // ── api ────────────────────────────────────────────────────────────────
 namespace api {
-// 全库约定是 `XxxOptions`（graph/layout/diagram 全都如此），api 侧旧名 `Opts`
-// 是唯一例外，已收敛为 `ApiOptions`；`Opts` 保留为兼容别名。
 class ApiOptions;
-using Opts = ApiOptions;
 }  // namespace api
 
 }  // namespace termchart
@@ -5954,9 +5925,7 @@ struct CsvTable {
 // ===== include/termchart/io/json.hpp =====
 // io/json.hpp —— JSON 解析（L2）
 //
-// 本文件于 2026-10-21 从 dsl/json.hpp 下沉收编（"数据入口归 io"）：解析核心与
-// 方言无关，dsl 及其余上层模块直接复用；dsl/json.hpp 现为 using 别名 shim，
-// 既有 dsl::JsonValue / dsl::parse_json 调用点零改动。
+// 解析核心与方言无关，dsl 及其余上层模块直接复用本文件（"数据入口归 io"）。
 //
 // 支持范围（**明确列出，避免"以为支持"**）：
 //   ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
@@ -8649,6 +8618,52 @@ struct EncodeOptions {
     //（4x4 沿用 PPS 默认 max=2，更大 TU 走 RExt 参数集，见上一字段）。
     // 色度 TU 恒为亮度的一半（4:2:0）。Pcm 档忽略本字段；其它值返回空串。
     int hevc_log2_tu_size = 2;
+    // 真压缩档（Intra）是否启用 SAO（8.7.3 样点自适应偏移）：
+    //   false（默认）⇒ SPS sample_adaptive_offset_enabled_flag=0、码流与既有
+    //          字节级基线逐字节一致；
+    //   true ⇒ SPS 声明 SAO、slice header 写 slice_sao_luma/chroma_flag、每个 CTB
+    //          前写 sao() 语法（merge 标志 + type_idx + offset）。编码端按
+    //          「真实滤波 SSE + λ·bin」逐 CTB 在 BO/EO/不启用三者间选优，并与
+    //          左/上邻居比较是否直接 merge 邻居参数；重建出口先 DBF 再 SAO。
+    // Pcm 档忽略本字段。
+    bool hevc_sao = false;
+    // 真压缩档（Intra）是否启用帧内模式的率失真决策（阶段三 P3-3）：
+    //   false（默认）⇒ 35 个候选模式按纯重建 SSD 选优，码流与既有字节级基线
+    //          逐字节一致；
+    //   true ⇒ 代价换成 J = SSD + λ·(模式语法 bin + 残差 bin)。bin 数由
+    //          encode_residual 实算，模式语法按 prev_intra_luma_pred_flag /
+    //          mpm_idx / rem_intra_luma_pred_mode 的真实 bin 数计入，故会倾向
+    //          MPM 候选与残差稀疏的模式。λ = auto_lambda(slice_qp)，与
+    //          transform_skip、自动 TU 档用的是同一个 λ 口径。
+    // 只影响 slice data 的模式选择，不新增/改写任何参数集字段；任意结果都是
+    // 合法 HEVC 码流。Pcm 档忽略本字段。
+    bool hevc_rdo = false;
+    // Inter 档（P 片）是否在整数运动搜索之后做 1/4 像素精化（阶段二 P2 亚像素）：
+    //   false（默认）⇒ MV 恒为 2 亮度采样（8 个 1/4 单位）的整数倍，运动补偿
+    //          退化为纯拷贝，码流与既有整数 P 帧字节级基线逐字节一致；
+    //   true ⇒ 在整数最优 MV 附近 ±4 个 1/4 单位做全搜索，用 8-tap luma /
+    //          4-tap chroma 插值算预测。插值严格对齐 FFmpeg hevcdsp（由
+    //          tools/verify_hevc_subpel.py 的 recon==dec 门禁锁定），MVD 用
+    //          现成的 mvd_coding 语法（单位本就是 1/4 采样），无需改参数集。
+    //          任意结果都是合法 HEVC 码流。Pcm / Intra 档忽略本字段。
+    bool hevc_subpel_me = false;
+    // Inter 档（P 片）是否启用两个前向参考帧（阶段二 P2 多参考）：
+    //   false（默认）⇒ 只参考前一帧（单参考），码流与既有字节级基线逐字节一致；
+    //   true ⇒ 参考列表 L0 = [POC-1, POC-2]，每个 CU 对两帧各做运动搜索，
+    //          选最优 (MV, ref_idx)。merge 候选按 ref_idx 复制（规范不缩放），
+    //          AMVP 只用同 ref_idx 的邻居（规避跨参考 POC 缩放）；SPS/VPS 的
+    //          max_dec_pic_buffering_minus1 从 1 增到 2。任意结果都是合法码流。
+    //          注意：本开关仅多参考前向 P 帧，不含双向 B 片预测。Pcm/Intra 忽略。
+    bool hevc_multi_ref = false;
+    // Inter 档是否启用双向 B 片（GOP=3：I0 → P2 → B1 → P4 → B3 ...）。
+    // POC 按显示序号 ×2 分配；B 片 L0=前一个 P/IDR、L1=后一个 P，均为单参考。
+    // 帧在【解码序】写出（P 先于其后的 B），POC 负责恢复显示序。默认 false，
+    // 保证既有 Inter 码流逐字节不变。Pcm/Intra 忽略。
+    bool hevc_b_slice = false;
+    // B 片内是否混用 merge / AMVP / 双向 AMVP。默认 false：整片只用 merge
+    // （仍含 combined bi-pred 双向候选），与 FFmpeg 逐像素门禁全形态通过；
+    // true 为实验性混合模式，部分运动形态下解码端候选列表会分叉。
+    bool hevc_b_amvp = false;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。
@@ -8843,8 +8858,9 @@ TERMCHART_API std::string encode_h264_annexb(std::span<const Bitmap> frames, con
 //   Pcm   —— I_PCM 无损档，字节级稳定，作为 diag_hevc.py 的黄金回归基线；
 //   Intra —— 阶段一真帧内压缩：35 种亮度模式逐 CU 决策 + 4x4 变换量化 + 残差 CABAC，
 //            三套系数扫描随模式切换，已通过 FFmpeg 软/硬解逐像素门禁；
-//   Inter —— 阶段二占位：帧间预测与参考帧管理尚未实现，请求该档**显式返回空串**，
-//            不静默降级到 Intra/Pcm（fail-loud 契约）。
+//   Inter —— 阶段二帧间档：P 片真实现，Merge/AMVP + 1/4 像素插值（8-tap/4-tap）
+//            + 可选双参考 L0=[POC-1,POC-2]（hevc_multi_ref）。整数/亚像素/多参考
+//            三条路径均经 ffmpeg 真解码 recon==dec 门禁，默认开关保字节级基线。
 
 
 
@@ -8852,7 +8868,7 @@ namespace termchart::image {
 
 // 按 EncodeOptions::video_mode 分派档位。默认 Pcm：输出完整独立的 I_PCM 码流
 // （VPS + SPS + PPS + 每帧一个 IDR slice），字节级稳定，供 diag_hevc.py 做黄金回归。
-// Intra 已落地；Inter 未落地时返回空串，不静默降级。
+// Intra 与 Inter 均已落地；不支持的档位组合显式报错，不静默降级。
 TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
@@ -19461,24 +19477,6 @@ TERMCHART_API bool register_builtin_dsls() noexcept;
 
 }  // namespace termchart::dsl
 
-// ===== include/termchart/dsl/json.hpp =====
-// dsl/json.hpp —— JSON 解析入口（compat shim，L17）
-//
-// 实现已于 2026-10-21 下沉收编至 io/json.hpp（L2，"数据入口归 io"）。本头保留
-// 原 dsl 命名空间的入口语义：dsl::JsonValue / dsl::JsonOptions / dsl::parse_json
-// 均为 io 命名空间对应符号的别名，既有调用点与测试零改动。
-// 新代码请直接 include "termchart/io/json.hpp"。
-
-
-namespace termchart::dsl {
-
-using termchart::io::JsonValue;
-using termchart::io::JsonOptions;
-using termchart::io::ParseDiagnostic;
-using termchart::io::parse_json;
-
-}  // namespace termchart::dsl
-
 // ===== include/termchart/dsl/lexer.hpp =====
 // lexer.hpp —— DSL 词法分析器（L17）
 //
@@ -21733,15 +21731,13 @@ TERMCHART_API Status save_image(std::span<const image::Bitmap> frames, std::stri
 }  // namespace termchart::api
 
 // ===== include/termchart/api/opts.hpp =====
-// opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）
+// opts.hpp —— ApiOptions 链式配置
 //
 // 面向"一行出图"的入口：所有可选参数都在这一处，且**每个都有默认值**，
-// 于是 tc::quick::hello() 之类的调用可以完全零配置。
+// 于是 api::hello() 之类的调用可以完全零配置。
 // 语义：未设置的项（std::optional 为空）表示"由库自行决定"。
 //
-// 命名：全库其余位置一律 `XxxOptions`（MetroOptions / SankeyOptions / …），
-// 这里原名 `Opts` 是唯一的例外；为"同一语义同一命名"收敛成 `ApiOptions`，
-// 旧名以别名保留，因此**不破坏**任何既有调用点。
+// 命名与全库一致：`XxxOptions`（MetroOptions / SankeyOptions / …）。
 
 
 
@@ -21783,9 +21779,6 @@ private:
     bool reset_ = true;
 };
 
-// 兼容别名：老代码写 `api::Opts` 仍然成立（全库只有这一处叫 Opts）。
-using Opts = ApiOptions;
-
 }  // namespace termchart::api
 
 // ===== include/termchart/api/chart.hpp =====
@@ -21811,10 +21804,10 @@ namespace termchart::api {
 // 任意 Chart（折线 / 柱 / 散点 / 迷你线…）→ 一次成帧的字节流（全量，不含差分）。
 // 尺寸：opts.width()/height() 有值就用（显式 0 是 InvalidArgument），否则 80×24。
 [[nodiscard]] TERMCHART_API Result<std::string> render_chart(chart::Chart& chart,
-                                                             const Opts& opts = {}) noexcept;
+                                                             const ApiOptions& opts = {}) noexcept;
 
 // = render_chart + 写 stdout + flush。返回 stdout 的写入状态（渲染失败时返回该错误）。
-TERMCHART_API Status print_chart(chart::Chart& chart, const Opts& opts = {}) noexcept;
+TERMCHART_API Status print_chart(chart::Chart& chart, const ApiOptions& opts = {}) noexcept;
 
 // ── 真实 Scene 通路 ──────────────────────────────────────────────────────
 // 图表 → 矢量指令流（MoveTo/LineTo/StrokeOp/RectOp/TextOp/GroupOp），**不是**
@@ -21880,14 +21873,14 @@ TERMCHART_API void init_core() noexcept;
 
 // 渲染成字节流：**不写 stdout**。headless / golden / 单元测试用这个。
 TERMCHART_API Result<std::string> render_line(std::string_view text, const Style& style,
-                                              const Opts& opts = {}) noexcept;
+                                              const ApiOptions& opts = {}) noexcept;
 
 // 渲染 + 写出。返回写状态；渲染错误（如宽度非法）直接透传。
 TERMCHART_API Status print_line(std::string_view text, const Style& style,
-                                const Opts& opts = {}) noexcept;
+                                const ApiOptions& opts = {}) noexcept;
 
 // 零配置演示：一行调用即看到彩色输出（examples/32_quick_one_liner.cpp）。
-TERMCHART_API Status hello(const Opts& opts = {}) noexcept;
+TERMCHART_API Status hello(const ApiOptions& opts = {}) noexcept;
 
 // ── 一行出图（matplotlib 式零配置）────────────────────────────────────────────
 //
@@ -22535,14 +22528,17 @@ struct CellBitmapOptions {
 // font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）
 //
 // 渲染后端分工（接口不变，底层实现见 font.cpp）：
-//   * ASCII 0x20..0x7E：内置 5×7 点阵。零成本、零外部依赖，且"ASCII 字形
-//     落像素"的像素契约由测试钉住；
-//   * 其余码点（CJK / Latin-1 扩展 / 全角符号…）：惰性加载系统 TTF 字体
-//     （Windows 自动尝试 C:/Windows/Fonts/msyh.ttc、simhei.ttf 等；可用
-//     环境变量 TERMCHART_GUI_FONT 显式指定字体文件路径），找不到字体或
-//     解析失败时 fail-safe 退回点阵占位框——不抛异常、不崩溃。
+//   * 全部码点（含 ASCII 0x20..0x7E）：优先用系统 TTF 光栅化——按平台候选
+//     清单加载一族字体（拉丁在前、CJK 在后），每个码点取首个含其轮廓的字体，
+//     矢量 4×4 超采样 → 清晰且带字距，不再用内置 5×7 点阵硬撑；
+//   * 内置 5×7 点阵 + 虚线占位框：TTF 整体不可用（无系统字体 / 解析失败 /
+//     某码点无轮廓）时的 fail-safe 兜底——不抛异常、不崩溃、不留白。
+//   系统字体发现：优先用运行时 set_font_file() 指定的字体文件；其次环境变量
+//   TERMCHART_GUI_FONT；否则按平台候选清单（Windows 的 Segoe UI/Arial/Consolas…
+//   与雅黑/黑体；Linux 的 DejaVu/Liberation 与 Noto CJK/WQY；macOS 的
+//   Helvetica/PingFang…）逐个解析。
 //   等宽语义不变：列数由 util 的显示宽度决定（CJK 占 2 列），每格 advance
-//   恒等于 cell_w；TTF 只决定格内像素，不参与排版步进（无 shaping/hinting，
+//   恒等于 cell_w；字体只决定格内像素，不参与排版步进（无 shaping/hinting，
 //   不存在字距把布局挤歪的问题）。
 //
 // 字形是 5×7 列位点阵（数据与位序约定见 font.cpp 的 kFont5x7），渲染时映射进
@@ -22593,6 +22589,12 @@ public:
 [[nodiscard]] TERMCHART_API double draw_text(image::Bitmap& bitmap, std::string_view utf8_text,
                                              Point at, Rgb color,
                                              double cell_w, double cell_h) noexcept;
+
+// 运行时指定 GUI 文本使用的 TTF 字体文件路径：优先于环境变量 TERMCHART_GUI_FONT
+// 与系统字体候选清单。须在首次绘制前调用，也可运行中随时切换（下次绘制即生效）。
+// 传空串 = 清除覆盖，回落到环境变量 / 系统字体。
+TERMCHART_API void set_font_file(std::string path);
+TERMCHART_API void clear_font_file() noexcept;
 }  // namespace termchart::gui
 
 // ===== include/termchart/gui/scene_renderer.hpp =====

@@ -29,14 +29,14 @@ TERMCHART_API void init_core() noexcept;
 
 // 渲染成字节流：**不写 stdout**。headless / golden / 单元测试用这个。
 TERMCHART_API Result<std::string> render_line(std::string_view text, const Style& style,
-                                              const Opts& opts = {}) noexcept;
+                                              const ApiOptions& opts = {}) noexcept;
 
 // 渲染 + 写出。返回写状态；渲染错误（如宽度非法）直接透传。
 TERMCHART_API Status print_line(std::string_view text, const Style& style,
-                                const Opts& opts = {}) noexcept;
+                                const ApiOptions& opts = {}) noexcept;
 
 // 零配置演示：一行调用即看到彩色输出（examples/32_quick_one_liner.cpp）。
-TERMCHART_API Status hello(const Opts& opts = {}) noexcept;
+TERMCHART_API Status hello(const ApiOptions& opts = {}) noexcept;
 
 // ── 一行出图（matplotlib 式零配置）────────────────────────────────────────────
 //

@@ -24,7 +24,7 @@ constexpr std::uint32_t kDefaultRows = 24;
 
 }  // namespace
 
-Result<std::string> render_chart(chart::Chart& chart, const Opts& opts) noexcept {
+Result<std::string> render_chart(chart::Chart& chart, const ApiOptions& opts) noexcept {
     // 显式给 0 是参数错误，不猜也不钳位——与 quick::render_line 的口径一致。
     if (opts.width() == 0 || opts.height() == 0) {
         return Result<std::string>(Unexpected<ErrorCode>(ErrorCode::InvalidArgument));
@@ -42,7 +42,7 @@ Result<std::string> render_chart(chart::Chart& chart, const Opts& opts) noexcept
     return renderer.render_full(canvas.to_buffer());
 }
 
-Status print_chart(chart::Chart& chart, const Opts& opts) noexcept {
+Status print_chart(chart::Chart& chart, const ApiOptions& opts) noexcept {
     const auto bytes = render_chart(chart, opts);
     if (!bytes.has_value()) {
         return bytes.error();

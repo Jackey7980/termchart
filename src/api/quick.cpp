@@ -46,7 +46,7 @@ void init_core() noexcept {
 bool core_initialized() noexcept { return g_initialized.load(std::memory_order_acquire); }
 
 Result<std::string> render_line(std::string_view text, const Style& style,
-                                const Opts& opts) noexcept {
+                                const ApiOptions& opts) noexcept {
     init_core();
 
     const std::uint32_t width =
@@ -116,7 +116,7 @@ Result<std::string> render_line(std::string_view text, const Style& style,
     return out;
 }
 
-Status print_line(std::string_view text, const Style& style, const Opts& opts) noexcept {
+Status print_line(std::string_view text, const Style& style, const ApiOptions& opts) noexcept {
     const Result<std::string> rendered = render_line(text, style, opts);
     if (!rendered.has_value()) {
         return rendered.error();
@@ -124,7 +124,7 @@ Status print_line(std::string_view text, const Style& style, const Opts& opts) n
     return write_stdout(*rendered);
 }
 
-Status hello(const Opts& opts) noexcept {
+Status hello(const ApiOptions& opts) noexcept {
     init_core();
     Style style;
     style.set_fg(Color::rgb(86, 197, 154)).set_attr(Attr::Bold);

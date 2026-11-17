@@ -17,7 +17,7 @@ namespace {
 
 std::string render_style(const std::string& text, const termchart::Style& style) {
     const termchart::Result<std::string> out =
-        termchart::api::render_line(text, style, termchart::api::Opts{});
+        termchart::api::render_line(text, style, termchart::api::ApiOptions{});
     REQUIRE(out.has_value());
     return *out;
 }
@@ -46,7 +46,7 @@ std::string degraded_bytes() {
     termchart::Style style;
     style.set_fg(termchart::Color::rgb(0x12, 0x34, 0x56)).set_attr(termchart::Attr::Underline);
     // 降到 16 色档位：属性级快照应体现"降级后的索引色"而非原始 RGB。
-    termchart::api::Opts opts;
+    termchart::api::ApiOptions opts;
     opts.color_depth(termchart::ColorDepth::Ansi16);
     const auto out = termchart::api::render_line("degrade", style, opts);
     REQUIRE(out.has_value());

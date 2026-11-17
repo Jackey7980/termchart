@@ -1,8 +1,6 @@
 // io/json.hpp —— JSON 解析（L2）
 //
-// 本文件于 2026-10-21 从 dsl/json.hpp 下沉收编（"数据入口归 io"）：解析核心与
-// 方言无关，dsl 及其余上层模块直接复用；dsl/json.hpp 现为 using 别名 shim，
-// 既有 dsl::JsonValue / dsl::parse_json 调用点零改动。
+// 解析核心与方言无关，dsl 及其余上层模块直接复用本文件（"数据入口归 io"）。
 //
 // 支持范围（**明确列出，避免"以为支持"**）：
 //   ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；

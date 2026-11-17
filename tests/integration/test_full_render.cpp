@@ -42,7 +42,7 @@ TEST_CASE("integration: 一行文本走完整链路可解析回属性") {
 }
 
 TEST_CASE("integration: 指定宽度时用空格补齐") {
-    api::Opts opts;
+    api::ApiOptions opts;
     opts.width(10).newline(false);
     const auto rendered = api::render_line("ab", Style{}, opts);
     REQUIRE(rendered.has_value());
@@ -60,7 +60,7 @@ TEST_CASE("integration: 组合记号挂到侧面表而非另占一格") {
 }
 
 TEST_CASE("integration: 非法宽度被拒绝而非崩溃") {
-    api::Opts opts;
+    api::ApiOptions opts;
     opts.width(0);
     const auto rendered = api::render_line("x", Style{}, opts);
     CHECK_FALSE(rendered.has_value());

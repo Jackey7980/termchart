@@ -13,9 +13,6 @@
 #include "termchart/io/json.hpp"
 #include "termchart/io/stream.hpp"
 
-// dsl shim：验证收编后 dsl:: 命名空间入口仍可用（using 别名）。
-#include "termchart/dsl/json.hpp"
-
 using namespace termchart::io;
 
 namespace {
@@ -137,7 +134,7 @@ TEST_CASE("io::json::解析与取值（含 dsl shim 别名）") {
     CHECK(v.find("missing") == nullptr);
 
     // dsl shim：同一实现，dsl 命名空间别名必须可用
-    const auto r2 = termchart::dsl::parse_json(text);
+    const auto r2 = termchart::io::parse_json(text);
     REQUIRE(r2.has_value());
     CHECK(r2.value().find("n")->as_number() == 42.0);
 }

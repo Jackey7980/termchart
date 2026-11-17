@@ -7,7 +7,6 @@
 #ifndef TERMCHART_TERMCHART_HPP
 #define TERMCHART_TERMCHART_HPP
 
-#include "termchart/deprecate.hpp"
 #include "termchart/export.hpp"
 #include "termchart/fwd.hpp"
 #include "termchart/version.hpp"

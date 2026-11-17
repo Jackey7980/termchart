@@ -54,10 +54,7 @@ class Renderer;
 
 // ── api ────────────────────────────────────────────────────────────────
 namespace api {
-// 全库约定是 `XxxOptions`（graph/layout/diagram 全都如此），api 侧旧名 `Opts`
-// 是唯一例外，已收敛为 `ApiOptions`；`Opts` 保留为兼容别名。
 class ApiOptions;
-using Opts = ApiOptions;
 }  // namespace api
 
 }  // namespace termchart

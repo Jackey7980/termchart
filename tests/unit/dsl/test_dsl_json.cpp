@@ -9,12 +9,12 @@
 
 #include <string>
 
-#include "termchart/dsl/json.hpp"
+#include "termchart/io/json.hpp"
 
 namespace {
 
 using namespace termchart;
-using namespace termchart::dsl;
+using namespace termchart::io;
 
 TEST_CASE("dsl/json: 标量与顶层值") {
     SUBCASE("null / true / false") {

@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
         "autoviz 选中: %s\n  标题: %s\n  管道: %s | 通过否决候选: %zu\n",
         r.name.c_str(), r.title.c_str(), r.pipeline.c_str(), r.viable);
 
-    tc::api::Opts o;
+    tc::api::ApiOptions o;
     o.width(width).height(height);
 
     auto ansi = tc::api::render_chart(*r.chart, o);

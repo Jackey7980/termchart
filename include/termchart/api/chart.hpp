@@ -30,10 +30,10 @@ namespace termchart::api {
 // 任意 Chart（折线 / 柱 / 散点 / 迷你线…）→ 一次成帧的字节流（全量，不含差分）。
 // 尺寸：opts.width()/height() 有值就用（显式 0 是 InvalidArgument），否则 80×24。
 [[nodiscard]] TERMCHART_API Result<std::string> render_chart(chart::Chart& chart,
-                                                             const Opts& opts = {}) noexcept;
+                                                             const ApiOptions& opts = {}) noexcept;
 
 // = render_chart + 写 stdout + flush。返回 stdout 的写入状态（渲染失败时返回该错误）。
-TERMCHART_API Status print_chart(chart::Chart& chart, const Opts& opts = {}) noexcept;
+TERMCHART_API Status print_chart(chart::Chart& chart, const ApiOptions& opts = {}) noexcept;
 
 // ── 真实 Scene 通路 ──────────────────────────────────────────────────────
 // 图表 → 矢量指令流（MoveTo/LineTo/StrokeOp/RectOp/TextOp/GroupOp），**不是**

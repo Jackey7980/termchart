@@ -1,8 +1,8 @@
-// test_api.cpp —— api 层（Opts / 渲染入口 / 输出封装）
+// test_api.cpp —— api 层（ApiOptions / 渲染入口 / 输出封装）
 //
 // api 是唯一允许碰全部模块的层，也是 GUI 平行栈将来要对齐的"对外契约面"。
 // 关键契约三条：
-//   1. Opts 每项都有默认值，零配置可用；
+//   1. ApiOptions 每项都有默认值，零配置可用；
 //   2. render_line **只产出字节，不写 stdout**（headless / 测试 / GUI 内嵌都依赖）；
 //   3. 参数非法返回 Result 错误，不抛异常。
 #include <doctest.h>
@@ -32,8 +32,8 @@ using namespace termchart::api;
 
 }  // namespace
 
-TEST_CASE("api: Opts 默认全空且链式可写") {
-    const Opts defaults;
+TEST_CASE("api: ApiOptions 默认全空且链式可写") {
+    const ApiOptions defaults;
     CHECK_FALSE(defaults.width().has_value());
     CHECK_FALSE(defaults.height().has_value());
     CHECK_FALSE(defaults.color_depth().has_value());
@@ -41,7 +41,7 @@ TEST_CASE("api: Opts 默认全空且链式可写") {
     CHECK(defaults.newline());
     CHECK(defaults.reset_at_end());
 
-    Opts opts;
+    ApiOptions opts;
     opts.width(80).height(24).color_depth(ColorDepth::Ansi256).ascii_only().newline(false);
     CHECK(opts.width() == std::optional<std::uint16_t>(80));
     CHECK(opts.height() == std::optional<std::uint16_t>(24));
@@ -59,7 +59,7 @@ TEST_CASE("api: render_line 一行文本 → 带样式的字节流") {
 }
 
 TEST_CASE("api: 显式宽度 0 是参数错误，不猜也不钳位") {
-    Opts zero;
+    ApiOptions zero;
     zero.width(0);
     const Result<std::string> out = render_line("hi", Style{}, zero);
     REQUIRE_FALSE(out.has_value());
@@ -67,7 +67,7 @@ TEST_CASE("api: 显式宽度 0 是参数错误，不猜也不钳位") {
 }
 
 TEST_CASE("api: 宽度不足时截断而不是抛异常") {
-    Opts narrow;
+    ApiOptions narrow;
     narrow.width(2);
     const Result<std::string> out = render_line("hello", Style{}, narrow);
     REQUIRE(out.has_value());
@@ -82,7 +82,7 @@ TEST_CASE("api: 空文本退化成一格而不是报错") {
 }
 
 TEST_CASE("api: 深度降级由 render/sgr 统一接管") {
-    Opts opts;
+    ApiOptions opts;
     opts.color_depth(ColorDepth::Ansi16);
     const Result<std::string> out = render_line("x", Style{}.set_fg(Color::rgb(200, 10, 10)), opts);
     REQUIRE(out.has_value());
@@ -101,7 +101,7 @@ TEST_CASE("api: 一行出图 render_chart（Chart → 字节）") {
     }
     chart.add_series(std::move(series));
 
-    Opts opts;
+    ApiOptions opts;
     opts.width(60).height(16);
     const Result<std::string> out = render_chart(chart, opts);
     REQUIRE(out.has_value());
@@ -121,13 +121,13 @@ TEST_CASE("api: render_chart 显式尺寸 0 是参数错误") {
     series.points.push_back(Point{1.0, 1.0});
     chart.add_series(std::move(series));
 
-    Opts zero_w;
+    ApiOptions zero_w;
     zero_w.width(0);
     const Result<std::string> bad_w = render_chart(chart, zero_w);
     REQUIRE_FALSE(bad_w.has_value());
     CHECK(bad_w.error() == ErrorCode::InvalidArgument);
 
-    Opts zero_h;
+    ApiOptions zero_h;
     zero_h.height(0);
     const Result<std::string> bad_h = render_chart(chart, zero_h);
     REQUIRE_FALSE(bad_h.has_value());
@@ -135,7 +135,7 @@ TEST_CASE("api: render_chart 显式尺寸 0 是参数错误") {
 }
 
 TEST_CASE("api: None 档位仍产出纯文本") {
-    Opts opts;
+    ApiOptions opts;
     opts.color_depth(ColorDepth::None);
     const Result<std::string> out = render_line("plain", Style{}.set_fg(Color::rgb(1, 2, 3)), opts);
     REQUIRE(out.has_value());
