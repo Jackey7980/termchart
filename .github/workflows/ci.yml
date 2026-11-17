@@ -217,6 +217,14 @@ jobs:
           python tools/verify_hevc_tu_sizes.py --quick --transform-skip
           python tools/verify_hevc_tu_sizes.py --quick --force-skip
           python tools/verify_hevc_tu_sizes.py --quick --dblock-on
+          python tools/verify_hevc_tu_sizes.py --quick --sao
+          python tools/verify_hevc_tu_sizes.py --quick --rdo
+      - name: HEVC 帧间（P 片）编码真实解码门禁
+        run: python tools/verify_hevc_inter.py --quick
+      - name: HEVC 1/4 像素插值真实解码门禁
+        run: python tools/verify_hevc_subpel.py --quick
+      - name: HEVC 多参考帧（L0 双参考）真实解码门禁
+        run: python tools/verify_hevc_multiref.py --quick
 
   wasm:
     name: wasm (emscripten 真编译)

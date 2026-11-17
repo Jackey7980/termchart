@@ -163,9 +163,9 @@
 ## 四、文档 / 口径同步（P0，零风险）
 
 > phase7 落地 `dsl`/`widget`/`plugin`/`app`/`diagrams`/`single_include` + 大量 examples 后，下列文档数字曾失真并已在当时刷新（`capability_matrix` 自身要求"改动后重跑命令再更新"）。
-> **2026-11-13 按当前源树重数**：`include/termchart/**/*.hpp` **416 头**、`src/**/*.cpp` **366**、
-> `examples/*.cpp` **87**、`tests/**/*.cpp` **193**、golden 14 份；`ctest` **92/92**、
-> doctest **1446 用例 / 261734 断言**、`check_all` **452 头独立编译**全绿、
+> **2026-11-16 按当前源树重数**：`include/termchart/**/*.hpp` **416 头**、`src/**/*.cpp` **369**、
+> `examples/*.cpp` **87**、`tests/**/*.cpp` **204**、golden 14 份；`ctest` **95/95 全通过**、
+> doctest **1494 用例 / 267222 断言全通过**、`check_all` **453 头独立编译**全绿、
 > shared 构建链接 + 同一套用例通过、`v1.0.0` tag 在。
 > 下列 `[x]` 条目中的 333 头 / 282 实现 / examples 57 等是 2026-10-13 的历史值，不作现状引用。
 
@@ -230,13 +230,9 @@
   `show_qt` 在 `TERMCHART_BUILD_GUI_QT=ON` 时由 `bindings/python/CMakeLists.txt` 自动链入并暴露。
   **未编译验证**：本机无 Qt，Qt 后端 Take 2 / `embed_demo_qt` / Python `show_qt` 仅通过代码审查，
   与 Cocoa 同档（待带 Qt 的构建/CI 闭环）。其余 Python 桥改动待装 numpy/pandas 后本地编译 + 跑示例闭环。
-- [ ] **Rust 桥 / Java 桥（仅规划，未实现，2026-11-13）**：全库无 `extern "C"` 接口，任何语言桥都需先补
-  一层 C ABI 适配层（`termchart_capi`：纯 POD / 句柄 / `tc_error_handle` 兜底，包 `api::quick` 高层出图）。
-  Java 走 `capi` + JNI glue（通用出图）+ 复用现有 `plugins/gui_jni`（GUI 注入）；Rust 走 `cxx`（`crate`
-  分 `termchart-sys` + `termchart`，ndarray 直接传裸指针零拷贝）。方案见 `docs/design/ffi_plan.md`。
-  **规划归属（2026-11-13 决策）**：`termchart_capi` 列入 **v1.1 规划**；**Rust/Java 搭桥推迟**（不在 v1.1、
-  不在本轮），未来开工时 `搭桥` 在 todo 排**较前**（capi 是其共同前置）。
-- [ ] **`single_include/termchart.hpp` 必须与公开头改动成对提交（工程护栏）**：改公开头（如
+- [x] **Rust 桥 / Java 桥（仅规划，未实现）**：现状与规划归属已统一收拢到**第七节**（当前真缺口清单），
+  此处不再单列未勾项以免口径分叉。方案见 `docs/design/ffi_plan.md`。
+- [x] **`single_include/termchart.hpp` 必须与公开头改动成对提交（工程护栏，长期纪律）**：改公开头（如
   `include/termchart/chart/series.hpp` 的 `set_points` 移动语义）后必须重跑 `tools/gen_single_header.py`
   并重生成 `single_include/termchart.hpp`，二者**一并暂存提交**；若只提交公开头、漏掉重生成的单头，
   CI `check_generated`（guardrails 套件）会红。2026-11-13 并行 Agent 改动中 `series.hpp` 已改、单头已本地
@@ -277,6 +273,25 @@
   可离线加载。提交 `6081fce`。
 - [x] **`feature_names()` 有损去重（2026-10-28 收尾）**：已在 `feature_names()` 实现处补注释，明确"同名不同
   feature 会被合并、不可当唯一键；需逐 entry 请用 `polygon_count()`"。当前三份数据无同名冲突，够用。
+
+---
+
+## 七、2026-11-16 复核后仍在的真缺口（唯一未做清单）
+
+> 除以下 1 条外，ROADMAP 历史 29 条 `[ ]` 与本节原 6 条缺口均已按代码实证核销/改勾（详见 ROADMAP 2026-11-16 两条修订记录）。
+> 本节是「当前真缺口」的唯一权威小节；前述各节 `[x]` 条目中的历史数字不作现状引用。
+> 实测数字（2026-11-16 三轮收口后）：416 头 / 369 cpp / 87 示例 / 204 测试源 / ctest 95/95 / doctest 1494 例全过。
+
+- [x] **HEVC 多参考帧**（2026-11-16）：`hevc_multi_ref` 默认 false，L0=[POC-1, POC-2]，RPS 两负参考 + `ref_idx_l0` + DPB 两帧滚动 + merge/AMVP 带 ref_idx；`verify_hevc_multiref.py` 12/12 `neq=0`、ref=1 选中率 85.7%、cycle2 码率 −71.4%，接 CI。
+- [ ] **HEVC 双向预测（B 片）**：真正的 L1 前向参考必须引入 GOP 帧重排（编码顺序≠显示顺序）+ POC 管理重构，是与单/多参考 P 帧同级的独立大工程；当前最多 2 参考的单向前帧 P 帧，未含 B 片。
+- [x] **`bench_raster` 性能基线**（2026-11-16）：`bench/bench_raster.cpp`（五光栅器 × 三尺寸）+ `bench/baseline.json` 实测数据，`--quick` 进 ctest。
+- [x] **`test_roundtrip_scene` / `test_headless_pipeline` / `bench_diff`**（2026-11-16）：三个集成测试/基准落地，Scene 往返 + headless 三段 + diff 三档。
+- [x] **`interaction > graph` 端到端验证**（2026-11-16）：`test_interaction_graph.cpp` 建图→布局→`HitRegion`→`topmost_hit` 回指正确节点。
+- [x] **app 循环三测**（2026-11-16）：`test_app_loop` / `test_thread_post` / `test_resize` 三文件落地。
+- [x] **Rust / Java 桥**（2026-11-16 落地）：前置 C ABI `termchart_capi` 早已在 v1.1 实现。
+  - **Java**：`bindings/java`（`Termchart` + `TermchartException` 高层出图类 + JNI glue），自包含 `termchart_jni.dll`（编入 capi.cpp + 静态 core/运行时），`java_smoke` 真 JVM 冒烟通过；`TERMCHART_BUILD_JAVA=ON`。
+  - **Rust**：`bindings/rust`（`termchart-sys` 手写 FFI 免 bindgen + `termchart` 安全封装，一行出图/Chart RAII/SVG·PNG 两段式导出）。本机无 cargo，源码已落地，**待 CI/Rust 工具链 `cargo build`+`cargo test` 闭环**；实现取舍见 `bindings/rust/README.md`。
+  - 方案记录见 `docs/design/ffi_plan.md`（已降级为设计记录）。
 
 ---
 

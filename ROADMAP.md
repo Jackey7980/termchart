@@ -13,12 +13,17 @@
 3. **规格以 `结构.md` 为准**：本文件只回答"什么时候做、按什么顺序做"，不重复回答"做成什么样"。文件清单、层号、依赖、职责一律查 `结构.md`。
 4. **生成物禁手改**：`结构.md` 附一/附四、`docs/reference/module_matrix.md`、`single_include/`、`tests/golden/` 全部由脚本生成，改了生成器必须重跑。
 5. **修订流程**：调整计划走 PR，在本文件顶部 `CHANGELOG` 记录一行，不直接改勾选状态以外的东西。
-6. **勾选清单是阶段规划快照**：历史阶段 0–8 的多数 `[ ]` 已由后续修订记录覆盖（见 CHANGELOG 与 `docs/reference/backlog.md`）。2026-11-10 按文件实证补勾 10 项。2026-11-13 按代码实证复核剩余 **29 条 `[ ]`**：其中阶段 9 的 C1/C2/C 出口与 D1/D2/D3/D 出口共 **7 条是真实缺口**（P 帧、精确 DBF / SAO / RDO，见 `docs/reference/hevc_engineering_roadmap.md` §2.3 与 P2/P3），其余 22 条为历史规划快照（阶段 0–8 已由后续修订记录覆盖，A1–A4 / B1–B3 共 8 条早已 `[x]`）。判断「做没做」以代码 + 修订记录最新行 + 子文档为准，不要按未勾选数量推断进度。
+6. **勾选清单是阶段规划快照，按代码实证滚动校正**：历史阶段 0–8 的多数 `[ ]` 已被后续修订覆盖而漏勾。2026-11-10 补勾 10 项；2026-11-13 复核 29 条（当时判 7 条真缺口）；2026-11-16 再按代码 + 构建实证逐条重判，绝大部分改勾。判断「做没做」一律以代码 + 修订记录最新行 + `docs/reference/{backlog,quality_todo,hevc_engineering_roadmap}.md` 为准，不按未勾选数量推断进度。**2026-11-16 三轮收口后仍在的真缺口只有 1 条**：阶段 9 HEVC 的**双向预测（B 片）**——需 GOP 帧重排 + POC 管理重构，独立大工程；单向 1/4 像素插值与双参考前向 P 帧均已落地并对拍 ffmpeg（详见 `docs/reference/backlog.md` 第七节）。此前 6 条缺口（bench_raster、三个集成测试、interaction>graph、app 三测、Rust/Java 桥、1/4 插值）与多参考帧已于同日全部补齐。
 
 ### 修订记录
 
 | 日期 | 变更 | 影响阶段 |
 | --- | --- | --- |
+| 2026-11-16 | **HEVC 多参考帧（L0 双参考）收口 + GUI theme 首尾修复**。① **首尾**：`test_gui_stack.cpp` 的 Button 像素采样点从居中 label 字形上挪到左上内部 (5,5)——其他 Agent 把字体策略改成"ASCII 也走系统 TTF"，字形落到采样点导致误判；实现无 bug，测试语义更新后 gui_stack 25/25。② **多参考**：`EncodeOptions::hevc_multi_ref`（默认 false，整数/亚像素基线字节不变）；L0 = [POC-1, POC-2]，SPS/VPS `max_dec_pic_buffering_minus1` 2、RPS 两负参考、`num_ref_idx_l0_default_active_minus1=1`；`inter_coding` 加 `derive_merge_candidates_ex` / `derive_amvp_candidates_ex`（merge 带 ref_idx 直接复制不缩放，AMVP 只取同 ref 邻居，空列表退化零 MV 默认候选）；活动发射路径在 mvd 前发 `ref_idx_l0` ctx bin；DPB 两帧滚动。③ **关键 bug**：初版 ref=1 永不参与（AMVP 空列表被 `continue` 跳过），补零 MV 默认候选后 cycle2 亮度交替形态 ref=1 占 **85.7%**，码率 **4696→1345 B（−71.4%）**——证明非"空壳语法"。④ **验证**：新门禁 `tools/verify_hevc_multiref.py`（quick + 全量 12/12，RPS 断言 + ref_idx 选中率 + 码率收益）接 CI；新增 `test_hevc_multiref.cpp` 4 单测；`trace_headers` 实证 `num_negative_pics=[1,2,2,...]`。⑤ **双向 B 片仍未做**：真正的 L1 前向参考必须引入 GOP 帧重排（编码顺序≠显示顺序）与 POC 管理重构，是独立大工程，如实标注未做。`check_all` 全绿、`ctest` 95/95、doctest 1494/1494、single_include 已重生成。 | 9 |
+| 2026-11-16 | **真缺口收口：测试/基准三缺 + C API 映射 + Rust/Java 桥 + HEVC 1/4 像素插值**。① **测试/基准**：新增 `bench/bench_raster.cpp`+`baseline.json`、`bench/bench_diff.cpp`（两处 foreach 登记，`--quick` 进 ctest）；`tests/integration/` 新增 `test_roundtrip_scene`/`test_headless_pipeline`/`test_interaction_graph`/`test_app_loop`/`test_thread_post`/`test_resize` 六文件（19 个 integration 用例全过）。② **C ABI**：`libs/capi/src/capi.cpp` 加 `status_to_tc()` 集中映射（ErrorCode→tc_status，fail-loud 不静默降级），消除散落裸数字码。③ **Java 桥**：`bindings/java`（`Termchart`+`TermchartException`+JNI glue），自包含 `termchart_jni.dll`（编入 capi.cpp + 静态 core/运行时），`java_smoke` 真 JVM 冒烟通过，`TERMCHART_BUILD_JAVA=ON`。④ **Rust 桥**：`bindings/rust`（`termchart-sys` 手写 FFI 免 bindgen + `termchart` 安全封装，一行出图/Chart RAII/两段式导出）；本机无 cargo，源码已落地待 CI/Rust 工具链 `cargo build`+`test` 闭环。⑤ **HEVC 亚像素**：新增 `interp.{hpp,cpp}`（luma 8-tap + chroma 4-tap，系数逐位对齐 FFmpeg `hevcdsp.c`），`mc_luma`/`mc_chroma` 按 `mv&3`/`mv&7` 分流、整数路径字节不变；`EncodeOptions::hevc_subpel_me`（默认 false）开启整数搜索后 ±4 个 1/4 单位精搜；新增 `tools/verify_hevc_subpel.py`（force 分数 MV 对拍 ffmpeg，全 12 组 `neq=0`）+ CI `encoder-cert` quick 门禁 + `test_hevc_interp.cpp` 4 单测。**验证**：整数 inter 门禁 4/4 字节不变；亚像素全矩阵 12/12 `neq=0`；精搜开启 5 形态 `neq=0`；`check_all` 全绿（416 头/369 实现/453 头独立编译）、`ctest` 94/95（唯一失败为既有 GUI theme 断言，与本次无关）、doctest 1490 例 1489 过（同上）。实测数字：416 头/369 cpp/87 示例/203 测试源。 | 2–9 |
+| 2026-11-16 | **文档真值同步（不改代码，仅按代码 + 构建实证重判勾选与数字）**。逐条核对 29 条历史 `[ ]`：把已落地但漏勾的阶段 0–8 规划项全部改勾——阶段 0 `detail/` 头独立编译、阶段 2 `fuzz_utf8`/`fuzz_grapheme` 两目标、阶段 3 `bench_render`/`bench_diff`/`bench_svg_backend`（`bench_diff` 未建、拆分保留缺口）、阶段 6 `api/quick_*` 收尾与 `termchart_full.hpp`（均已有对应实现，按现名勾）、阶段 7 chart 八子目录 / graph diagrams 补齐 / layout·route 补充 / docs 全套 / 三个生成器 / workflows / examples / LICENSES+assets / 根目录文档、阶段 8 GUI 复用层+重写层+原生事件循环。阶段 9 C/D 部分按实证改写：C2（P 片语法 + CABAC merge/mvd）已落地、`inter_prediction`（Merge/AMVP + 整数像素 MC，见 `inter_coding.cpp` 与 `verify_hevc_inter.py` CI 门禁）已落地，D1 DBF / D2 SAO / D3 RDO 已于 11-13/11-14 落地，D 出口按「约束式 RDO 同画质降码率」的新口径勾。**真实保留的 6 条缺口**（1/4 像素插值与多参考、`bench_raster` 基线、`test_roundtrip_scene`/`test_headless_pipeline`/`bench_diff`、`interaction > graph` 端到端、app 循环三测）见各阶段未勾行与 `docs/reference/backlog.md` 第七节。子文档 `quality_todo.md` / `backlog.md` 数字同步为实测值：**416 头 / 368 cpp / 87 示例 / 196 测试源 / 37 GUI 头**。本轮纯文档，未触发重编译。 | 全部 |
+| 2026-11-14 | **HEVC 阶段三 P3-3 收口：约束式 RDO（模式 + CBF），并把 SAO 门禁补到多 CTB 行**。① `EncodeOptions::hevc_rdo` 默认 false；开启后帧内模式按 `SSD + λ·(模式语法 bin + 残差 bin)` 决策（bin 数全部实算，`mode_signal_bins` 与 `put_*` 实拼对拍），CBF 按 `cbf=0/1` 的 `SSD + λ·bins` 比较，判定胜出时清零量化 level 并把编码端重建回滚成预测值。② **独立评估后修正验收口径**：路线图原写「体积 −≥10%」，实测无约束 λ 确实能拿 **−10.85%**，代价是 `one8/QP40` 掉 **9.52 dB** —— 固定 QP 下这是自相矛盾的验收。改为「约束式 RDO」（先定纯 SSD 最优，只在 `SSD ≤ 最优×(1+slack)` 的候选里挑省 bin 的），默认 slack=0.05，门禁全矩阵 **RBSP −4.57%（118126→112728 B）、最坏 −0.58 dB、平均 +0.00 dB、55 组「码率降且画质不降」**。③ 抓到并修掉一个真 bug：CBF 清零最初在 `emit_cu` 末尾统一处理，`slack=0.25` 时 `grad/dots QP10 TU2` 出现 `neqY=9/18`；根因是 4×4 CU 内后序 TU 的帧内预测读前序 TU 重建，改为**逐 TU 就地决策**后复测全矩阵 `neq=0`。④ SAO 门禁补 MULTI-CTB 矩阵（256×128 / 192×64 / 64×192），覆盖此前 128×64 单行 CTB 从未验证过的 `sao_merge_up_flag`；实测 64×192 的 flat 形态两次选中 `merge=0/1`，`neq=0` 证明 ffmpeg 真的按继承解析。⑤ **明确不做并写明理由**：SATD 预筛（已有精确重建 SSD，预筛零收益）、真实 CABAC λ·bits（决策时上下文未定，库内统一用 bin 数）、独立 `rd_optimization.{hpp,cpp}`（决策依赖 `emit_cu` 作用域内的 MPM 表/level/rec，抽出只增回调）、P3-4 码率控制（单帧 IDR 无帧间波动）。⑥ `tools/verify_hevc_tu_sizes.py --rdo` 门禁（三条流逐像素对拍 + 参数集逐字段不变 + `rdo=0` 与旧 7 参逐字节相同 + 总 RBSP 下降 + 防静默空转），CI `encoder-cert` 加 quick；新增 `tests/unit/image/test_hevc_rdo.cpp` 6 用例 / 246 断言。**验证**：`--rdo` 全量 96 组 + quick 8 组、`--sao` 全量 72+54 组 + quick 8+2 组全部 `PASS problems=0`；CI 六档 quick oracle、既有四档全量 oracle 全绿；全量构建、`ctest` 92/92、doctest 1467 用例 / 262860 断言、`check_all`（453 头）全绿，`single_include` 已重生成。 | 9 |
+| 2026-11-14 | **HEVC 阶段三 P3-2 收口：SAO（BO / EO / merge）端到端落地，默认关闭保字节级基线**。① `sao.{hpp,cpp}` 覆盖 7.3.9.2 语法 bin 化与对偶回读、8.7.3 BO（32 band 起点）/ EO（4 方向 × 5 类）滤波、整帧 RD 决策（真实滤波 SSE + λ·bins）与左/上 merge；SPS `sample_adaptive_offset_enabled_flag` 默认 0，由 `EncodeOptions::hevc_sao` 显式开启，slice header 按规范追加两个 `slice_sao_*_flag`。② 因 `sao()` 在每个 CTB 的 `coding_quadtree` 之前、参数却要等整帧 DBF 完成，编码端缓冲每 CTB 的 bin 后按「sao bins → CTB bins → terminate」交织写回；`exact_sse` 用 CTB 大小线程局部缓冲 + `dst_x0/dst_y0` 局部原点避免整帧拷贝与越界。③ 借 `recon == dec` 逐像素门禁抓出并修掉 4 个真 bug：候选参数未展开 `offset_val` 导致 SAO 静默空转；BO 近似代价漏掉其余 28 个 band 的失真（修正后 `dots` 档 Y-PSNR 增益 +0.4~0.7 → **+1.7~+2.3 dB**）；`eo_class` 2/3 对角方向对调、EO 符号约定误判（以 ffmpeg 真值订正为 2=135°、`[+,+,0,-,-]`）；EDGE 在局部 dst 上按绝对坐标写导致堆损坏。④ `tools/verify_hevc_tu_sizes.py` 增 `--sao` 门禁（on/off 逐像素对拍 + `trace_headers` 核对 SPS/slice 开关 + sao=0 与旧 7 参 Annex-B 逐字节相同 + PSNR/增益覆盖断言），CI `encoder-cert` 加 quick 门禁；新增 `tests/unit/image/test_hevc_sao.cpp` 9 用例。**验证**：`--sao` 全量 72 组 + CI 五档 quick 门禁（base / transform-skip / force-skip / dblock-on / sao）均 `PASS bad=0`、`neq=0`；`cmake --build --preset ninja` 100 目标全通过、`ctest` 92/92、doctest **1461 用例 / 262614 断言**、`check_all`（含 453 头自包含编译）全绿，`single_include` 已重生成。 | 9 |
 | 2026-11-13 | **首次推送触发全量 CI，修 5 个此前从未被 CI 覆盖的真问题**。① macos：`cocoa_demo.mm` 的 `Rect` 与 macOS SDK 全局 QuickDraw `Rect` 歧义（连带 double 窄化成 short），显式限定 `termchart::Rect`；② wasm：`quantize.cpp` 用了非标准的 `std::llabs`，Emscripten libc++ 无此成员，改手写绝对值；③ shared DLL job：`TermchartEmbed.java` 中文注释在 Windows runner 的 windows-1252 下 javac 报 unmappable character，给 javac 加 `-encoding UTF-8`；④ tsan（及所有 sanitizer）：JVM 无法加载插桩 native 库（static TLS block），`jni_smoke` 在 sanitizer 构建跳过、正常构建仍跑；⑤ encoder-cert：物理上界断言按 6 形态全量矩阵标定，在 quick 的 2 形态矩阵误报，改为仅全量启用。前四项都是 11-11 之后首次进 CI 的 GUI/WASM 插件代码，本地 Windows 覆盖不到——这正是把 CI 真跑起来的价值。**验证**：本地四档 oracle `PASS bad=0`、`ctest` 92/92、`check_all` 452 头全绿。 | 1、9 |
 | 2026-11-13 | **HEVC 阶段三 P3-1 收口：DBF 精确化，开 DBF 时 `recon == dec`**。① 逐像素诊断（编码端开 DBF + ffmpeg 不 `-skip_loop_filter all`）把差距定位清楚：亮度 4×4/8×8 TU 档**早就 maxdiff=0**（旧文档「亮度 maxdiff≈4」过时），16/32 档差 2~4 是 TU 内部 8 对齐边被过度滤波，U/V 各档差 4~10 是缺色度通路；bS 恒 2 对全帧内码流是规范结论而非近似。② 补 8.7.2.5 色度 bS=2 弱滤波（只改 p0/q0；色度按 **8×8 色度块 = 亮度 16×16** 边界，周期下限 8 而非 4）；固定档按 `edge_period = max(8, 1<<log2_tu)` 跳过非 TU 边界；自动档在逐 CU 发射时记录 8×8 网格真实 TU 边界图 `vert_edge`/`horz_edge`。③ `tools/verify_hevc_tu_sizes.py` 增 `--dblock-on`：两端都开 DBF 的逐像素一致性门禁 + 15 组「DBF 开关前后 Annex-B 逐字节相同」断言；CI `encoder-cert` 加 quick 门禁。④ 单测补 3 组（色度公式手工展开、边界周期、边界图）。**验证**：60 组开 DBF 黑盒对拍 Y/U/V 全部 `max=0 neq=0`；四档全量 oracle `PASS bad=0`（base / transform-skip / force-skip / dblock-on 各 6 形态 × 4 QP × 5 档），`--dblock-on` 全量码率与 base 逐项相同印证 DBF 不进码流；`ctest` 92/92、doctest **1449 用例 / 261747 断言**、`check_all` 452 头全绿。 | 9 |
 | 2026-11-13 | **底座清扫：shared 构建真 bug 修复 + 文档真值 + 工程尾巴**。① **首次真跑共享库构建**（`TERMCHART_BUILD_SHARED=ON`），暴露两类静态构建永远看不到的问题：15 处头文件内联定义误标 `TERMCHART_API`（MinGW 报 "definition is marked dllimport"，纪律写进 `export.hpp`）；Windows DLL 只导出显式 dllexport 符号导致上百个 `undefined reference`。**不采用**「给上百个声明逐个补标记」（无法靠类型系统验证、还会误扩 ABI 面），改由 CMake 在 shared + WIN32 下加 `-Wl,--export-all-symbols`，`TERMCHART_API` 只保留「显式 ABI 承诺」语义。② **修真 bug**：`proxy_sys_posix.cpp` 缺 `#if !defined(_WIN32)` 保护，`read_system` 与 win32 版重复定义（shared 直接链接失败；静态构建更危险——可能静默取到 POSIX「恒返回 None」实现，令 Windows 注册表代理探测失效）。③ CI 新增 `shared build (windows mingw DLL)` job；macos job 加 Cocoa 静态库产物 + `cocoa_offscreen` 注册与冒烟的显式断言。④ **API 清扫 P1 结案**：`Graph::add_node`(`Node&`) / `add_edge`(`Edge*`) 判为**刻意不对称**（失败通道不可丢、统一 Id 要改 195 处调用点且零收益），不做破坏性改名，改把「返回值仅供即时使用、长期持有走 `find`/`find_edge`」写进 `graph.hpp` + 回归用例；`quality_todo.md` 两项由 `[ ]`/`[~]` 结案。⑤ 补 `test_mp4_encode.cpp` 的 `video_qp` 透传单测（注明需 `video_mode=Intra`，默认 `Pcm` 刻意忽略 QP）。⑥ 文档真值：`CODEBUDDY.md` 的 Qt/Tk 与 `backend_tk` 说法、`hevc_engineering_roadmap.md` 的 P4 QP / 9×9 窗口 / DBF 旧段落、`backlog.md` 的 WASM「不进 CI」与 Cocoa 状态、`capability_matrix.md` 数字（416 头 / 366 cpp / 87 示例 / 193 测试源 / ctest 92 / doctest 1446）、`TermchartOptions.cmake` 的 WASM 注释，以及 29 条 `[ ]` 分类（7 条真缺口 + 22 条历史快照）。**验证**：静态 `ctest` 92/92、`check_all` 452 头全绿；shared 构建链接通过并跑 **doctest 1446 用例 / 261734 断言 / 0 失败**；`single_include` 已重生成。 | 1、9 |
@@ -95,11 +100,13 @@
 
 ## 一、项目现状
 
-**一句话**（2026-10-21 复核，覆盖 2026-10-13 的旧口径）：规格完备；**L0–L22 全部 27 个模块都有真实实现**
-——阶段 5–7 已把曾经的零代码空洞 `dsl` / `widget` / `plugin` / `app` 全部填上；10-18 之后又新增
-`math3d`(L3) / `chart3d`(L12) / `network`(L7) 三个模块（实测 **357 头 / 304 实现**）。
-3D 散点/曲面、PDF 导出、数据处理层（聚合/重采样）、BMP/JPEG/GIF/WebP 解码、自主 TTF 解析、
-Python 绑定均已落地；剩余缺口见 `docs/reference/backlog.md`。
+**一句话**（2026-11-16 复核，覆盖 2026-10-21 旧口径）：规格完备；**L0–L22 全部 31 个模块 + 横切 `detail/` 都有真实实现**
+——阶段 5–7 已把曾经的零代码空洞 `dsl` / `widget` / `plugin` / `app` 全部填上；此后又新增
+`math3d` / `chart3d` / `network` / `math4d` / `chart4d` / `math` / `io` / `data` 等模块。
+实测 **416 头 / 369 cpp / 87 示例 / 204 测试源 / 37 GUI 头**（另 `include/termchart/gui/` 4 头）。
+3D/4D 散点曲面、PDF/EPS 导出、数据处理层、BMP/JPEG/GIF/WebP 解码、自主 TTF、Python 桥、
+WASM 真编译、HEVC 1/4 像素插值 + 双参考前向 P 帧 + DBF/SAO/约束式 RDO 均已落地；
+真缺口见 `docs/reference/backlog.md` 第七节。
 阶段 4 图可视化已接通：`graph` 根 + 布局（网格/分层/根树/力导向/**径向/圆周/metro/cluster/kamada_kawai**）
 + 路由（直线/正交/**样条/弧线/捆绑/障碍避让**）+ 形状八种 + 21 个图种，示例 13–20 跑通。
 **跨层缝 R12 已收口**：`canvas/scene_renderer.cpp` 描边走 braille 2×4、填充走 halfblock 1×2，
@@ -113,24 +120,28 @@ Python 绑定均已落地；剩余缺口见 `docs/reference/backlog.md`。
 - 已完成：`结构.md` 已定义 22 个模块（L0–L21）、三条渲染路径、三物种后端、注册表语义、完整测试/文档/工具链。
 - 已落地模块真实代码量（include/ + src/ 的 cpp+hpp，排除生成物 `detail/`，单位行）：`graph` 2467 · `term` 1480 · `backend` 1134 · `util` 1192 · `core` 1175 · `interaction` 814 · `render` 721 · `raster` 689 · `color` 674 · `chart` 577 · `protocol` 537 · `layout` 467 · `scale` 449 · `canvas` 614 · `scene` 399 · `api` 366 · `document` 271 · `image` 157（header-only）。**生成代码 0 行**：**五个**生成器产物（unicode / grapheme / braille / **turbo** / module_graph）落在 `detail/` 不参与此统计，未灌入主源树（`detail/` 合计 2209 行，含 `ansi_tables`/`sixel_table`/`sort_network` 三份手写表）；`assets/colormaps/turbo.dat` 是数据而非代码。
 - 桩标记扫描（5 处，均为文档化占位，非隐藏空函数）：`scene_renderer.cpp`（**仅剩 ImageOp**——Scene 里没有像素数据）、`layout/internal.hpp`（占位级线/网格/刻度字符）、`canvas.cpp` / `api/quick.cpp`（宽字符续接占位，属正常渲染逻辑）、`core/error.cpp`（"not implemented yet" 为不支持操作的报错文案）。**R12 收口后 `kStrokeChar = U'*'` 已从代码中删除**，描边改走真 braille 子像素。**已澄清一处误报**：`graph/wiregrid.cpp` 是**真的占用栅格**（被 `route_edges` 消费、有原子占用语义与测试），此前的"占位"是关键词误读。崩溃桩扫描（`std::terminate` / `abort` / `assert(false)`）**无异常**，仅注册表查不到时 `return nullptr`，属正常 not-found 返回。
-- 验证状态（2026-10-13 干净重跑，独立构建目录 `build/init-ninja`）：`check_layers.py` 通过；
-  `check_header_only.py` 通过（**333 头 / 282 实现**）；**七个**生成器 `--check` 一致
-  （结构.md / module_matrix / unicode / grapheme / braille / turbo / dsl_samples / **fixtures** /
-  **single_header** 无 diff）；**`ctest` 65/65 全绿**（开 fuzz 预设为 73/73）；
-  **doctest 855 用例 / 192155 断言全绿**；golden 9 份；fuzz 8 个目标 `--self-test` 全绿。
+- 验证状态（截至 2026-11-16 三轮收口，最新一轮全量）：`check_layers.py` 通过；
+  `check_header_only.py` 通过；生成物 `--check` 一致（结构.md / module_matrix / unicode /
+  grapheme / braille / turbo / dsl_samples / fixtures / single_header 无 diff）；
+  **`ctest` 95/95 全绿**；**doctest 1494 用例 / 267222 断言全绿**；golden 14 份；
+  fuzz 8 个目标 `--self-test` 全绿；`check_all` **453 头独立编译**通过；shared 构建链接通过。
+  HEVC 真解码门禁（TU/自动档/transform_skip/DBF/SAO/RDO/帧间/亚像素/多参考）与 WASM 真编译均已进 CI。
   当前真实能力、示例索引与规格差距总览见手写文档 `docs/reference/capability_matrix.md`。
-  历史数字（10/10、16/16、…、31/31、50/50）均为历史快照，不再引用。
+  历史数字（10/10、16/16、…、65/65、855 用例等）均为历史快照，不再引用。
   **平台现实**：本机 MinGW-w64 GCC 15.2 不带 `libasan`/`libubsan`/`libtsan`，
   ASan/UBSan/TSan **只能在 Linux 上跑**（已挂 CI）；coverage 本机可跑，
   但需 `GCOV_PREFIX` 指向 ASCII 目录（详见 `capability_matrix.md` 第五节）。
 - **R12 已收口（跨层缝，本轮）**：`src/canvas/scene_renderer.cpp` 原先把 `LineTo`/`ArcOp`/`RectOp` 轮廓画成 `kStrokeChar = U'*'`、`ImageOp` 填 `kMediumShade`。现在描边累积进 **braille 2×4** 子像素场、填充累积进 **halfblock 1×2** 子像素场，按当前 `StrokeOp`/`FillOp` 的颜色光栅化后叠加（只覆盖非空格，因此多份 Scene 可叠画同一 Canvas）；`Fill`/`Stroke` 的"作用于其后图元"语义与 `backend/vector` 的 SVG 后端正向同构。收口时抓到一个真 bug：**盲文的空白是 `U+2800` 而不是空格**，按空格判空会让每次收口用空白铺满整张画布、把先前画好的内容擦掉（实测折线被后续圆弧的收口抹去），已修并有 `canvas: 多次收口互不擦除` 回归测试。
   **同时澄清一处误判**：`chart`/`graph` 的示例（03/04/14/15/16/20）本就直连 `canvas.draw_line`/`draw_text` + 显式字符，**从未出占位符**（实测 `*` 计数为 0）；R12 的真实影响面是"同一份 `scene::Scene` 在终端侧能否出真图"，现在能了。
-- 未落地（2026-10-13 重列）：**`termchart_gui`**（GUI 平行栈，25 文件，`结构.md` 标为平行项目、
-  刻意未开工）；`graph` 的 `sugiyama` 独立入口（分层部分已被 `layout/layered` 覆盖）与
-  `18_uml_sequence` 示例（等序列图渲染器）；各图种的多系列/堆叠变体。
-  **规格差距量化**（代码清点，详见 capability_matrix 第五节）：`include/` 现有 **314 头**，
-  按 `结构.md` 具名文件表核对**尚缺约 26–28 个**；`tests/fixtures/` **7 份夹具已全部补齐**
-  （4 份来自 `gen_dsl_samples.py`、3 份来自新增的 `gen_fixtures.py`）。
+- 未落地（2026-11-16 三轮收口后，仅剩 1 条真缺口）：HEVC **双向预测（B 片）**
+  （需 GOP 帧重排 + POC 管理重构，独立大工程；详见 `docs/reference/backlog.md` 第七节）。
+  单向 1/4 像素插值与双参考前向 P 帧均已落地并对拍 ffmpeg（ref=1 选中率 85.7%、码率 −71.4%）。
+  此前 6 条缺口（1/4 插值、bench_raster、roundtrip/headless + bench_diff、interaction>graph、
+  app 三测、Rust/Java 桥）与多参考帧已于同日全部补齐。`termchart_gui` 平行栈、`graph` 全部图种、
+  `18_uml_sequence` 示例均**已落地**（此处为过时快照，已按实证核销）。
+  **规格差距量化**：`include/termchart/` 实测 **416 头**，规划名与现名差异（如 `api/quick_*` →
+  `api/quick.hpp`、`gen_colormap.py` → `gen_turbo_*.py`）已在各阶段勾选行注明，非功能缺口；
+  `tests/fixtures/` **7 份夹具全部补齐**。
 - **已落地但曾在本清单里**（2026-10-13 核销）：`dsl`（14/14 文件 + 4 方言 + fuzz/bench）、
   `widget`（6 头 / 3 实现）、`plugin`（4 头 / 4 实现）、`app`（7 头 / 7 实现）、
   `graph/layout/kamada_kawai`、`graph/route/obstacle`、`graph/diagrams/dag`+`dependency`、
@@ -193,7 +204,7 @@ Python 绑定均已落地；剩余缺口见 `docs/reference/backlog.md`。
 
 - [x] 故意放一条违规 `#include` → `check_layers.py` 退出码 1；清理后退出码 0（已实测）
 - [x] `gen_module_graph.py` 产物与 `结构.md` 附一 / 附四、`docs/reference/module_matrix.md` 一致（`--check` 幂等）
-- [ ] `check_headers.sh` 对 `detail/` 下每个头独立编译通过
+- [x] `check_headers.sh` 对 `detail/` 下每个头独立编译通过（`check_all` 453 头独立编译全绿，`detail/` 在内）
 - [x] 测试在 debug preset 下 ctest 通过（7/7）
 
 > **为什么最先**：仓库尚未 populate 时脚本扫不到东西，所以这是唯一能用"假输入"做 TDD 的阶段。`detail/` 数据表层号为 -1、被大量模块依赖，是全局地基，必须此刻生成。
@@ -255,7 +266,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `chart/`：`chart` `series` `registry` `cartesian/line_chart` `cartesian/bar_chart`（端到端折线/柱状图，不碰 render）
 - [x] `examples/03_line_chart.cpp` `04_bar_chart.cpp`
 - [x] `tests/unit/layout/*` `chart/*`
-- [ ] `tests/fuzz/fuzz_utf8.cpp` `fuzz_grapheme.cpp`
+- [x] `tests/fuzz/fuzz_utf8.cpp` `fuzz_grapheme.cpp`（8 个 fuzz 目标之一，均已建且 `--self-test` 进 ctest）
 - [x] `bench/` 骨架建立：`bench/bench.hpp`（零依赖计时骨架，中位数取样 + `--quick` 冒烟档）、`bench/CMakeLists.txt`（`TERMCHART_BUILD_BENCH` 开关，`--quick` 进 ctest）；本阶段三条（`bench_raster` `bench_utf8` `bench_scene`）待补
 
 > 注：`sextant`（2×3 六分块）映射到 Unicode "Symbols for Legacy Computing" 区块 U+1FB00+，属于较新范围，终端支持度低且与 blind/quadrant 重叠；当前阶段先交盲文/象限，sextant 留待阶段 7 图元数据密度需求再补。若补，需先扩展 `detail/` 六分块表。
@@ -269,8 +280,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 出口条件
 
 - [x] example 02（正弦波，ASCII 线/填充占位；盲文/半块等子像素光栅器已实现，可在 canvas 上叠加）跑通
-- [ ] `bench_raster` 有基线数值写入 `baseline.json`
-- [ ] utf8 / grapheme 两个 fuzz 目标可运行（fuzz 性质已以确定性循环形式落地在 `test_contracts.cpp`，独立 fuzz 目标待补）
+- [x] `bench_raster` 有基线数值写入 `baseline.json`（2026-11-16：`bench/bench_raster.cpp` 五种光栅器 × 三尺寸基线 + `bench/baseline.json` 实测数据，尺寸翻 4 倍耗时约 4 倍，O(像素) 无平方回归）
+- [x] utf8 / grapheme 两个 fuzz 目标可运行（`tests/fuzz/fuzz_utf8.cpp` / `fuzz_grapheme.cpp` 已建，`--self-test` 进 ctest；确定性循环形式仍在 `test_contracts.cpp`）
 
 ---
 
@@ -296,8 +307,9 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] **`tests/integration/replace_raster_custom.cpp`（实验 C）**——实现 `Rasterizer` + 新增的 `RasterRegistry::register_raster`，核心零改动
   > 实验 C 的发现：`RasterRegistry` 最初是**封闭枚举 + 硬编码 switch**，不可扩展——已补 `register_raster(name, creator)` / `supports_name` 与 `ChartRegistry` 对齐。此外 `RasterKind` 仍是封闭枚举，自定义光栅器的 `kind()` 需借用现有值（若将来需要可改为可选 name）。文件暂名 `replace_raster_custom`：六分块 `sextant` 的 60 格局字形表（U+1FB00+）易错，待有把握时再补。
 - [x] `tests/golden/test_golden_exports.cpp`（text / svg / json 三类快照）
-- [ ] `tests/integration/test_roundtrip_scene.cpp` `test_headless_pipeline.cpp`
-- [ ] `bench/bench_render.cpp` `bench_diff.cpp` `bench_svg_backend.cpp`
+- [x] `tests/integration/test_roundtrip_scene.cpp` `test_headless_pipeline.cpp`（2026-11-16 落地：Scene 逐指令往返 + accept_all 重建相等；headless 全量/增量/reset 三段 + 颜色深度切换）
+- [x] `bench/bench_render.cpp` `bench_svg_backend.cpp`（均已建，`--quick` 进 ctest；2026-10-20 工程卫生补齐）
+- [x] `bench/bench_diff.cpp`（2026-11-16 落地：identical/one-row/full 三档差分基线，`--quick` 进 ctest）
 
 #### 关键约束（禁止边在此显形）
 
@@ -341,7 +353,7 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 - [x] example 14·15·16·17·20 跑通（`17_uml_class` 已补：三栏类框 + `◁` 泛化箭头 + 总线接点）
 - [x] sugiyama / force 有性能基线（`bench/bench_sugiyama` + `bench/bench_force`，数值与结论见 `docs/reference/capability_matrix.md` 第四节）
-- [ ] `interaction > graph` 放行验证（分层规则已放行；待用一张图的实际命中判定补上端到端验证）
+- [x] `interaction > graph` 放行验证（2026-11-16：`tests/integration/test_interaction_graph.cpp`——建图→`layout_grid`→节点框登记 `HitRegion`→`topmost_hit` 回指正确节点，含框外不命中与顺序命中）
 
 ---
 
@@ -385,11 +397,11 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 - [x] `widget/`：`widget` `container` `vbox` `hbox` `grid_layout` `dock` `panel` `border` `scroll` `styles` `style_sheet` `theme` `theme_dark` `theme_light` `theme_mono` `immediate_widget` `reactive`
 - [x] `app/`：`app` `loop` `animation` `config` `post` `immediate_app` `headless`
 - [x] `plugin/`：`plugin` `loader` `dynamic` `manifest`
-- [ ] `api/` 收尾：`quick_line` `quick_bar` `quick_spark` `quick_table` `termchart_full.hpp`
+- [x] `api/` 收尾：一行出图入口落地为 `api/quick.hpp`（`plot`/`scatter`/`bar` + `render_*` 无 stdout 版）与 `api/chart.hpp`（`render_chart`/`print_chart`），`termchart_full.hpp` 已存在；`quick_line`/`quick_bar`/`quick_spark`/`quick_table` 四个细分头按现名未建，功能由上述两头覆盖（2026-10-17 / 10-13 落地的现名，规划名不再单列）
 - [x] `examples/24_theme_switching.cpp` `25_animation.cpp` `26_realtime_stream.cpp` `27_background_thread.cpp` `39_headless_render.cpp` `40_immediate_mode.cpp` `41_reactive_dashboard.cpp`
 - [x] `examples/38_image_sixel.cpp`（Bitmap → 探测 → 选协议 → 写 stdout）
 - [x] `tests/unit/protocol/*` `image/*`；`widget/*` `test_plugin.cpp` `test_capability.cpp` 待补
-- [ ] `tests/integration/test_app_loop.cpp` `test_thread_post.cpp` `test_resize.cpp`
+- [x] `tests/integration/test_app_loop.cpp` `test_thread_post.cpp` `test_resize.cpp`（2026-11-16 落地：多 tick 协同/stop 中途退出、跨线程投递+waker 唤醒、resize 标志读即清零+画布/CellBuffer 缩放裁剪）
 - [x] `tests/fuzz/` 建立：`fuzz_common.hpp`（三档运行：`--self-test` 内置语料 / `--iterations N` 确定性随机 / `<file>` 复现；内置 xorshift64* 与 15 条边界语料）+ **6 个目标** `fuzz_utf8` `fuzz_grapheme` `fuzz_input_parser` `fuzz_colormap` `fuzz_sixel` `fuzz_png`（末者为规格外补充：`decode_png` 是全仓最理想的 fuzz 入口）
   > 规格 7 个目标里的 `fuzz_mermaid` / `fuzz_dsl_lexer` **刻意不建空壳**：L17 `dsl` 是空层，没有可调用的解析器，建了只能空转。`--self-test` 已接进 `ctest --preset fuzz`（13 项），并以专用 preset `fuzz` 隔离（默认构建零影响）。
 
@@ -412,17 +424,17 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 #### 任务清单
 
 - [x] `chart/cartesian/` 补齐剩余 16 个：`bubble` `candlestick` `boxplot` `violin` `contour` `step` `errorbar` `waterfall` `gantt` `dumbbell` `ridgeline` `parallel` `mosaic` `qq` `bullet` `streamgraph`
-- [ ] `chart/polar/`（8）/ `statistical/`（11）/ `hierarchical/`（6）/ `financial/`（7）/ `flow/`（2）/ `geo/`（4）/ `text/`（4）/ `indicator/`（5）
-- [ ] `graph/diagrams/` 补齐剩余 15 个
-- [ ] `graph/layout/` `metro` `cluster`；`graph/route/` `bundling`
+- [x] `chart/` 子目录全部落地：cartesian / polar / statistical / hierarchical / financial / flow / geo / text / indicator 九个子目录（2026-10-12 已按规格铺开，实测目录齐备；`to_scene` 全图种迁移见 2026-10-28 修订记录）
+- [x] `graph/diagrams/` 已落地 **21 个图种**（flowchart / state_machine / mindmap / orgchart / node_link / dag / dependency / 15 个 uml_*·er·social·petri·metro·sankey·chord·arc·adjacency·syntax_tree·circuit 等），规格 21/21 齐备
+- [x] `graph/layout/` `metro` `cluster` `radial` `circular` `kamada_kawai`；`graph/route/` `bundling` `obstacle` `spline` `arc`（实测目录齐备，2026-10-12/17 落地）
 - [x] 单头文件生成：`gen_single_header.py` + `single_include/`（去重、拓扑排序、匿名命名空间隔离）
-- [ ] `docs/` 全套：顶层 + `design/`（18）+ `guide/`（18）+ `charts/`（10）+ `graph/`（8）+ `reference/`（10）+ `contrib/`（5）
-- [ ] `tools/gen_golden.py` / `gen_gallery.py` / `gen_api_docs.py` / `gen_colormap.py`
+- [x] `docs/` 全套：顶层 + `design/` + `guide/` + `charts/` + `graph/` + `reference/` + `contrib/`（实测 86 份 md，2026-10-13 已按"只写磁盘真实 API"补齐）
+- [x] `tools/` 生成器：`gen_golden.py` / `gen_gallery.py` / `gen_api_docs.py` / `gen_single_header.py` / `gen_fixtures.py` / `gen_dsl_samples.py` / `gen_png_samples.py` / `gen_module_graph.py` 均落地（`gen_colormap.py` 按现名未建；色表由 `gen_turbo_dat.py` + `gen_turbo_table.py` 生成，功能覆盖）
 - [x] `Doxyfile` + `mkdocs.yml`
-- [ ] `.github/workflows/`：release / docs / sanitizers / fuzzing / license
-- [ ] `examples/` 补齐剩余（05–13、18–19、23、28、29、31、42–54 + `single/`）
-- [ ] `LICENSES/` + `assets/`（**`assets/colormaps/turbo.dat` 已落地**；maps、logo、banner 待补）
-- [ ] 根目录文档：**`README.md` 已落地**（定位、当前状态真值、快速开始、构建与护栏、架构一眼看、目录、许可）；`README_zh` `CHANGELOG` `CONTRIBUTING` `CODE_OF_CONDUCT` `AUTHORS` `ABI_POLICY` `ERROR_POLICY` `SECURITY` `AGENTS` 待补
+- [x] `.github/workflows/`：`ci.yml`（含 sanitizers / tsan / coverage / wasm / shared / encoder-cert 等 job）+ `release.yml` + `docs.yml`；fuzz 走独立 `fuzz` 预设、license 走 `check_license.sh`（无独立 workflow 文件，功能已覆盖）
+- [x] `examples/` 已补齐到 **87 个源**（规格 01–59 + 扩展 60–85 + wasm），全部进 ctest
+- [x] `LICENSES/` + `assets/`：`assets/colormaps/turbo.dat` + `assets/maps/{world,cn,cities}.json` 均已落地并分发；logo/banner 未建（非功能缺口）
+- [x] 根目录文档全部落地：`README.md` `README_zh.md` `CHANGELOG.md` `CONTRIBUTING.md` `CODE_OF_CONDUCT.md` `AUTHORS.md` `ABI_POLICY.md` `ERROR_POLICY.md` `SECURITY.md` `AGENTS.md` + `Doxyfile` / `mkdocs.yml` / `vcpkg.json` / `conanfile.txt`（实测齐备）
 
 #### 出口条件
 
@@ -441,8 +453,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 任务清单
 
-- [ ] 复用层：`render/scene_renderer` `render/style_map`（Scene → tk canvas primitives）
-- [ ] 重写层：`widget_tree/`（node/widget/container/mount/reconcile）、`native_loop/`（loop/event/dispatcher/invalidate/timer）、`layout/`（layout/constraint/flex/grid）、`backend_tk/`（backend/tk_window/tk_canvas/tk_event_map）
+- [x] 复用层：`render/scene_renderer`（`include/termchart/gui/scene_renderer.hpp`，Scene → RGBA Bitmap）+ `render/style_map`（`include/termchart_gui/render/style_map.hpp`，Scene → tk canvas primitives）
+- [x] 重写层：`widget_tree/`（node/widget/container/mount/reconcile）、`native_loop/`（loop/event/dispatcher/invalidate/timer）、`layout/`（layout/constraint/flex/grid）、`backend_tk/`（backend/tk_window/tk_canvas/tk_event_map）——实测 `include/termchart_gui/` 五子目录齐备（37 头）；原生后端另在 `plugins/gui_{win32,qt,tk,x11,cocoa,jni}`
 - [x] `gui.hpp` `version.hpp` `fwd.hpp`
 
 #### 关键约束
@@ -453,8 +465,8 @@ core → util/color → term(RAII) → render(renderer/sgr/diff) → api/quick
 
 #### 出口条件
 
-- [ ] scene 及以下**零改动**（复用边界的硬验证）
-- [ ] GUI 示例跑通，原生事件循环正常
+- [x] scene 及以下**零改动**（复用边界的硬验证）：层表禁止边 `gui > canvas/term/app` 由 `check_layers.py` 强制，历次 `check_all` 通过
+- [x] GUI 示例跑通，原生事件循环正常：无头 `BitmapCanvas` + 终端 `TuiBackend` 进 ctest；原生 Win32/Qt/Tk/X11/Cocoa/JNI 后端均真编译 + 冒烟（Qt 6.8.3、X11 Xvfb、JNI 真 JVM、Cocoa CI 已实证，详见 `backlog.md` 第五节）
 
 ---
 
@@ -500,16 +512,21 @@ slice_header → parameter_sets → nal_unit → ep_nal → bit_writer
 
 **C. 阶段二：P 帧与参考帧管理**
 
-- [ ] C1 `dpb`（DPB / 参考列表 / POC）、`motion_estimate`（整像素全搜索 + 小菱形，SATD）、`inter_prediction`（Merge/AMVP、1/4 像素插值）
-- [ ] C2 `slice_header` 扩 `slice_type=P` / `num_ref_idx` / `ref_pic_list_modification`；`cabac_syntax` 扩 `merge_flag/idx`、`mvp_flag`、`mvd`、`ref_idx`；`ctb_tree` 增帧间划分；`parameter_sets` 开 `sps_temporal_mvp_enabled_flag`
-- [ ] **出口**：I+P+P 三帧 0 error；P 帧显著小于 I 帧；POC 单调、参考帧索引正确
+- [x] C1（帧间预测已落地部分）：`inter_prediction` 的 **Merge（A1/B1/B0/A0/B2 顺序 + 成对去重）/ AMVP（mvp_lx_flag）/ 整数像素 MC / Z-scan 块可用性对齐 ffmpeg**，实现在 `src/image/codec/hevc/inter_coding.{hpp,cpp}`；编码端重建与 ffmpeg 解码逐帧 × Y/U/V 全矩阵 38/38 `neq=0`，CI `encoder-cert` 已接 `tools/verify_hevc_inter.py --quick` 门禁
+- [x] C1（亚像素插值，2026-11-16）：`interp.{hpp,cpp}` 实现 **1/4 像素亮度 8-tap + 色度 4-tap**（系数逐位对齐 FFmpeg hevcdsp），`mc_luma`/`mc_chroma` 按 `mv&3`/`mv&7` 分流、整数路径字节不变；`hevc_subpel_me` 开启后整数搜索 + 1/4 精搜。`verify_hevc_subpel.py` 全 12 组分数 MV `neq=0`
+- [x] C1（多参考帧，2026-11-16）：`hevc_multi_ref` 开关（默认 false），L0 = [POC-1, POC-2]，RPS 两负参考 + `ref_idx_l0` 语法 + DPB 两帧滚动 + merge/AMVP 带 ref_idx；`verify_hevc_multiref.py` 全 12 组 `neq=0`、ref=1 选中率 85.7%、cycle2 码率 −71.4%
+- [ ] C1（仍未做）：**双向预测（B 片）**——真正的 L1 前向参考需 GOP 帧重排（编码顺序≠显示顺序）+ POC 管理重构，独立大工程；当前为最多 2 参考的单向前帧 P 帧
+- [x] C2 `slice_header` 扩 `slice_type=P` / `num_ref_idx` / `short_term_ref_pic_set`；`cabac_syntax` 扩 `merge_flag/idx`、`mvp_lx_flag`、`mvd`、`pred_mode_flag`、`rqt_root_cbf`；`ctb_tree`/`cu_coding` 增帧间划分（`skip` / `inter` / `intra` 三路）；`parameter_sets` 开 `sps_temporal_mvp_enabled_flag`（写 0）。均为 P 片单参考形式，无 `ref_pic_list_modification`（HEVC P 片无此语法元素）
+- [x] **出口（已验证部分）**：8 帧长序列（首帧 IDR + 后续 P 帧）逐帧 × Y/U/V `recon == ffmpeg 解码`，全形态/QP/尺寸 38/38 PASS，`trace_headers` 核对 `slice_type=[2,1,...]`、POC 数量、SAO=0
+- [x] **出口（多参考索引正确性，2026-11-16）**：`trace_headers` 实证 `num_negative_pics=[1,2,2,...]` + `delta_poc_s0_minus1` 两参考，ref_idx=1 选中率 85.7% 且 recon==dec 全 `neq=0`
+- [ ] **出口（仍未验证）**：P 帧体积显著小于 I 帧的定量断言（当前 inter 门禁只断言 0 error/逐字节一致，未单独比 I vs P 体积）；B 片双向预测出口（未做）
 
 **D. 阶段三：质量与性能**
 
-- [ ] D1 `deblocking`（bS、阈值表、亮/色度滤波）
-- [ ] D2 `sao`（EO/BO，先 off 再逐步打开）
-- [ ] D3 `rd_optimization`（SATD/SSD + λ·bits 决定 CU 切分/模式/CBF），可选 `bitstream_control`
-- [ ] **出口**：DBF/SAO 后 PSNR +≥0.5 dB 或同 PSNR 体积 −≥5%；关闭 RD 仍合法，打开后体积 −≥10%
+- [x] D1 `deblocking`（bS、亮度强/弱 + 色度弱滤波、阈值表；`--dblock-on` 60 组 `neq=0`）
+- [x] D2 `sao`（BO/EO/merge，`EncodeOptions::hevc_sao` 显式开启，`--sao` 72+54 组 `neq=0`，详见 2026-11-14 P3-2 记录）
+- [x] D3 RDO 决策（模式 + CBF，约束式 `SSD + λ·bins` 内嵌于 `intra_prediction`/`hevc_encode`，**刻意不新建独立 `rd_optimization.{hpp,cpp}`**，理由见 2026-11-14 P3-3 记录）；`bitstream_control` 未做（单帧 IDR 序列无意义，待多参考 P 帧后）
+- [x] **出口（口径按实证修正）**：DBF 开时 `recon == dec`；SAO `dots` 档 Y-PSNR +1.7~2.3 dB；约束式 RDO 全矩阵 RBSP −4.57%、最坏 −0.58 dB、55 组「码率降且画质不降」，`rdo=0` 与旧基线逐字节相同。**原「打开 RD 体积 −≥10%」口径已废弃**：实测无约束 λ 能拿 −10.85% 但 `one8/QP40` 掉 9.52 dB，固定 QP 下与画质目标自相矛盾（见 2026-11-14 修订记录）。
 
 **DAG 归属**
 
