@@ -353,11 +353,13 @@ deblocking/sao → 重建帧（不改变 CABAC 语法层）
 > 单参考整数 MC → 1/4 像素插值 → 双参考 P 帧分步落地，每步都由
 > `verify_hevc_inter.py` / `verify_hevc_subpel.py` / `verify_hevc_multiref.py` 的
 > `recon == ffmpeg 解码` 逐字节门禁护航，默认开关关闭时字节级基线不变。
-> 下一步双向 B 片必须先设计 GOP 帧重排（编码顺序≠显示顺序）与 POC 管理，
-> 不可在现有一维帧序上直接塞双向预测。
+> B 片 GOP=3 重排已于 2026-11-17 落地，merge-only 路径经 `verify_hevc_bslice.py`
+> 全形态 recon==dec；混合 B AMVP 已冻结为 Backlog（跨 POC 候选推导未收敛），
+> 默认 `hevc_b_slice` 不启用该路径。
 >
-> **AV1 由用户亲自开启**：在用户下指令前不新增任何 AV1 实现文件，
-> `VideoCodec::AV1` 保持 fail-loud 空实现契约。
+> **AV1 已由用户于 2026-11-17 亲自开启**：从最小纵切开始；在 AV1 最小
+> 可解码闭环通过前，`VideoCodec::AV1` 仍保持 fail-loud 空实现契约，
+> 不提前切换分发。
 
 每一步的开工/完工检查固定为：
 

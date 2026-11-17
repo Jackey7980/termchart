@@ -283,7 +283,8 @@
 > 实测数字（2026-11-16 三轮收口后）：416 头 / 369 cpp / 87 示例 / 204 测试源 / ctest 95/95 / doctest 1494 例全过。
 
 - [x] **HEVC 多参考帧**（2026-11-16）：`hevc_multi_ref` 默认 false，L0=[POC-1, POC-2]，RPS 两负参考 + `ref_idx_l0` + DPB 两帧滚动 + merge/AMVP 带 ref_idx；`verify_hevc_multiref.py` 12/12 `neq=0`、ref=1 选中率 85.7%、cycle2 码率 −71.4%，接 CI。
-- [ ] **HEVC 双向预测（B 片）**：真正的 L1 前向参考必须引入 GOP 帧重排（编码顺序≠显示顺序）+ POC 管理重构，是与单/多参考 P 帧同级的独立大工程；当前最多 2 参考的单向前帧 P 帧，未含 B 片。
+- [x] **HEVC 双向预测（B 片）**（2026-11-17）：GOP=3 重排（I0 P2 B1 P4 B3…），L0/L1 各 1 帧，SPS/VPS `max_num_reorder_pics=1` 保证解码端按 POC 输出；slice header 的 l1 计数 / `mvd_l1_zero_flag`、B CU 的 `inter_pred_idc` 与双向 bin 序列落地；`tools/verify_hevc_bslice.py` 7 形态 × QP10/26 全绿。
+- [ ] **WONTFIX / Backlog：HEVC 混合 B AMVP**（非 merge 路径）：同一 B 片内混用 merge 与 L0/L1/BI AMVP 时，跨 POC 邻居候选推导精度未与 FFmpeg 完全对齐，部分运动形态下 bin 分叉。决策：**不继续收敛**，默认 `hevc_b_slice` 走 merge-only（仍含 combined bi-pred 双向候选，像素级 100% 对拍通过）；`EncodeOptions::hevc_b_amvp` 保留为实验开关。Why：解除 AV1 开工前的红灯锁定；How to apply：不要再为混合 AMVP 开新战线，除非用户明确重启。
 - [x] **`bench_raster` 性能基线**（2026-11-16）：`bench/bench_raster.cpp`（五光栅器 × 三尺寸）+ `bench/baseline.json` 实测数据，`--quick` 进 ctest。
 - [x] **`test_roundtrip_scene` / `test_headless_pipeline` / `bench_diff`**（2026-11-16）：三个集成测试/基准落地，Scene 往返 + headless 三段 + diff 三档。
 - [x] **`interaction > graph` 端到端验证**（2026-11-16）：`test_interaction_graph.cpp` 建图→布局→`HitRegion`→`topmost_hit` 回指正确节点。
@@ -298,3 +299,25 @@
 ### 说明
 - 质量专项（P1/P3/P4 的证据与逐条改法）在 `docs/reference/quality_todo.md`，本文件只做总览。
 - 本清单与 `quality_todo.md` 并列，两者索引都归 `ROADMAP.md`（唯一进度口径）。
+
+---
+
+## 八、AV1 全量规划：第一阶段范围与暂缓清单（2026-11-17 拍板）
+
+**拍板口径**：先 8-bit 4:2:0；运行期零依赖，dav1d / libaom 只在测试期作为参考解码器引入；第一阶段目标是最小纵切「8×8 DC 帧内 + DCT8 + 最小 OBU/TileGroup，经 dav1d 真解出且 recon==dec」，而不是横铺空模块。规范真值 = AV1 规范文本 + 参考解码器 + 官方 conformance vectors，三者冲突时以可解码性与向量为准。
+
+**第一阶段（在办）**：
+- [ ] OBU 头 + TEMPORAL_DELIMITER / SEQUENCE_HEADER / FRAME_HEADER / TILE_GROUP + IVF 封装
+- [ ] Daala 算术编解码 + 静态 CDF（不更新）自闭环回环
+- [ ] 8×8 PARTITION_NONE + DC_PRED + DCT8 + 量化/反量化/反变换 + 最小 TileGroup
+- [ ] `dav1d` 解码对拍门禁：recon==dec，逐像素
+
+**暂缓（按约束分层，全量规划不丢项）**：
+- [ ] 熵/CDF：CDF 自适应更新、多符号 CDF 树全量语法上下文（划分/模式/MV/残差全体）
+- [ ] 划分：128×128 超级块、其余 9 种 partition（HORZ/VERT/SPLIT/HORZ_A/B/VERT_A/B/HORZ_4/VERT_4）与跨 SB 邻居推导
+- [ ] 帧内：细角度子集 13..68（69 种模式中的 56 种 finer angles）、Smooth/Paeth 全集、Filter Intra、CFL、帧内边界滤波
+- [ ] 帧间：7 参考槽、8 插值滤波器、全像素/亚像素 ME、Warped Motion（平移/旋转缩放/仿射）、OBMC、复合预测（Average/Distance/Wedge 16 掩膜/Difference）、Masked Compound
+- [ ] 变换：ADST 4..16、Identity 4..64、2..64 各尺寸组合、量化矩阵 15 预设、复杂扫描序
+- [ ] 环路滤波：Deblocking 精确强度、CDEF（8 方向搜索 + 查表）、Loop Restoration（Wiener / Sgrproj 定点化）
+- [ ] 系统层：tile groups 多 tile、帧率/OrderHint/呈现时间、HDR/10-bit/12-bit、4:4:4、film grain、SVC/可伸缩、MP4 `av01`/`av1C` 封装
+- [ ] RDO：划分/模式/参考/复合模式的全量 RD 决策与提前终止（仅画质工具，合规链打通后再做）
