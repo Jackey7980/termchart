@@ -36,6 +36,18 @@ struct ChartGeom {
     int n = 0;
 };
 
+// 视图窗口：Pan/Zoom 用。lo/hi 为可见数据下标区间（hi<0 表示到最后一根）；
+// ymin/ymax 为 y 轴量纲覆盖（NaN 表示自动随数据）。ChartWidget 在滚轮/拖拽时更新它，
+// 渲染器 compute_geom 据此只算可见区间的几何。
+struct ViewWindow {
+    int lo = 0;
+    int hi = -1;  // -1 = 到最后一根
+    double ymin = std::nan("");
+    double ymax = std::nan("");
+};
+
+inline bool view_is_nan(double v) noexcept { return !(v == v); }  // NaN 检测（避开 <cmath> 宏）
+
 // —— 折线平滑所需辅助（combo 用；HSI 留空字段，这些函数天然 no-op）——
 inline double nice_step(double rough) {
     if (!(rough > 0.0)) return 1.0;
@@ -175,9 +187,26 @@ class IChartRenderer {
 public:
     virtual ~IChartRenderer() = default;
 
-    // 底层背景/前景色（ChartWidget 光栅/合成用它）：combo 深色、HSI 浅色。
+    // 视图窗口（Pan/Zoom）：ChartWidget 在滚轮/拖拽时调用；compute_geom 据此限制可见区间。
+    virtual void set_view(ViewWindow v) { view_ = std::move(v); }
+    [[nodiscard]] virtual ViewWindow view() const { return view_; }
+
+    // 底层背景/前景色（ChartWidget 光栅/合成用它）：默认深色，子类按主题覆盖。
     [[nodiscard]] virtual Rgb background() const { return Rgb{24, 26, 32}; }
     [[nodiscard]] virtual Rgb foreground() const { return Rgb{229, 229, 229}; }
+
+    // 悬停点的 y 像素位置（geom 坐标），供 ChartWidget 画水平十字线；默认 NaN=不画。
+    [[nodiscard]] virtual double hover_y(const ChartGeom& g, int hovered) const {
+        (void)g;
+        (void)hovered;
+        return std::nan("");
+    }
+    // 悬停读数短标签（如价格/数值），供 ChartWidget 在右轴画实时数值；默认空。
+    [[nodiscard]] virtual std::string hover_label(const ChartGeom& g, int hovered) const {
+        (void)g;
+        (void)hovered;
+        return std::string{};
+    }
 
     // 是否尚无数据（ChartWidget 防呆：空时不画）。
     [[nodiscard]] virtual bool empty() const = 0;
@@ -211,6 +240,8 @@ public:
         (void)bars;
         (void)line;
     }
+
+    mutable ViewWindow view_{};  // Pan/Zoom 视图窗口（mutable：const compute_geom 可读）
 };
 
 }  // namespace termchart_gui

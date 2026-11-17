@@ -12,6 +12,7 @@
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/fwd.hpp"
 #include "termchart_gui/native_loop/event.hpp"
+#include "termchart_gui/theme.hpp"
 #include "termchart_gui/widget_tree/widget.hpp"
 
 namespace termchart_gui {
@@ -28,14 +29,15 @@ public:
 
     void paint(TkCanvas& c) const override {
         const Rect b = global_bounds();
+        const GuiTheme th = current_theme();
         const double cy = b.y + b.h * 0.5;
         const double track_h = 6.0;
-        c.fill_rect(Rect{b.x, cy - track_h * 0.5, b.w, track_h}, Rgb{58, 58, 64});
+        c.fill_rect(Rect{b.x, cy - track_h * 0.5, b.w, track_h}, th.slider_track);
         const double thumb_w = 10.0;
         const double thumb_h = b.h * 0.8;
         const double tx = b.x + (b.w - thumb_w) * value_;
         c.fill_rect(Rect{tx, b.y + (b.h - thumb_h) * 0.5, thumb_w, thumb_h},
-                    Rgb{120, 184, 236});
+                    th.slider_thumb);
     }
 
     bool on_event(const Event& e) override {

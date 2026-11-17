@@ -31,6 +31,7 @@
 #include "termchart_gui_qt/qt_backend.hpp"
 
 using namespace termchart_gui;
+using namespace termchart_gui_qt;  // embed_demo_qt 直接用 QtBackend（此前漏了此 using，导致它从未编译过）
 
 namespace {
 

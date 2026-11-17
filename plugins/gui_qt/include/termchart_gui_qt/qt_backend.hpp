@@ -35,6 +35,12 @@
 #include "termchart_gui/backend_tk/native_surface.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"
 
+// 前向声明（全局命名空间）：blit() 签名只需 QPainter 这个名字；完整类型由
+// src/qt_backend.cpp 与宿主 paintEvent（各自 #include <QPainter>）提供。这里只前向声明、
+// 不 #include <QPainter>，避免把 Qt 头强加给所有仅链接本后端的 TU（保持「公开头不泄漏
+// Qt 头」的契约）。放在全局命名空间，避免遮蔽真正的 ::QPainter。
+class QPainter;
+
 namespace termchart_gui_qt {
 
 class QtBackend final : public termchart_gui::Backend {
@@ -64,6 +70,13 @@ public:
     // QWidget 的 paintEvent 里）。RGBA 直贴，与 CanvasWidget 同款上屏逻辑。
     void blit(QPainter& painter);
 
+    // Take 2 用：设置设备像素比（高 DPI 屏）。blit 据此把 QImage 标为 dpr，让 Qt 把
+    // 物理分辨率位图按逻辑尺寸铺到窗口，避免位图被拉伸发糊；默认 1。
+    void set_device_pixel_ratio(double dpr) noexcept;
+
+    // Take 2 用：读取当前设备像素比；默认 1。
+    [[nodiscard]] double device_pixel_ratio() const noexcept;
+
     // Take 2 用：当前帧像素（RGBA），宿主可据此做再合成 / 导出。
     [[nodiscard]] const termchart::image::Bitmap& frame() const;
 
@@ -75,6 +88,10 @@ public:
         std::uint32_t w, std::uint32_t h, std::string title) override;
     [[nodiscard]] termchart_gui::TkCanvas& canvas() override;
     [[nodiscard]] bool poll_event(termchart_gui::Event& out) override;
+    // Take 2 用：宿主（QWidget 的各类事件处理器）把剥壳后的原生事件注入后端队列，
+    // 由应用经 poll_event 抽干并 dispatch_event 到控件树。此前未重写、走了基类 no-op，
+    // 导致 Take 2 宿主注入的事件被静默丢弃（交互失效）——现补上。
+    void inject_event(termchart_gui::Event e) override;
     void present() override;
     void run_loop(termchart_gui::EventLoop& loop) override;
 

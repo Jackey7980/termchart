@@ -12,6 +12,7 @@
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/fwd.hpp"
 #include "termchart_gui/native_loop/event.hpp"
+#include "termchart_gui/theme.hpp"
 #include "termchart_gui/widget_tree/widget.hpp"
 
 namespace termchart_gui {
@@ -29,13 +30,14 @@ public:
 
     void paint(TkCanvas& c) const override {
         const Rect b = global_bounds();
-        const Rgb base = pressed_ ? Rgb{74, 74, 84} : Rgb{50, 50, 58};
+        const GuiTheme th = current_theme();
+        const Rgb base = pressed_ ? th.button_pressed : th.button_bg;
         c.fill_rect(b, base);
-        c.stroke_rect(b, Rgb{124, 124, 136}, 1.0);
+        c.stroke_rect(b, th.button_border, 1.0);
         const double tw = static_cast<double>(label_.size()) * kCellW;
         const double tx = b.x + (b.w - tw) * 0.5;
         const double ty = b.y + (b.h - kCellH) * 0.5;
-        c.draw_text(tx < b.x ? b.x + 4.0 : tx, ty, label_, Rgb{236, 236, 240});
+        c.draw_text(tx < b.x ? b.x + 4.0 : tx, ty, label_, th.button_label);
     }
 
     bool on_event(const Event& e) override {

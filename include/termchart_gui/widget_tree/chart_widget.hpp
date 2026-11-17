@@ -34,6 +34,7 @@
 #include "termchart_gui/fwd.hpp"
 #include "termchart_gui/native_loop/event.hpp"
 #include "termchart_gui/widget_tree/combo_renderer.hpp"
+#include "termchart_gui/theme.hpp"
 #include "termchart_gui/widget_tree/i_chart_renderer.hpp"
 #include "termchart_gui/widget_tree/widget.hpp"
 
@@ -86,6 +87,9 @@ public:
         dirty_ = true;
         base_settled_ = false;  // 废底图缓存 → 下帧按新数据重算几何并重绘（走过渡动画）
     }
+
+    // 高 DPI：设置设备像素比（>1 时离屏画布按物理分辨率渲染，文本格同步放大，避免发糊）。
+    void set_pixel_scale(double s) noexcept { pixel_scale_ = (s > 0.0) ? s : 1.0; }
 
     // 推进一帧（dt 秒）：指数趋近 target_（帧率解耦）。返回是否仍在动画中。
     bool tick(double dt_sec) {
@@ -195,7 +199,11 @@ public:
                     renderer_->build_line_scene(b, geom_, glow_);
                 }
                 const auto t1 = std::chrono::steady_clock::now();
-                const int ss = (W * H > 400000) ? 1 : 2;  // 大尺寸降 supersample
+                const double dpr = pixel_scale_;  // 高 DPI：物理分辨率更高，阈值同步放大
+        const int ss = (static_cast<long long>(W) * H >
+                        static_cast<long long>(400000) * static_cast<long long>(dpr * dpr))
+                           ? 1
+                           : 2;
                 const Bitmap L0 = raster(sb, W, H, false, ss);
                 const Bitmap L1 = raster(sa, W, H, true, ss);
                 const Bitmap L2 = raster(sl, W, H, true, ss);
@@ -231,25 +239,149 @@ public:
             c.blit(*base_, g.x, g.y);
         }
         if (hovered_ >= 0 && hovered_ < geom_.n) {
-            // 悬停强调（ECharts axisPointer/emphasis）：竖向十字轴线（通用）+ 插头 specifics。
+            // 悬停强调（ECharts axisPointer/emphasis）：十字轴线（通用）+ 插头 specifics。
             const std::size_t h = static_cast<std::size_t>(hovered_);
             const double hx = g.x + geom_.xs[h];  // 窗口画布未按控件平移 → 悬停叠层需加全局偏移
+            const GuiTheme th = current_theme();
             c.fill_rect(Rect{hx - 0.5, g.y + geom_.pt, 1.0, geom_.pb - geom_.pt},
-                        Rgb{90, 100, 120});  // 竖向十字轴线
+                        th.crosshair);  // 竖向十字轴线（主题色）
+            // 水平十字线 + 右轴实时读数
+            const double hyv = renderer_->hover_y(geom_, hovered_);
+            if (!std::isnan(hyv)) {
+                const double yy = g.y + hyv;
+                c.fill_rect(Rect{g.x + geom_.pl, yy, geom_.pr - geom_.pl, 1.0},
+                            th.crosshair);  // 横线
+                const std::string lab = renderer_->hover_label(geom_, hovered_);
+                if (!lab.empty()) {
+                    const double lw = static_cast<double>(lab.size()) * 9.0 + 8.0;
+                    const double lx = g.x + geom_.pr + 2.0;
+                    c.fill_rect(Rect{lx, yy - 8.0, lw, 16.0}, th.tooltip_bg);
+                    c.stroke_rect(Rect{lx, yy - 8.0, lw, 16.0}, th.tooltip_border, 1.0);
+                    c.draw_text(lx + 4.0, yy - 4.0, lab, th.tooltip_fg);
+                }
+            }
             renderer_->draw_hover(c, g, geom_, hovered_, glow_);  // 强调（柱/蜡烛高亮）
             renderer_->draw_tooltip(c, g, geom_, hovered_);        // 信息框
         }
     }
 
+    // 交互：悬停（MouseMove）、滚轮缩放（Wheel，Shift+Wheel 缩 y）、拖拽平移（MousePress/Move/Release）。
     bool on_event(const Event& e) override {
-        if (e.type != EventType::MouseMove) {
+        if (!renderer_) return false;
+        const Rect g = global_bounds();
+        const double hx = e.x - g.x;
+        const double hy = e.y - g.y;
+
+        if (e.type == EventType::Wheel) {
+            ViewWindow v = renderer_->view();
+            const int N = geom_.n;
+            if (N <= 0) return false;
+            const int hi = (v.hi < 0 || v.hi > N) ? N : v.hi;
+            const int lo = std::max(0, v.lo);
+            const int curM = (hi - lo) > 0 ? (hi - lo) : N;
+            // 光标定到的可见下标
+            const double span = (geom_.pr - geom_.pl) > 0 ? (geom_.pr - geom_.pl) : 1.0;
+            double frac = std::max(0.0, std::min(1.0, (hx - geom_.pl) / span));
+            const int cursor = lo + static_cast<int>(frac * static_cast<double>(curM));
+            if (e.modifiers & kModShift) {
+                // y 轴缩放（围绕光标 y）
+                const double ytop = geom_.ytop;
+                const double yspan = geom_.step * geom_.intervals;
+                const double ymin0 = ytop - yspan;
+                double cmin = view_is_nan(v.ymin) ? ymin0 : v.ymin;
+                double cmax = view_is_nan(v.ymax) ? ytop : v.ymax;
+                double cspan = cmax - cmin;
+                if (!(cspan > 0.0)) cspan = 1.0;
+                const double spanY = (geom_.pb - geom_.pt) > 0 ? (geom_.pb - geom_.pt) : 1.0;
+                double fy = std::max(0.0, std::min(1.0, (geom_.pb - hy) / spanY));
+                const double factor = e.wheel_delta > 0 ? 0.85 : 1.0 / 0.85;
+                const double cval = cmin + fy * cspan;
+                const double nspan = cspan * factor;
+                v.ymin = cval - fy * nspan;
+                v.ymax = v.ymin + nspan;
+            } else {
+                // x 轴缩放（围绕光标）
+                const double factor = e.wheel_delta > 0 ? 0.85 : 1.0 / 0.85;
+                int newM = static_cast<int>(
+                    std::llround(static_cast<double>(curM) * factor));
+                newM = std::max(2, std::min(newM, N));
+                int newLo =
+                    cursor - static_cast<int>(static_cast<double>(cursor - lo) *
+                                             static_cast<double>(newM) /
+                                             static_cast<double>(curM));
+                int newHi = newLo + newM;
+                if (newHi > N) {
+                    newHi = N;
+                    newLo = N - newM;
+                }
+                if (newLo < 0) {
+                    newLo = 0;
+                    newHi = newM;
+                }
+                v.lo = newLo;
+                v.hi = (newHi >= N) ? -1 : newHi;
+            }
+            renderer_->set_view(v);
+            dirty_ = true;
+            return true;
+        }
+
+        if (e.type == EventType::MousePress && e.button == 0) {
+            const Rect pg{g.x + geom_.pl, g.y + geom_.pt, geom_.pr - geom_.pl,
+                          geom_.pb - geom_.pt};
+            if (hx >= pg.x && hx <= pg.x + pg.w && hy >= pg.y && hy <= pg.y + pg.h) {
+                drag_active_ = true;
+                drag_last_x_ = static_cast<int>(e.x);
+                drag_view_ = renderer_->view();
+                dragging_ = true;
+                return true;
+            }
             return false;
         }
-        const Rect g = global_bounds();
-        const int h = renderer_ ? renderer_->hit_index(geom_, e.x - g.x, e.y - g.y) : -1;
-        if (h != hovered_) {
-            hovered_ = h;
-            return true;  // 悬停目标变化 → 请求重绘
+        if (e.type == EventType::MouseRelease && e.button == 0) {
+            if (drag_active_) {
+                drag_active_ = false;
+                dragging_ = false;
+                snap_pending_ = true;  // 松手吸附
+                return true;
+            }
+            return false;
+        }
+        if (e.type == EventType::MouseMove) {
+            if (drag_active_) {
+                const int N = geom_.n;
+                ViewWindow v = drag_view_;
+                const int hi = (v.hi < 0 || v.hi > N) ? N : v.hi;
+                const int lo = std::max(0, v.lo);
+                const int M = hi - lo;
+                if (M > 0) {
+                    const double slot = (geom_.pr - geom_.pl) / static_cast<double>(M);
+                    const int shift = static_cast<int>(std::llround(
+                        static_cast<double>(e.x - drag_last_x_) / (slot > 0 ? slot : 1.0)));
+                    int newLo = lo - shift;
+                    int newHi = hi - shift;
+                    if (newLo < 0) {
+                        newHi -= newLo;
+                        newLo = 0;
+                    }
+                    if (newHi > N) {
+                        newLo -= (newHi - N);
+                        newHi = N;
+                    }
+                    if (newLo < 0) newLo = 0;
+                    v.lo = newLo;
+                    v.hi = (newHi >= N) ? -1 : newHi;
+                    renderer_->set_view(v);
+                    drag_last_x_ = static_cast<int>(e.x);
+                }
+                dirty_ = true;
+            }
+            const int h = renderer_->hit_index(geom_, hx, hy);
+            if (h != hovered_) {
+                hovered_ = h;
+                return true;
+            }
+            return drag_active_;
         }
         return false;
     }
@@ -264,6 +396,10 @@ private:
     // 交互高光衰减速率（1/秒）：5.0 偏慢像"慢渐变"，调大到 9（时间常数 ~110ms）。
     static constexpr double kGlowDecay = 9.0;
     static inline bool profiling_ = false;  // set_profile 切换
+
+    bool drag_active_ = false;  // 拖拽平移进行中
+    int drag_last_x_ = 0;       // 上次鼠标 x（窗口坐标）
+    ViewWindow drag_view_{};    // 拖拽起始视图窗口
     static double ms(std::chrono::steady_clock::duration d) {
         return std::chrono::duration<double, std::milli>(d).count();
     }
@@ -287,8 +423,9 @@ private:
         o.supersample = supersample;
         o.background = renderer_->background();
         o.foreground = renderer_->foreground();
-        o.text_cell_w = 9.0;
-        o.text_cell_h = 14.0;
+        const double ps = pixel_scale_;  // 高 DPI：文本格随设备像素比放大，避免发糊
+        o.text_cell_w = 9.0 * ps;
+        o.text_cell_h = 14.0 * ps;
         o.transparent = transparent;
         termchart::gui::SceneRenderer renderer(o);
         return renderer.render(sc);
@@ -326,6 +463,7 @@ private:
 
     std::shared_ptr<IChartRenderer> renderer_;  // 渲染插头（默认 ComboRenderer）
     int hovered_ = -1;
+    double pixel_scale_ = 1.0;  // 设备像素比（高 DPI：文本格/事件放大，避免发糊）
 
     mutable std::unique_ptr<Bitmap> base_;  // 光栅化缓存
     mutable int base_w_ = 0;

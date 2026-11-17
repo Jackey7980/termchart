@@ -17,21 +17,20 @@
 #include "termchart/core/style.hpp"
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/fwd.hpp"
+#include "termchart_gui/theme.hpp"
 #include "termchart_gui/widget_tree/i_chart_renderer.hpp"
 
 namespace termchart_gui {
 
 class ComboRenderer : public IChartRenderer {
 public:
-    // 旧接口（combo 演示/测试用）：单条折线 + 柱 + 面积，保持原外观。
-    void set_data(std::vector<std::string> labels, std::vector<double> bars,
-                  std::vector<double> line) {
-        set_series(std::move(labels), std::move(bars), {std::move(line)});
-    }
     void set_combo_data(std::vector<std::string> labels, std::vector<double> bars,
                         std::vector<double> line) override {
-        set_data(std::move(labels), std::move(bars), std::move(line));
+        set_series(std::move(labels), std::move(bars), {std::move(line)});
     }
+
+    [[nodiscard]] Rgb background() const override { return current_theme().background; }
+    [[nodiscard]] Rgb foreground() const override { return current_theme().foreground; }
 
     // 多系列：类别标签 + 柱（可空）→ 折线系列（>=1 条）。
     // 防御性：把 bars_ 与每条折线补齐到标签长度（缺的填 0），否则标签比数据长时
@@ -87,7 +86,33 @@ public:
 
     [[nodiscard]] bool empty() const override { return labels_.empty(); }
 
-    // 由当前数据 + 尺寸算出目标几何（纯函数）。
+    // 悬停点的 y 位置（首条折线或柱顶）+ 读数标签，供水平十字线与实时数值。
+    [[nodiscard]] double hover_y(const ChartGeom& g, int hovered) const override {
+        if (hovered < 0 || hovered >= g.n) return std::nan("");
+        const double d = (g.ytop - ymin_) > 0.0 ? (g.ytop - ymin_) : 1.0;
+        if (!lines_.empty()) {
+            const auto& ln = lines_.front();
+            if (hovered < static_cast<int>(ln.size()))
+                return g.pb - (g.pb - g.pt) * (ln[static_cast<std::size_t>(hovered)] - ymin_) / d;
+        }
+        if (!bars_.empty() && hovered < static_cast<int>(bars_.size()))
+            return g.pb - (g.pb - g.pt) * (bars_[static_cast<std::size_t>(hovered)] - ymin_) / d;
+        return std::nan("");
+    }
+    [[nodiscard]] std::string hover_label(const ChartGeom& g, int hovered) const override {
+        (void)g;
+        if (hovered < 0 || hovered >= g.n) return std::string{};
+        if (!lines_.empty()) {
+            const auto& ln = lines_.front();
+            if (hovered < static_cast<int>(ln.size())) return fmt_int(ln[static_cast<std::size_t>(hovered)]);
+        }
+        if (!bars_.empty() && hovered < static_cast<int>(bars_.size()))
+            return fmt_int(bars_[static_cast<std::size_t>(hovered)]);
+        return std::string{};
+    }
+
+    // 由当前数据 + 尺寸算出目标几何（纯函数）。受 view_（Pan/Zoom）约束：只算可见
+    // 下标区间 [lo,hi) 的量纲与 x 映射；ymin/ymax 覆盖左轴量纲。默认视图几何不变。
     [[nodiscard]] ChartGeom compute_geom(int W, int H) const override {
         ChartGeom g;
         const int N = static_cast<int>(labels_.size());
@@ -97,23 +122,52 @@ public:
         g.pr = static_cast<double>(W) - (right_axis_ ? 42.0 : 14.0);  // 右轴占用右边距
         g.pb = static_cast<double>(H) - 26.0;
 
-        // 左轴量纲：柱 + 非右轴折线；右轴量纲：右轴折线。
-        double lmax = 0.0;
-        for (double v : bars_) lmax = std::max(lmax, v);
-        for (int k = 0; k < static_cast<int>(lines_.size()); ++k) {
-            if (on_right_(k)) continue;
-            for (double v : lines_[static_cast<std::size_t>(k)]) lmax = std::max(lmax, v);
+        const ViewWindow v = view_;
+        int hi = (v.hi < 0 || v.hi > N) ? N : v.hi;
+        int lo = v.lo;
+        if (lo < 0) lo = 0;
+        if (lo > hi) lo = hi;
+        const int M = hi - lo;
+        if (M <= 0) {
+            g.xs.resize(static_cast<std::size_t>(N));
+            ymin_ = 0.0;
+            return g;
         }
-        if (lmax <= 0.0) lmax = 1.0;
-        g.step = nice_step(lmax / 4.0);
-        g.intervals = std::max(1, static_cast<int>(std::ceil(lmax / g.step)));
-        g.ytop = g.step * static_cast<double>(g.intervals);
+
+        // 左轴量纲：柱 + 非右轴折线（仅可见区间）；右轴量纲：右轴折线。
+        double lmax = 0.0;
+        for (int i = lo; i < hi; ++i) {
+            const std::size_t k = static_cast<std::size_t>(i);
+            if (k < bars_.size()) lmax = std::max(lmax, bars_[k]);
+            for (int kk = 0; kk < static_cast<int>(lines_.size()); ++kk) {
+                if (on_right_(kk)) continue;
+                const auto& ln = lines_[static_cast<std::size_t>(kk)];
+                if (k < ln.size()) lmax = std::max(lmax, ln[k]);
+            }
+        }
+        const bool y_override = !view_is_nan(v.ymin) || !view_is_nan(v.ymax);
+        if (y_override) {
+            const double y0 = view_is_nan(v.ymin) ? 0.0 : v.ymin;
+            const double y1 =
+                view_is_nan(v.ymax) ? (lmax > 0.0 ? lmax : 1.0) : v.ymax;
+            const double span = (y1 - y0) > 0.0 ? (y1 - y0) : 1.0;
+            g.step = nice_step(span / 4.0);
+            g.intervals = std::max(1, static_cast<int>(std::ceil(span / g.step)));
+            g.ytop = g.step * static_cast<double>(g.intervals);
+            ymin_ = y0;
+        } else {
+            if (lmax <= 0.0) lmax = 1.0;
+            g.step = nice_step(lmax / 4.0);
+            g.intervals = std::max(1, static_cast<int>(std::ceil(lmax / g.step)));
+            g.ytop = g.step * static_cast<double>(g.intervals);
+            ymin_ = 0.0;
+        }
 
         if (right_axis_) {
             double rmax = 0.0;
             for (int k = 0; k < static_cast<int>(lines_.size()); ++k) {
                 if (!on_right_(k)) continue;
-                for (double v : lines_[static_cast<std::size_t>(k)]) rmax = std::max(rmax, v);
+                for (double vv : lines_[static_cast<std::size_t>(k)]) rmax = std::max(rmax, vv);
             }
             if (rmax <= 0.0) rmax = 1.0;
             rstep_ = nice_step(rmax / 4.0);
@@ -122,22 +176,28 @@ public:
         }
 
         const int ai = (area_on_ >= 0 && area_on_ < static_cast<int>(lines_.size()))
-                          ? area_on_
-                          : (lines_.empty() ? 0 : 0);
+                            ? area_on_
+                            : (lines_.empty() ? 0 : 0);
         g.xs.resize(static_cast<std::size_t>(N));
         if (area_on_ >= 0 && area_on_ < static_cast<int>(lines_.size())) {
             g.ly.resize(static_cast<std::size_t>(N));
         }
-        for (int i = 0; i < N; ++i) {
+        const double yden = (g.ytop - ymin_) > 0.0 ? (g.ytop - ymin_) : 1.0;
+        for (int i = lo; i < hi; ++i) {
             g.xs[static_cast<std::size_t>(i)] =
-                g.pl + (g.pr - g.pl) * (i + 0.5) / static_cast<double>(N);
+                g.pl + (g.pr - g.pl) * (static_cast<double>(i - lo) + 0.5) /
+                           static_cast<double>(M);
             if (area_on_ >= 0 && area_on_ < static_cast<int>(lines_.size())) {
                 g.ly[static_cast<std::size_t>(i)] =
-                    g.pb - (g.pb - g.pt) * lines_[static_cast<std::size_t>(ai)]
-                                                      [static_cast<std::size_t>(i)] /
-                              g.ytop;
+                    g.pb - (g.pb - g.pt) *
+                               (lines_[static_cast<std::size_t>(ai)]
+                                       [static_cast<std::size_t>(i)] -
+                                ymin_) /
+                               yden;
             }
         }
+        for (int i = 0; i < lo; ++i) g.xs[static_cast<std::size_t>(i)] = g.pl - 1.0;
+        for (int i = hi; i < N; ++i) g.xs[static_cast<std::size_t>(i)] = g.pr + 1.0;
         if (area_on_ >= 0 && area_on_ < static_cast<int>(lines_.size())) {
             recompute_tangents(g);
         }
@@ -148,16 +208,19 @@ public:
     void build_base_scene(termchart::scene::SceneBuilder& b, const ChartGeom& g, double glow,
                           bool dragging) const override {
         const int N = g.n;
-        const auto to_y = [&](double v) { return g.pb - (g.pb - g.pt) * v / g.ytop; };
-        const auto cx = [&](int i) {
-            return g.pl + (g.pr - g.pl) * (i + 0.5) / static_cast<double>(N);
+        const auto to_y = [&](double v) {
+            const double d = (g.ytop - ymin_) > 0.0 ? (g.ytop - ymin_) : 1.0;
+            return g.pb - (g.pb - g.pt) * (v - ymin_) / d;
         };
+        const int vlo = std::max(0, view_.lo);
+        const int vhi = (view_.hi < 0 || view_.hi > N) ? N : view_.hi;
+        const auto cx = [&](int i) { return g.xs[static_cast<std::size_t>(i)]; };
         Style gray;
-        gray.set_fg(termchart::Color::rgb(150, 152, 162));
+        gray.set_fg(termchart::Color::rgb(current_theme().text_dim));
         Style title;
-        title.set_fg(termchart::Color::rgb(232, 234, 240));
+        title.set_fg(termchart::Color::rgb(current_theme().foreground));
 
-        b.stroke(termchart::Color::rgb(48, 51, 60), 1.0);
+        b.stroke(termchart::Color::rgb(current_theme().grid), 1.0);
         for (int k = 0; k <= g.intervals; ++k) {
             const double v = g.step * static_cast<double>(k);
             const double y = to_y(v);
@@ -166,7 +229,7 @@ public:
             const std::string lab = fmt_int(v);
             b.text(Point{g.pl - 8.0 - static_cast<double>(lab.size()) * 9.0, y - 7.0}, lab, gray);
         }
-        b.stroke(termchart::Color::rgb(96, 100, 112), 1.0);
+        b.stroke(termchart::Color::rgb(current_theme().axis), 1.0);
         b.rect(Rect{g.pl, g.pt, g.pr - g.pl, g.pb - g.pt});
 
         // 右轴刻度字（仅双轴时；与右轴折线同色提示）。网格仍只按左轴画，保持干净。
@@ -186,9 +249,10 @@ public:
         }
 
         if (show_bars_ && !bars_.empty()) {
-            const double bw = (g.pr - g.pl) / static_cast<double>(N) * 0.55;
+            const double M = static_cast<double>(vhi - vlo > 0 ? vhi - vlo : 1);
+            const double bw = (g.pr - g.pl) / M * 0.55;
             b.fill(glow_lighten(bar_color_, glow));
-            for (int i = 0; i < N; ++i) {
+            for (int i = vlo; i < vhi; ++i) {
                 const double y = to_y(bars_[static_cast<std::size_t>(i)]);
                 b.rect(Rect{cx(i) - bw / 2.0, y, bw, g.pb - y});
             }
@@ -198,12 +262,13 @@ public:
         if (dragging) {
             lstep = label_step_;
         } else {
-            const double slot = (g.pr - g.pl) / static_cast<double>(N > 0 ? N : 1);
+            const double slot =
+                (g.pr - g.pl) / static_cast<double>(vhi - vlo > 0 ? vhi - vlo : 1);
             lstep = std::max(1, static_cast<int>(std::ceil(44.0 / (slot > 1.0 ? slot : 1.0))));
             label_step_ = lstep;
         }
-        for (int i = 0; i < N; ++i) {
-            if (i % lstep != 0 && i != N - 1) {
+        for (int i = vlo; i < vhi; ++i) {
+            if (i % lstep != 0 && i != vhi - 1) {
                 continue;
             }
             const double w =
@@ -250,11 +315,18 @@ public:
 
     // 折线层：area_on 系列走平滑曲线（与面积顶边几何一致）；其余系列走折线。
     // 逐点小圆点；marker_line 系列额外画最大值高亮。右轴系列（on_right_）按右轴量纲映射。
+    // 所有绘制限制在可见区间 [vlo,vhi)（Pan/Zoom）。
     void build_line_scene(termchart::scene::SceneBuilder& b, const ChartGeom& g,
                           double glow) const override {
         const int N = g.n;
         if (N <= 0 || lines_.empty()) return;
-        const auto to_y = [&](double v) { return g.pb - (g.pb - g.pt) * v / g.ytop; };
+        const int vlo = std::max(0, view_.lo);
+        const int vhi = (view_.hi < 0 || view_.hi > N) ? N : view_.hi;
+        if (vhi <= vlo) return;
+        const auto to_y = [&](double v) {
+            const double d = (g.ytop - ymin_) > 0.0 ? (g.ytop - ymin_) : 1.0;
+            return g.pb - (g.pb - g.pt) * (v - ymin_) / d;
+        };
         const auto to_yr = [&](double v) { return g.pb - (g.pb - g.pt) * v / rytop_; };
         const int S = 16;
         for (std::size_t k = 0; k < lines_.size(); ++k) {
@@ -264,10 +336,10 @@ public:
             b.stroke(glow_lighten(c, glow), 3.0);
             const bool smooth = (static_cast<int>(k) == area_on_);  // 面积系列恒走左轴
             if (smooth) {
-                for (int i = 0; i + 1 < N; ++i) {
+                for (int i = vlo; i + 1 < vhi; ++i) {
                     const double xa = g.xs[static_cast<std::size_t>(i)];
                     const double xb = g.xs[static_cast<std::size_t>(i + 1)];
-                    if (i == 0) b.move_to(xa, smooth_y_at(g, xa));
+                    if (i == vlo) b.move_to(xa, smooth_y_at(g, xa));
                     for (int s = 1; s <= S; ++s) {
                         const double t = static_cast<double>(s) / static_cast<double>(S);
                         const double x = xa + (xb - xa) * t;
@@ -275,27 +347,32 @@ public:
                     }
                 }
             } else {
-                b.move_to(g.xs[0], map_y(lines_[k][0]));
-                for (int i = 1; i < N; ++i) {
+                b.move_to(g.xs[static_cast<std::size_t>(vlo)],
+                          map_y(lines_[static_cast<std::size_t>(k)]
+                                   [static_cast<std::size_t>(vlo)]));
+                for (int i = vlo + 1; i < vhi; ++i) {
                     b.line_to(g.xs[static_cast<std::size_t>(i)],
-                              map_y(lines_[k][static_cast<std::size_t>(i)]));
+                              map_y(lines_[static_cast<std::size_t>(k)]
+                                       [static_cast<std::size_t>(i)]));
                 }
             }
             // 逐点小圆点
             b.fill(glow_lighten(c, glow));
-            for (int i = 0; i < N; ++i) {
+            for (int i = vlo; i < vhi; ++i) {
                 const double yy = smooth ? smooth_y_at(g, g.xs[static_cast<std::size_t>(i)])
-                                         : map_y(lines_[k][static_cast<std::size_t>(i)]);
+                                         : map_y(lines_[static_cast<std::size_t>(k)]
+                                                    [static_cast<std::size_t>(i)]);
                 b.arc(Point{g.xs[static_cast<std::size_t>(i)], yy}, 3.0, 0.0, 6.283185307);
             }
         }
-        // 最大值高亮（如 24h 最高温圆点，恒走左轴）
+        // 最大值高亮（如 24h 最高温圆点，恒走左轴，限可见区间）
         if (marker_line_ >= 0 && marker_line_ < static_cast<int>(lines_.size()) &&
-            N > 0) {
+            vhi > vlo) {
             const auto& ln = lines_[static_cast<std::size_t>(marker_line_)];
-            int mi = 0;
-            for (int i = 1; i < N; ++i) {
-                if (ln[static_cast<std::size_t>(i)] > ln[static_cast<std::size_t>(mi)]) mi = i;
+            int mi = vlo;
+            for (int i = vlo + 1; i < vhi; ++i) {
+                if (ln[static_cast<std::size_t>(i)] > ln[static_cast<std::size_t>(mi)])
+                    mi = i;
             }
             const double ym = to_y(ln[static_cast<std::size_t>(mi)]);
             b.stroke(termchart::Color::rgb(marker_color_.r, marker_color_.g, marker_color_.b),
@@ -307,10 +384,13 @@ public:
     }
 
     [[nodiscard]] int hit_index(const ChartGeom& g, double lx, double /*ly*/) const override {
-        if (g.n <= 0 || lx < g.pl || lx > g.pr) return -1;
-        int best = 0;
+        const int N = g.n;
+        if (N <= 0 || lx < g.pl || lx > g.pr) return -1;
+        const int vlo = std::max(0, view_.lo);
+        const int vhi = (view_.hi < 0 || view_.hi > N) ? N : view_.hi;
+        int best = -1;
         double bd = 1e18;
-        for (int i = 0; i < g.n; ++i) {
+        for (int i = vlo; i < vhi; ++i) {
             const double d = std::fabs(g.xs[static_cast<std::size_t>(i)] - lx);
             if (d < bd) {
                 bd = d;
@@ -360,16 +440,16 @@ public:
         if (ty + bh > g.y + g.h) ty = g.y + g.h - bh - 2.0;
         if (ty < g.y) ty = g.y + 2.0;
 
-        c.fill_rect(Rect{tx + 2.0, ty + 2.0, bw, bh}, Rgb{12, 14, 18});       // 投影
-        c.fill_rect(Rect{tx, ty, bw, bh}, Rgb{30, 34, 44});                   // 主体
-        c.stroke_rect(Rect{tx, ty, bw, bh}, Rgb{84, 96, 116}, 1.0);           // 描边
+        c.fill_rect(Rect{tx + 2.0, ty + 2.0, bw, bh}, current_theme().surface_alt);  // 投影
+        c.fill_rect(Rect{tx, ty, bw, bh}, current_theme().tooltip_bg);              // 主体
+        c.stroke_rect(Rect{tx, ty, bw, bh}, current_theme().tooltip_border, 1.0);   // 描边
         double yy = ty + 5.0;
-        c.draw_text(tx + 9.0, yy, labels_[h], Rgb{236, 240, 246});            // 标题
+        c.draw_text(tx + 9.0, yy, labels_[h], current_theme().tooltip_fg);          // 标题
         yy += 15.0;
         if (show_bars_ && !bars_.empty()) {
             c.fill_rect(Rect{tx + 9.0, yy + 2.0, 6.0, 6.0}, bar_color_);
             c.draw_text(tx + 19.0, yy, bar_name_ + " " + fmt_int(bars_[h]),
-                       Rgb{150, 180, 250});
+                       current_theme().tooltip_fg);
             yy += 15.0;
         }
         for (std::size_t k = 0; k < lines_.size(); ++k) {
@@ -378,7 +458,7 @@ public:
             if (on_right_(static_cast<int>(k))) nm += " (R)";
             c.fill_rect(Rect{tx + 9.0, yy + 2.0, 6.0, 6.0}, col);
             c.draw_text(tx + 19.0, yy, nm + " " + fmt_int(lines_[k][h]),
-                       Rgb{220, 230, 240});
+                       current_theme().tooltip_fg);
             yy += 15.0;
         }
     }
@@ -406,6 +486,7 @@ private:
     int marker_line_ = -1;       // 在折线[marker_line_]标最大值；<0 关闭
     Rgb marker_color_ = {255, 210, 120};
     bool show_bars_ = true;
+    mutable double ymin_ = 0.0;    // 左轴量纲下界（compute_geom 回填；to_y 映射用；const 场景构建器可读写）
     std::string title_ = "Revenue vs Margin (GUI combo)";
     std::string bar_name_ = "bar";
     mutable int label_step_ = 1;  // 已提交的抽稀步长（拖动中沿用、松手重算）

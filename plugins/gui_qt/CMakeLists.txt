@@ -62,11 +62,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 add_executable(qt_demo example/qt_demo.cpp)
-target_link_libraries(qt_demo PRIVATE termchart_gui_qt)
+# 示例直接 #include <QApplication>/<QWidget> 并使用 Qt 符号，故除后端库外还需直接链接 Qt。
+target_link_libraries(qt_demo PRIVATE termchart_gui_qt ${TERMCHART_QT_TARGET})
+
+# 英雄 Demo（Qt 版）：恒生指数日 K 线（与 Win32 版 candlestick_demo 同一份 widget_tree）。
+add_executable(kline_dashboard example/kline_dashboard.cpp)
+target_link_libraries(kline_dashboard PRIVATE termchart_gui_qt ${TERMCHART_QT_TARGET})
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(kline_dashboard PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+set_target_properties(kline_dashboard PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples"
+)
 
 # Take 2 句柄注入演示：宿主拥有 QWidget，后端只当像素渲染器。
 add_executable(embed_demo_qt example/embed_demo_qt.cpp)
-target_link_libraries(embed_demo_qt PRIVATE termchart_gui_qt)
+target_link_libraries(embed_demo_qt PRIVATE termchart_gui_qt ${TERMCHART_QT_TARGET})
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(qt_demo PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
@@ -118,4 +129,8 @@ set_tests_properties(qt_backend_test PROPERTIES
 
 add_test(NAME qt_demo_smoke COMMAND qt_demo --smoke)
 set_tests_properties(qt_demo_smoke PROPERTIES
+    ENVIRONMENT "PATH=${_qt_bin_dir};QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins_dir}")
+
+add_test(NAME kline_dashboard_smoke COMMAND kline_dashboard --smoke)
+set_tests_properties(kline_dashboard_smoke PROPERTIES
     ENVIRONMENT "PATH=${_qt_bin_dir};QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins_dir}")

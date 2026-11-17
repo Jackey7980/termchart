@@ -250,6 +250,7 @@ struct QtBackend::Impl {
     std::mutex queue_mutex;
     std::deque<termchart_gui::Event> queue;
     std::function<void(std::uint32_t, std::uint32_t)> render_hook;
+    double device_pixel_ratio = 1.0;  // 高 DPI：blit 据此把 QImage 标 dpr
 
     void push(termchart_gui::Event e) {
         std::lock_guard<std::mutex> lock(queue_mutex);
@@ -344,6 +345,9 @@ void QtBackend::blit(QPainter& painter) {
     for (int y = 0; y < h; ++y) {
         std::memcpy(image.scanLine(y), px.data() + static_cast<std::size_t>(y) * rb, rb);
     }
+    // 高 DPI：位图已按设备像素比渲染到物理分辨率，标 dpr 让 Qt 按逻辑尺寸铺到窗口。
+    image.setDevicePixelRatio(impl_->device_pixel_ratio > 0.0 ? impl_->device_pixel_ratio
+                                                             : 1.0);
     painter.drawImage(QPoint{0, 0}, image);
 }
 
@@ -365,6 +369,16 @@ void QtBackend::resize(std::uint32_t width, std::uint32_t height) {
     }
 }
 
+void QtBackend::set_device_pixel_ratio(double dpr) noexcept {
+    if (impl_ != nullptr) {
+        impl_->device_pixel_ratio = (dpr > 0.0) ? dpr : 1.0;
+    }
+}
+
+double QtBackend::device_pixel_ratio() const noexcept {
+    return (impl_ != nullptr) ? impl_->device_pixel_ratio : 1.0;
+}
+
 std::unique_ptr<termchart_gui::TkWindow> QtBackend::create_window(std::uint32_t w,
                                                                   std::uint32_t h,
                                                                   std::string title) {
@@ -375,6 +389,16 @@ std::unique_ptr<termchart_gui::TkWindow> QtBackend::create_window(std::uint32_t 
 }
 
 termchart_gui::TkCanvas& QtBackend::canvas() { return *impl_->canvas; }
+
+void QtBackend::inject_event(termchart_gui::Event e) {
+    if (impl_ == nullptr) {
+        return;
+    }
+    // 与 CanvasWidget::set_event_sink 的 push 同款：跨线程安全入队，run_loop / 宿主
+    // 帧泵经 poll_event 抽干。
+    std::lock_guard<std::mutex> lock(impl_->queue_mutex);
+    impl_->queue.push_back(std::move(e));
+}
 
 bool QtBackend::poll_event(termchart_gui::Event& out) {
     std::lock_guard<std::mutex> lock(impl_->queue_mutex);
