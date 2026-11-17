@@ -42,14 +42,14 @@ int main(void) {
     static const double x[] = {1,2,3,4,5};
     static const double y[] = {5,3,4,2,6};
 
-    tc_chart_handle c = tc_chart_create_line();
+    tc_error_handle err = NULL;
+    tc_chart_handle c = tc_chart_create("line", &err);
     tc_chart_add_points(c, x, y, 5);
 
     tc_plot_opts opts = {0};                     /* 全部 0 = 取库默认 */
     opts.width = 60; opts.height = 16; opts.title = "demo"; opts.show_legend = 1;
 
     char* ansi = NULL;
-    tc_error_handle err = NULL;
     if (tc_chart_render_ansi(c, &opts, &ansi, &err) != TC_OK) {
         char msg[256]; tc_error_message(err, msg, sizeof msg);
         fprintf(stderr, "render failed: %s\n", msg);
@@ -88,23 +88,33 @@ tc_chart_kinds(names, need, &need, &err);            /* 取全部 */
 /* names = "line scatter streamgraph ... corr pca parallel" */
 ```
 
-旧工厂 `tc_chart_create_line/scatter/bar/pie/sparkline` 保留为兼容胶水（等价于
-`tc_chart_create("...")`），已编译调用方不受影响。
+建图只有 `tc_chart_create` 一条路，没有 per-kind 工厂函数。
 
-### 3.2 四种数据形状
+### 3.2 七种数据形状（全部 71 图种）
 
 每个图种属于且仅属于一种数据形状，决定用哪个入口灌数据；形状不匹配显式报
-`TC_ERR_UNSUPPORTED`，不静默丢弃：
+`TC_ERR_UNSUPPORTED`，不静默丢弃。**只有 7 个数据入口，函数数不随图种增长**：
 
-| 形状 | 数据入口 | 图种（首批 27 个） |
+| 形状 | 数据入口 | 图种 |
 | --- | --- | --- |
-| **Series**（多系列 `(x,y)`） | `tc_chart_add_series` / `tc_chart_add_points` | `line` `scatter` `streamgraph` `stream` |
-| **Values**（一组值 + 标签） | `tc_chart_set_values` / `tc_chart_add_bar` | `bar` `pie` `donut` `rose` `radar` `polar_bar` `hist` `sparkline` `autocorr` `distribution` `ecdf` `seasonal` `qq` |
-| **Points**（单条 `(x,y)`） | `tc_chart_add_points` | `area` `step` `heatmap` `regression` |
-| **Matrix**（二维表） | `tc_chart_set_matrix` | `contour` `corr` `mosaic` `violin` `pca` `parallel` |
+| **Series**（多系列） | `tc_chart_add_series` | `line` `scatter` `streamgraph` `stream` |
+| **Points**（单条 `(x,y)`） | `tc_chart_add_points` | `area` `step` `heatmap` `regression` `polar_line` `polar_heat` |
+| **Values**（值 + 标签） | `tc_chart_set_values` / `add_bar` | `bar` `pie` `donut` `rose` `radar` `polar_bar` `hist` `sparkline` `autocorr` `distribution` `ecdf` `seasonal` `qq` `wordcloud` `tag_cloud` `progress` `drawdown` `kagi` `point_figure` `renko` |
+| **Records**（行式 double，按列语义解释） | `tc_chart_set_matrix` | `contour` `corr` `mosaic` `violin` `pca` `parallel` `candlestick` `bubble` `errorbar` `boxplot` `bullet` `dumbbell` `gantt` `waterfall` `forest` `funnel` `yield_curve` `bland_altman` `roc` `survival` `volume` `depth` `tile_grid` `hexbin` `ridgeline` |
+| **Scalar**（单值） | `tc_chart_set_scalar` | `gauge` `progress_ring` `star_rating` `thermometer` `status_light` |
+| **Tree**（扁平 parent/name/value） | `tc_chart_set_tree` | `treemap` `sunburst` `icicle` `dendrogram` `pack` `tree_view` |
+| **Text**（字符串矩阵 / GeoJSON / 区域） | `tc_chart_set_text` / `tc_chart_set_regions` | `table` `gauge_kpi` `choropleth` `dot_density` `geo_map` |
 
-> `heatmap` 名字虽有 "map"，输入是散点 `(x,y)` 而非矩阵（核心语义如此）；真正的二维场是
-> `contour`。图种会随版本增加——以 `tc_chart_kinds` 的输出为准。
+**Records 的列语义**（各图种按列数解释，超出列忽略、不足补 0）：
+`candlestick` `[open,high,low,close]`、`bubble` `[x,y,r]`、`errorbar` `[x,y,y_lo,y_hi,x_lo,x_hi]`、
+`boxplot` `[lo,q1,med,q3,hi,outliers...]`、`bullet` `[value,target,b1,b2,b3]`+label、
+`dumbbell`/`gantt` `[a,b]`+label、`waterfall` `[value,is_total]`+label、
+`forest` `[estimate,lower,upper]`+label、`funnel` `[value]`+label、
+`yield_curve`/`bland_altman`/`roc`/`survival`/`volume` 各 2 列、`depth` `[bid_p,bid_q,ask_p,ask_q]`、
+`tile_grid` `[col,row,value]`+label、`hexbin` `[x,y]`、`ridgeline` 每行一组变长 values。
+
+> `heatmap` 虽有 "map"，输入是散点 `(x,y)`；真正的二维场是 `contour`。图种可能随版本增加，
+> 以 `tc_chart_kinds` 的输出为准。
 
 **多系列**（Series 形状）：`tc_chart_add_series` 一次传 `count` 条、点集一次性构造，不经逐点
 setter；每条可带 `name`（图例）与 `color`（`tc_color`，`kind=TC_COLOR_NONE` 走默认色）：
@@ -130,8 +140,8 @@ tc_chart_set_matrix(corr, rows, 3, 3, rlab, 3, NULL, 0, &err);
 
 图种能力集中在 CAPI 内部一张 `kind → {工厂, 数据灌入器, 数据形状, 能力位, 图例方式}` 表：
 同形状图种共享 applier 模板，新图种通常**只加一行表项**——C 头、渲染层、属性通道都不动。
-需要处理专属 C++ 结构的图种（K 线 `OHLC`、箱线图 `BoxStats`、层次树 `HierNode`、地理
-`GeoRegion` 等）留待后续，届时同样只在表里加行，不新增 C 函数。
+专属 C++ 结构（K 线 `Ohlc`、箱线 `BoxStats`、层次树 `HierNode`、地理 `GeoRegion` 等）也已通过
+7 种通用数据形状覆盖；新增图种同样只需在表里加行，无需新增 C 入口函数。
 
 ## 4. 模型属性通道
 
@@ -255,12 +265,18 @@ with Chart("corr") as c:                      # 矩阵形状图种
 要点：
 
 - `Chart(kind)` 的 `kind` 是图种字符串（见 `kinds()` 或 C 侧 `tc_chart_kinds`），经 C 通用入口
-  创建；未知名抛 `TermchartError`。首批支持 27 个，见 §3.2 的表。
-- `add_series(x, y, name=None, color=None)`：**Series / Points** 形状；`add_points(x, y)` 是单条
-  无名系列的简写。`color` 可为 RGB 三元组 `(r,g,b)` 或 ANSI16/256 索引整数；`None` 走默认色。
-- `add_values(values, labels=None)`：**Values** 形状（bar/pie/hist/polar-* …）。
-- `set_matrix(rows, row_labels=None, col_labels=None)`：**Matrix** 形状（contour/corr/mosaic/
-  violin/pca/parallel）；`rows` 为行优先二维序列。
+  创建；未知名抛 `TermchartError`。当前支持全部 **71 个**图种，见 §3.2 的表。
+- `add_series(x, y, name=None, color=None)`：**Series** 形状。`add_points(x, y)` 是单条无名系列
+  的简写（兼用于 Points 形状）。`color` 可为 RGB 三元组 `(r,g,b)` 或 ANSI16/256 索引整数；
+  `None` 走默认色。
+- `add_values(values, labels=None)`：**Values** 形状（bar/pie/hist/wordcloud/renko …）。
+- `set_matrix(rows, row_labels=None, col_labels=None)`：**Records** 形状（矩阵与 19 个专属结构
+  图种）；`rows` 为行优先二维序列，列语义见 §3.2。
+- `set_scalar(value)`：**Scalar** 形状（gauge/progress_ring/star_rating/thermometer/status_light）。
+- `set_tree(nodes)`：**Tree** 形状；`nodes` 为 `(parent_index, name, value)` 序列，parent=-1 为根。
+- `set_text(rows, blob=None)`：**Text** 形状（table/gauge_kpi/geo_map）；`blob` 为 GeoJSON 文本。
+- `set_regions(regions)`：**Region** 形状（choropleth/dot_density/geo_map）；`regions` 为
+  `(name, value, [(x,y),...])` 序列。
 - `set_prop(prop, value)`：
   - 模型属性（`y_domain` 等）传**元组/列表** → `TC_VAL_DOUBLE_ARRAY`；
   - 布尔属性（`auto_domain` 等）传 Python `bool` → `TC_VAL_BOOL`；

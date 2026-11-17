@@ -122,15 +122,9 @@ tc_status tc_hello(const tc_api_opts* opts, tc_error_handle* err);
  * tc_chart_kinds：两段式枚举全部可用 kind（空格分隔，字典序），供绑定/CLI 发现能力：
  *   1) 先传 cap=0（buf 可 NULL）→ *out_len 回写所需字节数；
  *   2) 再按 *out_len 分配缓冲重调 → 写入全部 kind 名。
- * 下面五个 tc_chart_create_* 是兼容胶水，等价于 tc_chart_create("...")。 */
+ * 建图只有这一条路——没有 per-kind 工厂函数。 */
 tc_chart_handle tc_chart_create(const char* kind, tc_error_handle* err);
 tc_status tc_chart_kinds(char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err);
-
-tc_chart_handle tc_chart_create_line(void);
-tc_chart_handle tc_chart_create_scatter(void);
-tc_chart_handle tc_chart_create_bar(void);
-tc_chart_handle tc_chart_create_pie(void);       /* 饼图：值 + 类别标签 */
-tc_chart_handle tc_chart_create_sparkline(void); /* 迷你图：单行趋势 */
 void tc_chart_free(tc_chart_handle chart);
 
 /* 折线 / 散点：喂入 (x[i], y[i])，n 为点数。 */
@@ -208,13 +202,38 @@ typedef struct tc_series {
 tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, uint64_t count,
                               tc_error_handle* err);
 
-/* 二维矩阵入口（仅 Matrix 形状图种，如 contour/corr/mosaic/violin/pca/parallel）。
+/* 二维行式数据入口（Records 形状：contour/corr/mosaic/violin/pca/parallel 及
+ * candlestick/bubble/boxplot/bullet/forest/… 等专属结构图种，按列语义解释）。
  * rows[i] 指向第 i 行 col_count 个 double；row_labels/col_labels 可 NULL。 */
 tc_status tc_chart_set_matrix(tc_chart_handle chart, const double* const* rows,
                               uint64_t row_count, uint64_t col_count,
                               const char* const* row_labels, uint64_t n_row_labels,
                               const char* const* col_labels, uint64_t n_col_labels,
                               tc_error_handle* err);
+
+/* 单值入口（gauge / progress_ring / star_rating / thermometer / status_light；
+ * status_light 的 value 按 0=Ok,1=Warning,2=Error,3=Unknown 映射）。 */
+tc_status tc_chart_set_scalar(tc_chart_handle chart, double value, tc_error_handle* err);
+
+/* 树入口（treemap/sunburst/icicle/dendrogram/pack/tree_view）。
+ * parents[i] 为父节点索引（-1 为根），names[i]/values[i] 为节点名与值。 */
+tc_status tc_chart_set_tree(tc_chart_handle chart, const int* parents,
+                            const char* const* names, const double* values, uint64_t n,
+                            tc_error_handle* err);
+
+/* 文本入口（table / gauge_kpi / geo_map）。rows 为行指针数组，col_counts[i] 为
+ * 第 i 行列数；blob 为 GeoJSON 文本（仅 geo_map 用），可 NULL。 */
+tc_status tc_chart_set_text(tc_chart_handle chart, const char* const* const* rows,
+                            uint64_t row_count, const uint64_t* col_counts,
+                            const char* blob, tc_error_handle* err);
+
+/* 区域入口（choropleth / dot_density / geo_map 数值覆盖）。
+ * cell_starts[i]/cell_counts[i] 给出第 i 个区域在 cell_x/cell_y 扁平数组中的段。 */
+tc_status tc_chart_set_regions(tc_chart_handle chart,
+                               const char* const* names, const double* values, uint64_t n_regions,
+                               const double* cell_x, const double* cell_y,
+                               const uint64_t* cell_starts, const uint64_t* cell_counts,
+                               uint64_t n_cells, tc_error_handle* err);
 
 /* 模型属性。不支持该属性的图种返回 TC_ERR_UNSUPPORTED（不静默忽略）。 */
 typedef enum tc_chart_prop {

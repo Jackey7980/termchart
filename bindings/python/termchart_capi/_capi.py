@@ -86,7 +86,7 @@ def _load(path=None):
 
 
 def _bind(lib):
-    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_create_line, tc_chart_create_scatter, tc_chart_create_bar, tc_chart_create_pie, tc_chart_create_sparkline, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
+    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_scalar, tc_chart_set_tree, tc_chart_set_text, tc_chart_set_regions, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
     f = lib.tc_version_string
     f.restype = ctypes.c_char_p
     f.argtypes = []
@@ -137,31 +137,6 @@ def _bind(lib):
     f.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
     tc_chart_kinds = f
 
-    f = lib.tc_chart_create_line
-    f.restype = ctypes.c_void_p
-    f.argtypes = []
-    tc_chart_create_line = f
-
-    f = lib.tc_chart_create_scatter
-    f.restype = ctypes.c_void_p
-    f.argtypes = []
-    tc_chart_create_scatter = f
-
-    f = lib.tc_chart_create_bar
-    f.restype = ctypes.c_void_p
-    f.argtypes = []
-    tc_chart_create_bar = f
-
-    f = lib.tc_chart_create_pie
-    f.restype = ctypes.c_void_p
-    f.argtypes = []
-    tc_chart_create_pie = f
-
-    f = lib.tc_chart_create_sparkline
-    f.restype = ctypes.c_void_p
-    f.argtypes = []
-    tc_chart_create_sparkline = f
-
     f = lib.tc_chart_free
     f.restype = None
     f.argtypes = [ctypes.c_void_p]
@@ -201,6 +176,26 @@ def _bind(lib):
     f.restype = ctypes.c_int
     f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes.c_double)), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.c_void_p]
     tc_chart_set_matrix = f
+
+    f = lib.tc_chart_set_scalar
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_void_p]
+    tc_chart_set_scalar = f
+
+    f = lib.tc_chart_set_tree
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_double), ctypes.c_uint64, ctypes.c_void_p]
+    tc_chart_set_tree = f
+
+    f = lib.tc_chart_set_text
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes.c_char_p)), ctypes.c_uint64, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_chart_set_text = f
+
+    f = lib.tc_chart_set_regions
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_double), ctypes.c_uint64, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
+    tc_chart_set_regions = f
 
     f = lib.tc_chart_set_prop
     f.restype = ctypes.c_int
@@ -263,11 +258,6 @@ tc_print_line = None
 tc_hello = None
 tc_chart_create = None
 tc_chart_kinds = None
-tc_chart_create_line = None
-tc_chart_create_scatter = None
-tc_chart_create_bar = None
-tc_chart_create_pie = None
-tc_chart_create_sparkline = None
 tc_chart_free = None
 tc_chart_add_points = None
 tc_chart_add_bar = None
@@ -276,6 +266,10 @@ tc_chart_render_ansi = None
 tc_chart_print = None
 tc_chart_add_series = None
 tc_chart_set_matrix = None
+tc_chart_set_scalar = None
+tc_chart_set_tree = None
+tc_chart_set_text = None
+tc_chart_set_regions = None
 tc_chart_set_prop = None
 tc_chart_to_svg = None
 tc_chart_to_png = None

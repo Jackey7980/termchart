@@ -29,33 +29,78 @@
 #include "termchart/canvas/canvas.hpp"
 #include "termchart/chart/cartesian/area.hpp"
 #include "termchart/chart/cartesian/bar_chart.hpp"
+#include "termchart/chart/cartesian/boxplot.hpp"
+#include "termchart/chart/cartesian/bubble.hpp"
+#include "termchart/chart/cartesian/bullet.hpp"
+#include "termchart/chart/cartesian/candlestick.hpp"
 #include "termchart/chart/cartesian/contour.hpp"
+#include "termchart/chart/cartesian/dumbbell.hpp"
+#include "termchart/chart/cartesian/errorbar.hpp"
+#include "termchart/chart/cartesian/gantt.hpp"
 #include "termchart/chart/cartesian/heatmap.hpp"
 #include "termchart/chart/cartesian/hist.hpp"
 #include "termchart/chart/cartesian/line_chart.hpp"
 #include "termchart/chart/cartesian/mosaic.hpp"
 #include "termchart/chart/cartesian/parallel.hpp"
 #include "termchart/chart/cartesian/qq.hpp"
+#include "termchart/chart/cartesian/ridgeline.hpp"
 #include "termchart/chart/cartesian/scatter_chart.hpp"
 #include "termchart/chart/cartesian/sparkline.hpp"
 #include "termchart/chart/cartesian/step.hpp"
 #include "termchart/chart/cartesian/streamgraph.hpp"
 #include "termchart/chart/cartesian/violin.hpp"
+#include "termchart/chart/cartesian/waterfall.hpp"
 #include "termchart/chart/context.hpp"
+#include "termchart/chart/financial/depth.hpp"
+#include "termchart/chart/financial/drawdown.hpp"
+#include "termchart/chart/financial/kagi.hpp"
+#include "termchart/chart/financial/point_figure.hpp"
+#include "termchart/chart/financial/renko.hpp"
+#include "termchart/chart/financial/volume.hpp"
+#include "termchart/chart/financial/yield_curve.hpp"
+#include "termchart/chart/flow/funnel.hpp"
 #include "termchart/chart/flow/stream.hpp"
+#include "termchart/chart/geo/choropleth.hpp"
+#include "termchart/chart/geo/dot_density.hpp"
+#include "termchart/chart/geo/geo_map.hpp"
+#include "termchart/chart/geo/hexbin.hpp"
+#include "termchart/chart/geo/tile_grid.hpp"
+#include "termchart/chart/hierarchical/dendrogram.hpp"
+#include "termchart/chart/hierarchical/icicle.hpp"
+#include "termchart/chart/hierarchical/node.hpp"
+#include "termchart/chart/hierarchical/pack.hpp"
+#include "termchart/chart/hierarchical/sunburst.hpp"
+#include "termchart/chart/hierarchical/tree_view.hpp"
+#include "termchart/chart/hierarchical/treemap.hpp"
+#include "termchart/chart/indicator/gauge_kpi.hpp"
+#include "termchart/chart/indicator/progress_ring.hpp"
+#include "termchart/chart/indicator/star_rating.hpp"
+#include "termchart/chart/indicator/status_light.hpp"
+#include "termchart/chart/indicator/thermometer.hpp"
 #include "termchart/chart/polar/donut.hpp"
+#include "termchart/chart/polar/gauge.hpp"
 #include "termchart/chart/polar/pie.hpp"
 #include "termchart/chart/polar/polar_bar.hpp"
+#include "termchart/chart/polar/polar_heat.hpp"
+#include "termchart/chart/polar/polar_line.hpp"
 #include "termchart/chart/polar/radar.hpp"
 #include "termchart/chart/polar/rose.hpp"
 #include "termchart/chart/series.hpp"
 #include "termchart/chart/statistical/autocorr.hpp"
+#include "termchart/chart/statistical/bland_altman.hpp"
 #include "termchart/chart/statistical/corr.hpp"
 #include "termchart/chart/statistical/distribution.hpp"
 #include "termchart/chart/statistical/ecdf.hpp"
+#include "termchart/chart/statistical/forest.hpp"
 #include "termchart/chart/statistical/pca.hpp"
 #include "termchart/chart/statistical/regression.hpp"
+#include "termchart/chart/statistical/roc.hpp"
 #include "termchart/chart/statistical/seasonal.hpp"
+#include "termchart/chart/statistical/survival.hpp"
+#include "termchart/chart/text/progress.hpp"
+#include "termchart/chart/text/table.hpp"
+#include "termchart/chart/text/tag_cloud.hpp"
+#include "termchart/chart/text/wordcloud.hpp"
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/error.hpp"
 #include "termchart/core/style.hpp"
@@ -76,10 +121,14 @@ struct ChartData;  // 前向声明：ChartSpec::apply 与 ChartData::spec 互相
 // 数据形状：决定哪个数据入口能灌、has_data 看哪个容器。加图种时只需在 spec 表里
 // 声明形状，不必再改 add_series / set_values / set_matrix / has_data 的 if-else。
 enum class DataShape {
-    Series,  // 多系列（line / scatter / streamgraph / stream）
-    Values,  // 一组 double + 类别标签（bar / pie / hist / polar-* …）
-    Points,  // 一组 (x,y)（area / step / heatmap / regression …）
-    Matrix,  // 二维表（contour / corr / mosaic / violin / pca / parallel）
+    Series,   // 多系列（line / scatter / streamgraph / stream）
+    Values,   // 一组 double + 类别标签（bar / pie / hist / wordcloud …）
+    Points,   // 一组 (x,y)（area / step / heatmap / polar_line …）
+    Records,  // 行式 double 元组 + 可选 labels：专属 struct 图种按列语义解释
+              // （candlestick/bubble/errorbar/bullet/…/contour/corr/… 共用 set_matrix 入口）
+    Scalar,   // 单 double（gauge / progress_ring / star_rating / thermometer / status_light）
+    Tree,     // 扁平 parent/name/value（treemap/sunburst/icicle/dendrogram/pack/tree_view）
+    Text,     // 字符串：table（矩阵）/ gauge_kpi / geo_map(geojson) / region(cells)
 };
 
 // 能力位：模型属性按图种支持情况显式拒绝，不静默忽略。
@@ -113,9 +162,21 @@ struct ChartData {
     std::vector<chart::Series> series;        // Series / Points 形状（Points 只用第一条的 points）
     std::vector<double> values;               // Values 形状
     std::vector<std::string> categories;      // Values 形状的类别 / 标签
-    std::vector<std::vector<double>> matrix;  // Matrix 形状
-    std::vector<std::string> row_labels;      // Matrix 形状的可选行/列标签
+    std::vector<std::vector<double>> matrix;  // Records 形状：行式 double 元组
+    std::vector<std::string> row_labels;      // Records 的可选行/列标签
     std::vector<std::string> col_labels;
+
+    double scalar = 0.0;                      // Scalar 形状：单值
+    // Tree 形状：扁平节点（parent 索引，-1 为根；name；value）
+    struct FlatNode { int parent; std::string name; double value; };
+    std::vector<FlatNode> tree;
+    // Text 形状：字符串矩阵（table / gauge_kpi / geojson / region 依附数据）
+    std::vector<std::vector<std::string>> text_rows;
+    std::string text_blob;                    // 单串（geojson / gauge_kpi 主值）
+    // Region 形状：name + cells(x,y) + value（choropleth / dot_density / geo_map）
+    struct Region { std::string name; std::vector<Point> cells; double value = 0.0; };
+    std::vector<Region> regions;
+
     std::string bar_name = "series";
     Color bar_color = chart::default_color(chart::DefaultColor::Accent);
 
@@ -239,6 +300,17 @@ void apply_values_plain(chart::Chart& ch, const ChartData& d) {  // (values) 单
 inline void apply_qq(chart::Chart& ch, const ChartData& d) {  // QQChart::set_sample
     static_cast<chart::QQChart&>(ch).set_sample(d.values);
 }
+// 一批图种用 set_points(vector<Point>) / set_prices(vector<double>)，与通用 set_values 不同名。
+template <class T>
+void apply_set_points(chart::Chart& ch, const ChartData& d) {
+    std::vector<Point> pts;
+    if (!d.series.empty()) pts = d.series.front().points;
+    static_cast<T&>(ch).set_points(std::move(pts));
+}
+template <class T>
+void apply_set_prices(chart::Chart& ch, const ChartData& d) {
+    static_cast<T&>(ch).set_prices(d.values);
+}
 
 // Points 形状：series[0].points 作为 (x,y) 序列灌入。
 template <class T>
@@ -278,6 +350,239 @@ inline void apply_pca(chart::Chart& ch, const ChartData& d) {
 }
 inline void apply_parallel(chart::Chart& ch, const ChartData& d) {
     static_cast<chart::ParallelChart&>(ch).set_axes(d.row_labels, d.matrix);
+}
+
+// ── Records 形状：专属 struct 图种，按列语义把行式 double 转成结构 ──────────
+inline std::string lbl(const ChartData& d, std::size_t i) {
+    return i < d.row_labels.size() ? d.row_labels[i] : std::string{};
+}
+inline double cell(const ChartData& d, std::size_t r, std::size_t c) {
+    return (r < d.matrix.size() && c < d.matrix[r].size()) ? d.matrix[r][c] : 0.0;
+}
+inline void apply_candlestick(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::CandlestickChart::Ohlc> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({cell(d,i,0), cell(d,i,1), cell(d,i,2), cell(d,i,3)});
+    static_cast<chart::CandlestickChart&>(ch).set_data(std::move(v));
+}
+inline void apply_bubble(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::BubbleChart::Bubble> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({Point{cell(d,i,0), cell(d,i,1)}, cell(d,i,2)});
+    static_cast<chart::BubbleChart&>(ch).set_data(std::move(v));
+}
+inline void apply_errorbar(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::ErrorBarChart::ErrorPoint> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({cell(d,i,0), cell(d,i,1), cell(d,i,2), cell(d,i,3), cell(d,i,4), cell(d,i,5)});
+    static_cast<chart::ErrorBarChart&>(ch).set_data(std::move(v));
+}
+inline void apply_boxplot(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::BoxPlotChart::BoxStats> v;
+    std::vector<std::string> labels;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        chart::BoxPlotChart::BoxStats b{cell(d,i,0), cell(d,i,1), cell(d,i,2),
+                                        cell(d,i,3), cell(d,i,4), {}};
+        for (std::size_t c = 5; c < d.matrix[i].size(); ++c) b.outliers.push_back(d.matrix[i][c]);
+        v.push_back(std::move(b));
+        labels.push_back(lbl(d, i));
+    }
+    static_cast<chart::BoxPlotChart&>(ch).set_data(std::move(v));
+    static_cast<chart::BoxPlotChart&>(ch).set_labels(std::move(labels));
+}
+inline void apply_bullet(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::BulletChart::Row> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), cell(d,i,1),
+                     {cell(d,i,2), cell(d,i,3), cell(d,i,4)}});
+    static_cast<chart::BulletChart&>(ch).set_rows(std::move(v));
+}
+inline void apply_dumbbell(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::DumbbellChart::Row> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), cell(d,i,1)});
+    static_cast<chart::DumbbellChart&>(ch).set_rows(std::move(v));
+}
+inline void apply_gantt(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::GanttChart::Task> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), cell(d,i,1)});
+    static_cast<chart::GanttChart&>(ch).set_data(std::move(v));
+}
+inline void apply_waterfall(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::WaterfallChart::Item> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), cell(d,i,1) != 0.0});
+    static_cast<chart::WaterfallChart&>(ch).set_data(std::move(v));
+}
+inline void apply_forest(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::ForestStudy> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), cell(d,i,1), cell(d,i,2)});
+    static_cast<chart::ForestChart&>(ch).set_studies(std::move(v));
+}
+inline void apply_funnel(chart::Chart& ch, const ChartData& d) {
+    std::vector<chart::FunnelStage> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), cell(d,i,0), d.bar_color});
+    static_cast<chart::FunnelChart&>(ch).set_stages(std::move(v));
+}
+inline void apply_yield_curve(chart::Chart& ch, const ChartData& d) {
+    std::vector<double> m, y;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        m.push_back(cell(d,i,0)); y.push_back(cell(d,i,1));
+    }
+    static_cast<chart::YieldCurveChart&>(ch).set_curve(std::move(m), std::move(y),
+                                                       d.bar_color, d.bar_name);
+}
+inline void apply_bland_altman(chart::Chart& ch, const ChartData& d) {
+    std::vector<double> a, b;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        a.push_back(cell(d,i,0)); b.push_back(cell(d,i,1));
+    }
+    static_cast<chart::BlandAltmanChart&>(ch).set_pairs(std::move(a), std::move(b),
+                                                        d.bar_color, d.bar_name);
+}
+inline void apply_roc(chart::Chart& ch, const ChartData& d) {
+    std::vector<double> scores; std::vector<int> labels;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        scores.push_back(cell(d,i,0)); labels.push_back(static_cast<int>(cell(d,i,1)));
+    }
+    static_cast<chart::RocChart&>(ch).set_scores(std::move(scores), std::move(labels), d.bar_name);
+}
+inline void apply_survival(chart::Chart& ch, const ChartData& d) {
+    std::vector<double> times; std::vector<int> events;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        times.push_back(cell(d,i,0)); events.push_back(static_cast<int>(cell(d,i,1)));
+    }
+    static_cast<chart::SurvivalChart&>(ch).set_data(std::move(times), std::move(events),
+                                                    d.bar_color, d.bar_name);
+}
+inline void apply_volume(chart::Chart& ch, const ChartData& d) {
+    std::vector<double> values; std::vector<int> dirs;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        values.push_back(cell(d,i,0));
+        if (d.matrix[i].size() > 1) dirs.push_back(static_cast<int>(cell(d,i,1)));
+    }
+    static_cast<chart::VolumeChart&>(ch).set_values(std::move(values), std::move(dirs));
+}
+inline void apply_depth(chart::Chart& ch, const ChartData& d) {
+    // 行按 [bid_price, bid_qty, ask_price, ask_qty]；长度不足的列为 0
+    std::vector<double> bp, bq, ap, aq;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) {
+        if (cell(d,i,0) != 0.0 || cell(d,i,1) != 0.0) { bp.push_back(cell(d,i,0)); bq.push_back(cell(d,i,1)); }
+        if (cell(d,i,2) != 0.0 || cell(d,i,3) != 0.0) { ap.push_back(cell(d,i,2)); aq.push_back(cell(d,i,3)); }
+    }
+    static_cast<chart::DepthChart&>(ch).set_book(std::move(bp), std::move(bq),
+                                                 std::move(ap), std::move(aq));
+}
+inline void apply_tile_grid(chart::Chart& ch, const ChartData& d) {
+    auto& g = static_cast<chart::TileGrid&>(ch);
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        g.add_tile({lbl(d,i), static_cast<int>(cell(d,i,0)),
+                    static_cast<int>(cell(d,i,1)), cell(d,i,2)});
+}
+inline void apply_hexbin(chart::Chart& ch, const ChartData& d) {
+    auto& h = static_cast<chart::Hexbin&>(ch);
+    for (std::size_t i = 0; i < d.matrix.size(); ++i) h.add_point(cell(d,i,0), cell(d,i,1));
+}
+inline void apply_ridgeline(chart::Chart& ch, const ChartData& d) {
+    // 每行 = 一个 group 的变长 values（行标签作 group 名）
+    std::vector<chart::RidgelineChart::Group> v;
+    for (std::size_t i = 0; i < d.matrix.size(); ++i)
+        v.push_back({lbl(d,i), d.matrix[i], d.bar_color});
+    static_cast<chart::RidgelineChart&>(ch).set_groups(std::move(v));
+}
+
+// ── Values 逐条 add_* 的图种（词云 / 标签云 / 进度条）─────────────────────
+inline void apply_wordcloud(chart::Chart& ch, const ChartData& d) {
+    auto& w = static_cast<chart::Wordcloud&>(ch);
+    for (std::size_t i = 0; i < d.values.size(); ++i) w.add_word(lbl(d,i), d.values[i]);
+}
+inline void apply_tag_cloud(chart::Chart& ch, const ChartData& d) {
+    auto& w = static_cast<chart::TagCloud&>(ch);
+    for (std::size_t i = 0; i < d.values.size(); ++i) w.add_tag(lbl(d,i), d.values[i]);
+}
+inline void apply_progress(chart::Chart& ch, const ChartData& d) {
+    auto& w = static_cast<chart::Progress&>(ch);
+    for (std::size_t i = 0; i < d.values.size(); ++i) w.add_bar(lbl(d,i), d.values[i], d.bar_color);
+}
+
+// ── Scalar 单值图种 ─────────────────────────────────────────────────────────
+inline void apply_gauge(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::GaugeChart&>(ch).set_value(d.scalar);
+}
+inline void apply_progress_ring(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::ProgressRing&>(ch).set_fraction(d.scalar);
+}
+inline void apply_star_rating(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::StarRating&>(ch).set_rating(d.scalar);
+}
+inline void apply_thermometer(chart::Chart& ch, const ChartData& d) {
+    static_cast<chart::Thermometer&>(ch).set_value(d.scalar);
+}
+inline void apply_status_light(chart::Chart& ch, const ChartData& d) {
+    auto st = static_cast<chart::LightState>(static_cast<int>(d.scalar));
+    static_cast<chart::StatusLight&>(ch).set_state(st);
+}
+
+// ── Tree 层次图：从扁平 parent/name/value 重建 HierNode ────────────────────
+inline chart::hier::HierNode build_tree(const ChartData& d) {
+    // 约定：行号即节点索引，parent=-1 为根；支持空表（返回空根）
+    if (d.tree.empty()) return {};
+    std::vector<chart::hier::HierNode> nodes(d.tree.size());
+    std::vector<int> parent(d.tree.size());
+    chart::hier::HierNode* root = nullptr;
+    for (std::size_t i = 0; i < d.tree.size(); ++i) {
+        nodes[i].name = d.tree[i].name;
+        nodes[i].value = d.tree[i].value;
+        parent[i] = d.tree[i].parent;
+    }
+    for (std::size_t i = 0; i < d.tree.size(); ++i) {
+        if (parent[i] < 0 || static_cast<std::size_t>(parent[i]) >= nodes.size()) {
+            root = &nodes[i];
+        } else {
+            nodes[parent[i]].children.push_back(nodes[i]);
+        }
+    }
+    return root ? *root : nodes.front();
+}
+template <class T>
+void apply_tree(chart::Chart& ch, const ChartData& d) {
+    static_cast<T&>(ch).set_root(build_tree(d));
+}
+
+// ── Text 图种 ───────────────────────────────────────────────────────────────
+inline void apply_table(chart::Chart& ch, const ChartData& d) {
+    auto& t = static_cast<chart::Table&>(ch);
+    // 首行为列名，其余为数据行
+    if (!d.text_rows.empty()) {
+        for (const auto& name : d.text_rows.front()) t.add_column(name);
+        for (std::size_t r = 1; r < d.text_rows.size(); ++r) t.add_row(d.text_rows[r]);
+    }
+}
+inline void apply_gauge_kpi(chart::Chart& ch, const ChartData& d) {
+    auto& g = static_cast<chart::GaugeKpi&>(ch);
+    // text_rows: [[label, value]] 或 blob 作 value
+    if (d.text_rows.size() >= 1 && d.text_rows[0].size() >= 1) g.set_label(d.text_rows[0][0]);
+    if (d.text_rows.size() >= 1 && d.text_rows[0].size() >= 2) g.set_value(d.text_rows[0][1]);
+    else if (!d.text_blob.empty()) g.set_value(d.text_blob);
+    if (d.text_rows.size() >= 2 && d.text_rows[1].size() >= 1) g.set_delta(d.text_rows[1][0], false);
+}
+
+// ── Region 地理图种（name + cells + value）─────────────────────────────────
+inline void apply_choropleth(chart::Chart& ch, const ChartData& d) {
+    auto& g = static_cast<chart::Choropleth&>(ch);
+    for (const auto& r : d.regions) g.add_region({r.name, r.cells, r.value});
+}
+inline void apply_dot_density(chart::Chart& ch, const ChartData& d) {
+    auto& g = static_cast<chart::DotDensity&>(ch);
+    for (const auto& r : d.regions) g.add_region({r.name, r.cells, r.value, d.bar_color});
+}
+inline void apply_geo_map(chart::Chart& ch, const ChartData& d) {
+    auto& g = static_cast<chart::GeoMap&>(ch);
+    if (!d.text_blob.empty()) { std::string err; g.load_geojson(d.text_blob, err); }
+    for (const auto& r : d.regions) g.set_value(r.name, r.value);
 }
 
 // 图例下发：能 set_show_legend 的图种走这个模板；Pie 的选项在构建期另设。
@@ -322,12 +627,70 @@ const std::vector<ChartSpec> kSpecs = {
     {"regression", make_chart<chart::RegressionChart>,apply_regression_points,              DataShape::Points, Capabilities{}, set_legend_of<chart::RegressionChart>},
 
     // ── Matrix（tc_chart_set_matrix）──
-    {"contour",    make_chart<chart::ContourChart>,   apply_contour,  DataShape::Matrix, Capabilities{}, nullptr},
-    {"corr",       make_chart<chart::CorrMatrixChart>,apply_corr,     DataShape::Matrix, Capabilities{}, nullptr},
-    {"mosaic",     make_chart<chart::MosaicChart>,    apply_mosaic,   DataShape::Matrix, Capabilities{}, nullptr},
-    {"violin",     make_chart<chart::ViolinChart>,    apply_violin,   DataShape::Matrix, Capabilities{}, nullptr},
-    {"pca",        make_chart<chart::PcaChart>,       apply_pca,      DataShape::Matrix, Capabilities{}, nullptr},
-    {"parallel",   make_chart<chart::ParallelChart>,  apply_parallel, DataShape::Matrix, Capabilities{}, nullptr},
+    {"contour",    make_chart<chart::ContourChart>,   apply_contour,  DataShape::Records, Capabilities{}, nullptr},
+    {"corr",       make_chart<chart::CorrMatrixChart>,apply_corr,     DataShape::Records, Capabilities{}, nullptr},
+    {"mosaic",     make_chart<chart::MosaicChart>,    apply_mosaic,   DataShape::Records, Capabilities{}, nullptr},
+    {"violin",     make_chart<chart::ViolinChart>,    apply_violin,   DataShape::Records, Capabilities{}, nullptr},
+    {"pca",        make_chart<chart::PcaChart>,       apply_pca,      DataShape::Records, Capabilities{}, nullptr},
+    {"parallel",   make_chart<chart::ParallelChart>,  apply_parallel, DataShape::Records, Capabilities{}, nullptr},
+
+    // ── Records（行式 double 按列语义解释，入口 tc_chart_set_matrix）──
+    {"candlestick", make_chart<chart::CandlestickChart>, apply_candlestick,  DataShape::Records, Capabilities{}, nullptr},
+    {"bubble",      make_chart<chart::BubbleChart>,      apply_bubble,       DataShape::Records, Capabilities{}, nullptr},
+    {"errorbar",    make_chart<chart::ErrorBarChart>,    apply_errorbar,     DataShape::Records, Capabilities{}, nullptr},
+    {"boxplot",     make_chart<chart::BoxPlotChart>,     apply_boxplot,      DataShape::Records, Capabilities{}, nullptr},
+    {"bullet",      make_chart<chart::BulletChart>,      apply_bullet,       DataShape::Records, Capabilities{}, nullptr},
+    {"dumbbell",    make_chart<chart::DumbbellChart>,    apply_dumbbell,     DataShape::Records, Capabilities{}, nullptr},
+    {"gantt",       make_chart<chart::GanttChart>,       apply_gantt,        DataShape::Records, Capabilities{}, nullptr},
+    {"waterfall",   make_chart<chart::WaterfallChart>,   apply_waterfall,    DataShape::Records, Capabilities{}, nullptr},
+    {"forest",      make_chart<chart::ForestChart>,      apply_forest,       DataShape::Records, Capabilities{}, nullptr},
+    {"funnel",      make_chart<chart::FunnelChart>,      apply_funnel,       DataShape::Records, Capabilities{}, nullptr},
+    {"yield_curve", make_chart<chart::YieldCurveChart>,  apply_yield_curve,  DataShape::Records, Capabilities{}, nullptr},
+    {"bland_altman",make_chart<chart::BlandAltmanChart>, apply_bland_altman, DataShape::Records, Capabilities{}, nullptr},
+    {"roc",         make_chart<chart::RocChart>,         apply_roc,          DataShape::Records, Capabilities{}, nullptr},
+    {"survival",    make_chart<chart::SurvivalChart>,    apply_survival,     DataShape::Records, Capabilities{}, nullptr},
+    {"volume",      make_chart<chart::VolumeChart>,      apply_volume,       DataShape::Records, Capabilities{}, nullptr},
+    {"depth",       make_chart<chart::DepthChart>,       apply_depth,        DataShape::Records, Capabilities{}, nullptr},
+    {"tile_grid",   make_chart<chart::TileGrid>,         apply_tile_grid,    DataShape::Records, Capabilities{}, nullptr},
+    {"hexbin",      make_chart<chart::Hexbin>,           apply_hexbin,       DataShape::Records, Capabilities{}, nullptr},
+    {"ridgeline",   make_chart<chart::RidgelineChart>,   apply_ridgeline,    DataShape::Records, Capabilities{}, nullptr},
+
+    // ── Points（极地）──
+    {"polar_line",  make_chart<chart::PolarLineChart>,  apply_set_points<chart::PolarLineChart>,  DataShape::Points, Capabilities{}, nullptr},
+    {"polar_heat",  make_chart<chart::PolarHeatChart>,  apply_set_points<chart::PolarHeatChart>,  DataShape::Points, Capabilities{}, nullptr},
+
+    // ── Values（逐条 add_* / set_prices）──
+    {"wordcloud",    make_chart<chart::Wordcloud>,        apply_wordcloud,   DataShape::Values, Capabilities{}, nullptr},
+    {"tag_cloud",    make_chart<chart::TagCloud>,         apply_tag_cloud,   DataShape::Values, Capabilities{}, nullptr},
+    {"progress",     make_chart<chart::Progress>,         apply_progress,    DataShape::Values, Capabilities{}, nullptr},
+    {"drawdown",     make_chart<chart::DrawdownChart>,    apply_set_prices<chart::DrawdownChart>,     DataShape::Values, Capabilities{}, nullptr},
+    {"kagi",         make_chart<chart::KagiChart>,        apply_set_prices<chart::KagiChart>,         DataShape::Values, Capabilities{}, nullptr},
+    {"point_figure", make_chart<chart::PointFigureChart>, apply_set_prices<chart::PointFigureChart>,  DataShape::Values, Capabilities{}, nullptr},
+    {"renko",        make_chart<chart::RenkoChart>,       apply_set_prices<chart::RenkoChart>,        DataShape::Values, Capabilities{}, nullptr},
+
+    // ── Scalar（入口 tc_chart_set_scalar）──
+    {"gauge",         make_chart<chart::GaugeChart>,     apply_gauge,         DataShape::Scalar, Capabilities{}, nullptr},
+    {"progress_ring", make_chart<chart::ProgressRing>,   apply_progress_ring, DataShape::Scalar, Capabilities{}, nullptr},
+    {"star_rating",   make_chart<chart::StarRating>,     apply_star_rating,   DataShape::Scalar, Capabilities{}, nullptr},
+    {"thermometer",   make_chart<chart::Thermometer>,    apply_thermometer,   DataShape::Scalar, Capabilities{}, nullptr},
+    {"status_light",  make_chart<chart::StatusLight>,    apply_status_light,  DataShape::Scalar, Capabilities{}, nullptr},
+
+    // ── Tree（入口 tc_chart_set_tree）──
+    {"treemap",    make_chart<chart::Treemap>,    apply_tree<chart::Treemap>,    DataShape::Tree, Capabilities{}, nullptr},
+    {"sunburst",   make_chart<chart::Sunburst>,   apply_tree<chart::Sunburst>,   DataShape::Tree, Capabilities{}, nullptr},
+    {"icicle",     make_chart<chart::Icicle>,     apply_tree<chart::Icicle>,     DataShape::Tree, Capabilities{}, nullptr},
+    {"dendrogram", make_chart<chart::Dendrogram>, apply_tree<chart::Dendrogram>, DataShape::Tree, Capabilities{}, nullptr},
+    {"pack",       make_chart<chart::PackChart>,  apply_tree<chart::PackChart>,  DataShape::Tree, Capabilities{}, nullptr},
+    {"tree_view",  make_chart<chart::TreeView>,   apply_tree<chart::TreeView>,   DataShape::Tree, Capabilities{}, nullptr},
+
+    // ── Text（入口 tc_chart_set_text）──
+    {"table",     make_chart<chart::Table>,    apply_table,     DataShape::Text, Capabilities{}, nullptr},
+    {"gauge_kpi", make_chart<chart::GaugeKpi>, apply_gauge_kpi, DataShape::Text, Capabilities{}, nullptr},
+
+    // ── Region（入口 tc_chart_set_region；geo_map 另可用 text_blob 灌 GeoJSON）──
+    {"choropleth",  make_chart<chart::Choropleth>,  apply_choropleth,  DataShape::Text, Capabilities{}, nullptr},
+    {"dot_density", make_chart<chart::DotDensity>,  apply_dot_density, DataShape::Text, Capabilities{}, nullptr},
+    {"geo_map",     make_chart<chart::GeoMap>,      apply_geo_map,     DataShape::Text, Capabilities{}, nullptr},
 };
 
 const ChartSpec* find_spec(std::string_view name) noexcept {
@@ -351,6 +714,30 @@ inline void set_err(tc_error_handle* err, const std::string& msg) {
 inline tc_status fail(tc_error_handle* err, const std::string& msg, tc_status code) {
     set_err(err, msg);
     return code;
+}
+
+// ErrorCode → tc_status 的**唯一映射**（fail-loud：未知码不静默降级成通用 RENDER）。
+// 与 termchart_capi.h 的状态码只增不改契约对齐；C++ 侧新增 ErrorCode 时在此补分支。
+inline tc_status status_to_tc(ErrorCode code) noexcept {
+    switch (code) {
+        case ErrorCode::Ok:
+            return TC_OK;
+        case ErrorCode::InvalidArgument:
+        case ErrorCode::OutOfRange:
+        case ErrorCode::MalformedUtf8:
+        case ErrorCode::ParseError:
+            return TC_ERR_INVALID_ARG;
+        case ErrorCode::Unsupported:
+        case ErrorCode::NotImplemented:
+            return TC_ERR_UNSUPPORTED;
+        case ErrorCode::NotInitialized:
+            return TC_ERR_INVALID_HANDLE;
+        case ErrorCode::IoError:
+        case ErrorCode::TerminalUnavailable:
+        case ErrorCode::PlatformError:
+            return TC_ERR_IO;
+    }
+    return TC_ERR_RENDER;  // 未知/新增码：显式归 RENDER，不伪装成 OK
 }
 
 // 把 std::string 拷进 C 侧堆串（new[]，配 tc_free_string）。
@@ -438,13 +825,17 @@ chart::Chart& apply_display(ChartData& d, const tc_plot_opts* o) {
 bool has_data(const ChartData& d) {
     switch (d.spec().shape) {
         case DataShape::Values: return !d.values.empty();
-        case DataShape::Matrix: return !d.matrix.empty();
+        case DataShape::Records: return !d.matrix.empty();
         case DataShape::Series:
         case DataShape::Points:
             for (const auto& s : d.series) {
                 if (!s.points.empty()) return true;
             }
             return false;
+        case DataShape::Scalar: return true;  // 单值总有效（含 0）
+        case DataShape::Tree:   return !d.tree.empty();
+        case DataShape::Text:   return !d.text_rows.empty() || !d.text_blob.empty() ||
+                                       !d.regions.empty();
     }
     return false;
 }
@@ -586,27 +977,32 @@ tc_style tc_style_default(void) {
 
 tc_status tc_render_line(const char* text, const tc_style* style, const tc_api_opts* opts,
                          char** out_ansi, tc_error_handle* err) {
-    if (!text || !out_ansi) return fail(err, "null text or output buffer", 2);
+    if (!text || !out_ansi) return fail(err, "null text or output buffer", TC_ERR_INVALID_ARG);
     const Style st = to_style(style);
     const api::ApiOptions o = to_api_opts(opts);
     auto r = api::render_line(std::string_view(text), st, o);
     if (!r.has_value()) {
-        return fail(err, std::string("render_line failed (") + describe(r.error()) + ")", 3);
+        return fail(err, std::string("render_line failed (") + describe(r.error()) + ")",
+                    status_to_tc(r.error()));
     }
     return store_string(r.value(), out_ansi, err, 4);
 }
 
 tc_status tc_print_line(const char* text, const tc_style* style, const tc_api_opts* opts,
                         tc_error_handle* err) {
-    if (!text) return fail(err, "null text", 2);
+    if (!text) return fail(err, "null text", TC_ERR_INVALID_ARG);
     const Status s = api::print_line(std::string_view(text), to_style(style), to_api_opts(opts));
-    if (!is_ok(s)) return fail(err, std::string("print_line failed (") + describe(s) + ")", 5);
+    if (!is_ok(s)) {
+        return fail(err, std::string("print_line failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
 tc_status tc_hello(const tc_api_opts* opts, tc_error_handle* err) {
     const Status s = api::hello(to_api_opts(opts));
-    if (!is_ok(s)) return fail(err, std::string("hello failed (") + describe(s) + ")", 5);
+    if (!is_ok(s)) {
+        return fail(err, std::string("hello failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
@@ -642,12 +1038,6 @@ tc_status tc_chart_kinds(char* buf, uint64_t cap, uint64_t* out_len, tc_error_ha
     return 0;
 }
 
-// 旧工厂保留为兼容胶水：等价于 tc_chart_create("...")，不动 ABI。
-tc_chart_handle tc_chart_create_line(void)     { return tc_chart_create("line", nullptr); }
-tc_chart_handle tc_chart_create_scatter(void)  { return tc_chart_create("scatter", nullptr); }
-tc_chart_handle tc_chart_create_bar(void)      { return tc_chart_create("bar", nullptr); }
-tc_chart_handle tc_chart_create_pie(void)      { return tc_chart_create("pie", nullptr); }
-tc_chart_handle tc_chart_create_sparkline(void){ return tc_chart_create("sparkline", nullptr); }
 void tc_chart_free(tc_chart_handle chart) { delete reinterpret_cast<ChartData*>(chart); }
 
 tc_status tc_chart_add_series(tc_chart_handle chart, const tc_series* series, uint64_t count,
@@ -730,7 +1120,7 @@ tc_status tc_chart_set_matrix(tc_chart_handle chart, const double* const* rows,
     if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
     if (!rows && row_count) return fail(err, "null rows with row_count>0", TC_ERR_INVALID_ARG);
     auto* c = reinterpret_cast<ChartData*>(chart);
-    if (c->spec().shape != DataShape::Matrix) {
+    if (c->spec().shape != DataShape::Records) {
         return fail(err, "this chart kind takes series/values, not matrix", TC_ERR_UNSUPPORTED);
     }
     c->matrix.clear();
@@ -751,6 +1141,92 @@ tc_status tc_chart_set_matrix(tc_chart_handle chart, const double* const* rows,
     };
     fill_labels(c->row_labels, row_labels, n_row_labels);
     fill_labels(c->col_labels, col_labels, n_col_labels);
+    c->invalidate();
+    return 0;
+}
+
+// 单值图种（gauge / progress_ring / star_rating / thermometer / status_light）。
+tc_status tc_chart_set_scalar(tc_chart_handle chart, double value, tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (c->spec().shape != DataShape::Scalar) {
+        return fail(err, "this chart kind does not take a scalar", TC_ERR_UNSUPPORTED);
+    }
+    c->scalar = value;
+    c->invalidate();
+    return 0;
+}
+
+// 层次图（treemap/sunburst/icicle/dendrogram/pack/tree_view）。
+// parents[i] = 父节点索引（-1 为根）；names[i]/values[i] 为节点名与值。
+tc_status tc_chart_set_tree(tc_chart_handle chart, const int* parents,
+                            const char* const* names, const double* values, uint64_t n,
+                            tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (!parents || !names || !values) return fail(err, "null tree arrays", TC_ERR_INVALID_ARG);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (c->spec().shape != DataShape::Tree) {
+        return fail(err, "this chart kind does not take a tree", TC_ERR_UNSUPPORTED);
+    }
+    c->tree.clear();
+    c->tree.reserve(static_cast<std::size_t>(n));
+    for (uint64_t i = 0; i < n; ++i)
+        c->tree.push_back({parents[i], names[i] ? names[i] : "", values[i]});
+    c->invalidate();
+    return 0;
+}
+
+// 文本图种：table（rows 为 [[列名...],[行...]]）/ gauge_kpi（[[label,value],[delta]]）/
+// geo_map（blob 为 GeoJSON 文本）。blob 可为 NULL。
+tc_status tc_chart_set_text(tc_chart_handle chart, const char* const* const* rows,
+                            uint64_t row_count, const uint64_t* col_counts,
+                            const char* blob, tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (c->spec().shape != DataShape::Text) {
+        return fail(err, "this chart kind does not take text", TC_ERR_UNSUPPORTED);
+    }
+    c->text_rows.clear();
+    for (uint64_t i = 0; i < row_count; ++i) {
+        const std::size_t m = col_counts ? static_cast<std::size_t>(col_counts[i]) : 0;
+        std::vector<std::string> row;
+        for (std::size_t j = 0; j < m; ++j)
+            row.emplace_back(rows[i][j] ? rows[i][j] : "");
+        c->text_rows.push_back(std::move(row));
+    }
+    c->text_blob = blob ? blob : "";
+    c->invalidate();
+    return 0;
+}
+
+// 区域地理图种（choropleth / dot_density / geo_map 的数值覆盖）。
+// 每个区域：name + n_cells 个 (x,y) + value。分两次调用不方便，故用扁平数组：
+// cell_x/cell_y/cell_count 给出所有格，region_starts 给出每个区域在格数组中的起点。
+tc_status tc_chart_set_regions(tc_chart_handle chart,
+                               const char* const* names, const double* values, uint64_t n_regions,
+                               const double* cell_x, const double* cell_y,
+                               const uint64_t* cell_starts, const uint64_t* cell_counts,
+                               uint64_t n_cells, tc_error_handle* err) {
+    if (!chart) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (!names || !values) return fail(err, "null region arrays", TC_ERR_INVALID_ARG);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (c->spec().shape != DataShape::Text) {
+        return fail(err, "this chart kind does not take regions", TC_ERR_UNSUPPORTED);
+    }
+    c->regions.clear();
+    c->regions.reserve(static_cast<std::size_t>(n_regions));
+    for (uint64_t i = 0; i < n_regions; ++i) {
+        ChartData::Region r;
+        r.name = names[i] ? names[i] : "";
+        r.value = values[i];
+        if (cell_starts && cell_counts) {
+            const uint64_t s = cell_starts[i], cnt = cell_counts[i];
+            if (cell_x && cell_y && s + cnt <= n_cells)
+                for (uint64_t k = s; k < s + cnt; ++k)
+                    r.cells.push_back({cell_x[k], cell_y[k]});
+        }
+        c->regions.push_back(std::move(r));
+    }
     c->invalidate();
     return 0;
 }
@@ -878,7 +1354,7 @@ tc_status tc_chart_to_svg(tc_chart_handle chart, const tc_plot_opts* opts, char*
     if (opts && opts->width) w = opts->width;
     if (opts && opts->height) h = opts->height;
     chart::Chart& ch = apply_display(*c, opts);
-    const auto sc = api::chart_to_scene(ch, w, h);
+    auto sc = api::chart_to_scene(ch, w, h);
     if (!sc.has_value()) {
         return fail(err, std::string("chart_to_scene failed (") + describe(sc.error()) + ")",
                     TC_ERR_RENDER);
@@ -901,31 +1377,39 @@ tc_status tc_chart_to_svg(tc_chart_handle chart, const tc_plot_opts* opts, char*
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 tc_status tc_write_stdout(const char* bytes, uint64_t n, tc_error_handle* err) {
-    if (!bytes && n) return fail(err, "null bytes", 2);
+    if (!bytes && n) return fail(err, "null bytes", TC_ERR_INVALID_ARG);
     const Status s = api::write_stdout(sv_of(bytes, n));
-    if (!is_ok(s)) return fail(err, std::string("write_stdout failed (") + describe(s) + ")", 5);
+    if (!is_ok(s)) {
+        return fail(err, std::string("write_stdout failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
 tc_status tc_write_stderr(const char* bytes, uint64_t n, tc_error_handle* err) {
-    if (!bytes && n) return fail(err, "null bytes", 2);
+    if (!bytes && n) return fail(err, "null bytes", TC_ERR_INVALID_ARG);
     const Status s = api::write_stderr(sv_of(bytes, n));
-    if (!is_ok(s)) return fail(err, std::string("write_stderr failed (") + describe(s) + ")", 5);
+    if (!is_ok(s)) {
+        return fail(err, std::string("write_stderr failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
 tc_status tc_flush_stdout(tc_error_handle* err) {
     const Status s = api::flush_stdout();
-    if (!is_ok(s)) return fail(err, std::string("flush_stdout failed (") + describe(s) + ")", 5);
+    if (!is_ok(s)) {
+        return fail(err, std::string("flush_stdout failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
 // ── AutoViz ─────────────────────────────────────────────────────────────────
 
 tc_status tc_auto_plot(const char* filepath, tc_error_handle* err) {
-    if (!filepath) return fail(err, "null filepath", 2);
+    if (!filepath) return fail(err, "null filepath", TC_ERR_INVALID_ARG);
     const Status s = api::auto_plot(std::string_view(filepath));
-    if (!is_ok(s)) return fail(err, std::string("auto_plot failed (") + describe(s) + ")", 3);
+    if (!is_ok(s)) {
+        return fail(err, std::string("auto_plot failed (") + describe(s) + ")", status_to_tc(s));
+    }
     return 0;
 }
 
@@ -943,7 +1427,6 @@ tc_status tc_chart_to_png(tc_chart_handle chart, const tc_plot_opts* o, char* bu
     if (cols == 0 || rows == 0 || cols > 0xFFFF || rows > 0xFFFF)
         return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
 
-    chart::Chart& ch = apply_display(*c, o);
     CellBuffer cells;
     if (!build_plot_with_labels(*c, o, cells)) {
         return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);

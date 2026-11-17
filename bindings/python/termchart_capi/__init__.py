@@ -107,14 +107,10 @@ def _make_api_opts(width=0, height=0, depth="truecolor", unicode=True,
 # ── 图表（折线 / 散点 / 柱状）────────────────────────────────────────────────
 
 def _render(kind: str, **data) -> str:
-    factory = {
-        "line": _c.tc_chart_create_line,
-        "scatter": _c.tc_chart_create_scatter,
-        "bar": _c.tc_chart_create_bar,
-    }[kind]
-    chart = factory()
+    err = ctypes.c_void_p()
+    chart = _c.tc_chart_create(kind.encode("utf-8"), ctypes.byref(err))
     if not chart:
-        raise TermchartError("failed to create chart handle (out of memory?)")
+        raise TermchartError("failed to create chart handle (%r)" % (kind,))
     try:
         if kind == "bar":
             values = data["values"]
@@ -476,6 +472,74 @@ class Chart:
         st = _c.tc_chart_set_prop(h, pid, ctypes.byref(v), ctypes.byref(err))
         if st != 0:
             _raise("set_prop", st, err)
+
+    # ── 其余数据形状 ──
+    def set_scalar(self, value):
+        """单值图种（gauge / progress_ring / star_rating / thermometer / status_light）。"""
+        st = _c.tc_chart_set_scalar(self._alive(), float(value), None)
+        if st != 0:
+            _raise("set_scalar", st, None)
+
+    def set_tree(self, nodes):
+        """层次图（treemap/sunburst/icicle/dendrogram/pack/tree_view）。
+
+        ``nodes`` 为 ``(parent_index, name, value)`` 序列，parent=-1 表示根。
+        """
+        n = len(nodes)
+        if n == 0:
+            return
+        parents = (ctypes.c_int * n)(*[int(x[0]) for x in nodes])
+        names_buf = [x[1].encode("utf-8") if x[1] else None for x in nodes]
+        names = (ctypes.c_char_p * n)(*names_buf)
+        vals = (ctypes.c_double * n)(*[float(x[2]) for x in nodes])
+        st = _c.tc_chart_set_tree(self._alive(), parents, names, vals, n, None)
+        if st != 0:
+            _raise("set_tree", st, None)
+
+    def set_text(self, rows, blob=None):
+        """文本图种（table / gauge_kpi / geo_map）。
+
+        ``rows`` 为行优先的字符串二维序列；``blob`` 为 GeoJSON 文本（geo_map 用）。
+        """
+        rbuf = []
+        for row in rows:
+            cells = [str(c).encode("utf-8") for c in row]
+            rbuf.append((ctypes.c_char_p * len(cells))(*cells))
+        ptrs = (ctypes.POINTER(ctypes.c_char_p) * len(rbuf))(
+            *(ctypes.cast(r, ctypes.POINTER(ctypes.c_char_p)) for r in rbuf)
+        )
+        cc = (ctypes.c_uint64 * len(rbuf))(*[len(r) for r in rows])
+        st = _c.tc_chart_set_text(self._alive(), ptrs, len(rbuf), cc,
+                                  blob.encode("utf-8") if blob else None, None)
+        if st != 0:
+            _raise("set_text", st, None)
+
+    def set_regions(self, regions, cells=None):
+        """区域地理图种（choropleth / dot_density / geo_map）。
+
+        ``regions`` 为 ``(name, value, [(x,y),...])`` 序列；cells 可省略（geo_map 只需 name/value）。
+        """
+        n = len(regions)
+        if n == 0:
+            return
+        names_buf = [r[0].encode("utf-8") if r[0] else None for r in regions]
+        names = (ctypes.c_char_p * n)(*names_buf)
+        vals = (ctypes.c_double * n)(*[float(r[1]) for r in regions])
+        all_cells = []
+        starts, counts = [], []
+        for r in regions:
+            starts.append(len(all_cells))
+            cs = r[2] if len(r) > 2 else []
+            counts.append(len(cs))
+            all_cells.extend(cs)
+        nc = len(all_cells)
+        cx = (ctypes.c_double * nc)(*[c[0] for c in all_cells]) if nc else None
+        cy = (ctypes.c_double * nc)(*[c[1] for c in all_cells]) if nc else None
+        st = (ctypes.c_uint64 * n)(*starts)
+        ct = (ctypes.c_uint64 * n)(*counts)
+        stt = _c.tc_chart_set_regions(self._alive(), names, vals, n, cx, cy, st, ct, nc, None)
+        if stt != 0:
+            _raise("set_regions", stt, None)
 
     # ── 输出 ──
     def _opts(self, width, height, title, show_legend, depth):

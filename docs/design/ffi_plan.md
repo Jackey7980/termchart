@@ -1,13 +1,13 @@
 # FFI / 语言桥方案（Rust 桥、Java 桥）
 
-> 状态：**C ABI 适配层（`termchart_capi`）已落地**（v1.1 工作，见
-> [C ABI 与 Python 桥](../guide/c_api.md)）。**Rust 桥与 Java 桥仍只规划、未落地**——
-> 两者都依赖 capi 先就位，故未来开工时 `搭桥` 在 todo 中须排**较前位置**（优先于其它扩展项）：
-> capi 是它俩的共同前置，先搭 capi 才能让两桥并行推进。
+> 状态（2026-11-16 更新）：**C ABI（`termchart_capi`）+ Python ctypes + Java JNI + Rust 桥全部落地**：
+> - C ABI：`libs/capi`（v1.1，见 [C ABI 与 Python 桥](../guide/c_api.md)）。
+> - Java：`bindings/java`（`Termchart` 高层出图类 + JNI glue 包 capi），JNI 库自包含，
+>   `java_smoke` 真 JVM 冒烟通过（plot/bar/kinds/renderLine/错误通道）；`TERMCHART_BUILD_JAVA=ON` 开启。
+> - Rust：`bindings/rust`（`termchart-sys` 手写 FFI + `termchart` 安全封装），一行出图 +
+>   Chart RAII + SVG/PNG 两段式导出；本机无 cargo，**源码已落地待 CI/Rust 工具链编译闭环**。
 >
-> **规划归属（2026-11-13 决策）**：`termchart_capi` 可列入 v1.1；Rust/Java 搭桥推迟。
-> 2026-11-15 更新：capi 已实际实现（文本渲染、多系列图表、属性通道含轴标签、SVG/PNG 两段式
-> 导出、Python ctypes 绑定），本文件降级为设计记录。
+> 本文件降级为设计记录；实际 API 以各 `bindings/` 子目录与 `termchart_capi.h` 为准。
 
 ## 0. 现状缺口
 
@@ -33,7 +33,7 @@ extern "C" {
 typedef struct tc_chart* tc_chart_handle;
 typedef struct tc_err*   tc_error_handle;
 
-tc_chart_handle tc_chart_create_line(void);
+tc_chart_handle tc_chart_create(const char* kind, tc_error_handle* err);
 void tc_chart_add_points(tc_chart_handle, const double* x, const double* y, size_t n);
 tc_error_handle tc_chart_to_png(tc_chart_handle, const char* path,
                                uint32_t cell_w, uint32_t cell_h,
