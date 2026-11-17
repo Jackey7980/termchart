@@ -1,0 +1,8 @@
+[package]
+name = "termchart-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Raw FFI bindings to termchart_capi.h (hand-written, no bindgen dependency)"
+links = "termchart_capi"

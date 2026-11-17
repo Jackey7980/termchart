@@ -179,6 +179,20 @@ if(TERMCHART_BUILD_PYTHON)
     add_subdirectory(bindings/python)
 endif()
 
+# C ABI 适配层（可选插件，默认关）：termchart_capi 共享库，链接 termchart；
+# 是 Python / Rust / Java 桥的共同前置（见 docs/design/ffi_plan.md §1）。
+if(TERMCHART_BUILD_CAPI)
+    add_subdirectory(libs/capi)
+endif()
+
+# Java 高层出图桥（可选插件，默认关）：JNI glue 包 termchart_capi；需 CAPI + JDK。
+if(TERMCHART_BUILD_JAVA)
+    if(NOT TERMCHART_BUILD_CAPI)
+        message(FATAL_ERROR "TERMCHART_BUILD_JAVA=ON 需要 TERMCHART_BUILD_CAPI=ON（共同前置）")
+    endif()
+    add_subdirectory(bindings/java)
+endif()
+
 # ── 测试与示例 ────────────────────────────────────────────────────────────
 if(TERMCHART_BUILD_TESTS)
     add_subdirectory(tests)

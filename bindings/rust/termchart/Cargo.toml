@@ -1,0 +1,10 @@
+[package]
+name = "termchart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Safe Rust wrapper over termchart's C ABI (one-liner plotting + chart builder)"
+
+[dependencies]
+termchart-sys = { path = "../termchart-sys", version = "0.1.0" }

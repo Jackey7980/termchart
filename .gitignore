@@ -8,6 +8,8 @@ out/
 CMakeUserPresets.json
 # WSL 侧构建目录：bc8f005 误提交过整树（仅解除跟踪，物理目录保留在磁盘上）
 build_wsl/
+# Rust cargo 构建产物（bindings/rust/target 实测 312 文件 26.8 MB）
+bindings/rust/target/
 
 # 编译中间产物与二进制
 *.o
