@@ -66,6 +66,7 @@ add_executable(termchart_tests
     unit/gui/test_gui_stack.cpp
     unit/gui/test_gui_metrics.cpp
     unit/gui/test_gui_hover.cpp
+    unit/gui/test_gui_theme_view.cpp
 
     # ── canvas ──
     unit/canvas/test_canvas.cpp
@@ -104,7 +105,12 @@ add_executable(termchart_tests
     unit/image/test_intra_prediction.cpp
     unit/image/test_hevc_mpm.cpp
     unit/image/test_hevc_scan.cpp
+    unit/image/test_hevc_interp.cpp
+    unit/image/test_hevc_multiref.cpp
+    unit/image/test_hevc_bslice.cpp
     unit/image/test_hevc_deblocking.cpp
+    unit/image/test_hevc_sao.cpp
+    unit/image/test_hevc_rdo.cpp
     unit/image/test_hevc_qp.cpp
     unit/image/test_hevc_transform.cpp
     unit/image/test_hevc_transform_skip.cpp
@@ -253,6 +259,12 @@ add_executable(termchart_tests
     # ── 集成 ──
     integration/test_terminal_restore.cpp
     integration/test_full_render.cpp
+    integration/test_roundtrip_scene.cpp
+    integration/test_headless_pipeline.cpp
+    integration/test_interaction_graph.cpp
+    integration/test_app_loop.cpp
+    integration/test_thread_post.cpp
+    integration/test_resize.cpp
 
     # ── 可扩展性契约实验（ROADMAP 阶段 3）──
     integration/replace_backend_html_pre.cpp

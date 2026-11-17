@@ -257,10 +257,11 @@ TEST_CASE("gui/widget: Button/Slider paint 落真彩色像素") {
     sl.paint(backend.canvas());
 
     const Bitmap bmp = backend.canvas().snapshot();
-    // 按钮内部（避 1px 描边）为按钮底色。
-    CHECK(bmp.at(30, 10, 0) == 50);
-    CHECK(bmp.at(30, 10, 1) == 50);
-    CHECK(bmp.at(30, 10, 2) == 58);
+    // 按钮内部（避 1px 描边、避居中的 label 字形）为按钮底色。
+    // 采样点取左上内部 (5,5)：label "x" 居中于 x≈27..32，不落字形。
+    CHECK(bmp.at(5, 5, 0) == 50);
+    CHECK(bmp.at(5, 5, 1) == 50);
+    CHECK(bmp.at(5, 5, 2) == 58);
     // 滑块拇指（thumb_w=10, thumb_h=16, 竖向居中于 y≈40）为拇指色。
     CHECK(bmp.at(4, 40, 0) == 120);
     CHECK(bmp.at(4, 40, 1) == 184);
