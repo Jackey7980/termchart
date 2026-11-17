@@ -39,6 +39,31 @@ inline constexpr int kCtxSigCoeffFlag = 93;
 inline constexpr int kCtxCoeffAbsGreater1 = 137;
 inline constexpr int kCtxCoeffAbsGreater2 = 161;
 
+// P 片用到的帧间上下文（偏移与 ffmpeg CABAC_ELEMS 累加一致）。
+// 注意 abs_mvd_greater0/1 的取值方式照抄 ffmpeg n8.1.2 的 hls_mvd_coding()：
+//   greater0 两个分量共用 31，greater1 两个分量共用 34（不是 31..34 逐分量）。
+// 本项目的外部解码真值就是同版本的 ffmpeg，两者必须用同一套索引才能解对。
+inline constexpr int kCtxSkipFlag = 6;
+inline constexpr int kCtxPredMode = 12;
+inline constexpr int kCtxRefIdxL0 = 15;
+inline constexpr int kCtxRefIdxL1 = 16;
+inline constexpr int kCtxMergeFlag = 20;
+inline constexpr int kCtxMergeIdx = 21;
+inline constexpr int kCtxMvdGreater0 = 31;
+inline constexpr int kCtxMvdGreater1 = 34;
+inline constexpr int kCtxMvpLxFlag = 35;
+inline constexpr int kCtxNoResidualData = 36;
+
+// B 片 inter_pred_idc（5 个上下文，ffmpeg INTER_PRED_IDC_OFFSET=22）：
+//   nPbW+nPbH==12 → 单 bin @ 22+4（1=BI, 0=L0）
+//   否则 bin0 @ 22+ct_depth（1=BI）；0 时 bin1 @ 22+4（1=L1, 0=L0）
+inline constexpr int kCtxInterPredIdc = 22;
+
+// init_type = 2 - slice_type：I=0 / P=1 / B=2（ffmpeg cabac_init_state 的取表方式）。
+inline constexpr int kInitTypeI = 0;
+inline constexpr int kInitTypeP = 1;
+inline constexpr int kInitTypeB = 2;
+
 struct CabacContext {
     CtxModel ctx[kContextCount];
 

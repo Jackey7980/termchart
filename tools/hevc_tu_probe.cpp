@@ -3,6 +3,8 @@
 // argv = <qp> <W> <H> <形态> <输出.265> [log2_tu] [transform_skip]
 //   log2_tu: 0=自动档 / 2=4x4 / 3=8x8 / 4=16x16 / 5=32x32（默认 2）
 //   transform_skip: 1=开（大 TU 会写 RExt 参数集，见 hevc_encode.cpp）/ 0=关（默认）
+//   sao: 1=开 SAO（SPS 声明 + 每 CTB 写 sao() 语法）/ 0=关（默认，保持字节级基线）
+//   rdo: 1=开帧内模式 RDO（SSD + λ·bins）/ 0=关（默认，纯 SSD）
 // 生成一帧 Intra 码流，并落盘完整 yuv420p 源（同名 .yuv），供 ffmpeg 解码对拍。
 // W/H 必须是 64 的倍数（编码树按 CTB 遍历）。
 #include <cstdio>
@@ -88,6 +90,12 @@ int main(int argc, char** argv) {
     if (argc > 6) opts.hevc_log2_tu_size = std::atoi(argv[6]);
     // 第 7 个可选参数：transform_skip（1=开）。大 TU 档开它会切到 RExt profile。
     if (argc > 7) opts.hevc_transform_skip = (std::atoi(argv[7]) != 0);
+    // 第 8 个可选参数：SAO（1=开）。开启后 SPS 声明 SAO、slice header 追加
+    // slice_sao_luma/chroma_flag、每个 CTB 前写 sao() 语法与 offset 决策。
+    if (argc > 8) opts.hevc_sao = (std::atoi(argv[8]) != 0);
+    // 第 9 个可选参数：帧内模式 RDO（1=开）。不传时 hevc_rdo=false，
+    // 所有既有 7/8 参调用的码流逐字节不变。
+    if (argc > 9) opts.hevc_rdo = (std::atoi(argv[9]) != 0);
     const auto bs = encode_hevc_annexb(std::span<const Bitmap>{frames}, opts);
     if (bs.empty()) { std::fprintf(stderr, "encode failed qp=%d %dx%d %s\n", qp, W, H, mode); return 1; }
     fp = std::fopen(out265, "wb");

@@ -132,15 +132,100 @@ constexpr std::uint8_t kInitValues[kInitValueCount] = {
     154, 154,                                           // cu_chroma_qp_offset_*
 };
 
+// FFmpeg libavcodec/hevc/cabac.c 的 init_values[1]（P slice，init_type=1）。
+// 分组顺序与 init_values[0] 完全一致，逐项对应 CABAC_ELEMS 的累加偏移。
+constexpr std::uint8_t kInitValuesP[kInitValueCount] = {
+    153, 185,                                            // sao_merge_flag, sao_type_idx
+    107, 139, 126,                                      // split_coding_unit_flag
+    154,                                                // cu_transquant_bypass_flag
+    197, 185, 201,                                      // skip_flag
+    154, 154, 154,                                      // cu_qp_delta
+    149,                                                // pred_mode_flag
+    154, 139, 154, 154,                                 // part_mode
+    154,                                                // prev_intra_luma_pred_flag
+    152, 139,                                           // intra_chroma_pred_mode
+    110,                                                // merge_flag
+    122,                                                // merge_idx
+    95, 79, 63, 31, 31,                                 // inter_pred_idc
+    153, 153, 153, 153,                                 // ref_idx_l0/l1
+    140, 198, 140, 198,                                 // abs_mvd_greater0/1
+    168, 79,                                            // mvp_lx_flag, no_residual_data_flag
+    124, 138, 94,                                       // split_transform_flag
+    153, 111,                                           // cbf_luma
+    149, 107, 167, 154, 154,                            // cbf_cb/cr
+    139, 139, 139, 139, 139, 139,                       // transform_skip / rdpcm flags
+    125, 110, 94, 110, 95, 79, 125, 111, 110,           // last_sig_coeff_x_prefix
+    78, 110, 111, 111, 95, 94, 108, 123, 108,
+    125, 110, 94, 110, 95, 79, 125, 111, 110,           // last_sig_coeff_y_prefix
+    78, 110, 111, 111, 95, 94, 108, 123, 108,
+    121, 140, 61, 154,                                  // significant_coeff_group_flag
+    155, 154, 139, 153, 139, 123, 123, 63, 153, 166,    // significant_coeff_flag (44)
+    183, 140, 136, 153, 154, 166, 183, 140, 136, 153,
+    154, 166, 183, 140, 136, 153, 154, 170, 153, 123,
+    123, 107, 121, 107, 121, 167, 151, 183, 140, 151,
+    183, 140, 140, 140,
+    154, 196, 196, 167, 154, 152, 167, 182, 182, 134,   // coeff_abs_level_greater1 (24)
+    149, 136, 153, 121, 136, 137, 169, 194, 166, 167,
+    154, 167, 137, 182,
+    107, 167, 91, 122, 107, 167,                        // coeff_abs_level_greater2 (6)
+    154, 154, 154, 154, 154, 154, 154, 154,             // log2_res_scale_abs
+    154, 154,                                           // res_scale_sign_flag
+    154, 154,                                           // cu_chroma_qp_offset_*
+};
+
+// FFmpeg libavcodec/hevc/cabac.c 的 init_values[2]（B slice，init_type=2）。
+// 分组顺序与 init_values[0]/[1] 完全一致，逐项对应 CABAC_ELEMS 的累加偏移。
+// 抄录来源：build/cabac_81.c 第 255-331 行（逐行核对，共 179 项）。
+constexpr std::uint8_t kInitValuesB[kInitValueCount] = {
+    153, 160,                                            // sao_merge_flag, sao_type_idx
+    107, 139, 126,                                      // split_coding_unit_flag
+    154,                                                // cu_transquant_bypass_flag
+    197, 185, 201,                                      // skip_flag
+    154, 154, 154,                                      // cu_qp_delta
+    134,                                                // pred_mode_flag
+    154, 139, 154, 154,                                 // part_mode
+    183,                                                // prev_intra_luma_pred_flag
+    152, 139,                                           // intra_chroma_pred_mode
+    154,                                                // merge_flag
+    137,                                                // merge_idx
+    95, 79, 63, 31, 31,                                 // inter_pred_idc
+    153, 153, 153, 153,                                 // ref_idx_l0/l1
+    169, 198, 169, 198,                                 // abs_mvd_greater0/1
+    168, 79,                                            // mvp_lx_flag, no_residual_data_flag
+    224, 167, 122,                                      // split_transform_flag
+    153, 111,                                           // cbf_luma
+    149, 92, 167, 154, 154,                            // cbf_cb/cr
+    139, 139, 139, 139, 139, 139,                       // transform_skip / rdpcm flags
+    125, 110, 124, 110, 95, 94, 125, 111, 111,          // last_sig_coeff_x_prefix
+    79, 125, 126, 111, 111, 79, 108, 123, 93,
+    125, 110, 124, 110, 95, 94, 125, 111, 111,          // last_sig_coeff_y_prefix
+    79, 125, 126, 111, 111, 79, 108, 123, 93,
+    121, 140, 61, 154,                                  // significant_coeff_group_flag
+    170, 154, 139, 153, 139, 123, 123, 63, 124, 166,    // significant_coeff_flag (44)
+    183, 140, 136, 153, 154, 166, 183, 140, 136, 153,
+    154, 166, 183, 140, 136, 153, 154, 170, 153, 138,
+    138, 122, 121, 122, 121, 167, 151, 183, 140, 151,
+    183, 140, 140, 140,
+    154, 196, 167, 167, 154, 152, 167, 182, 182, 134,   // coeff_abs_level_greater1 (24)
+    149, 136, 153, 121, 136, 122, 169, 208, 166, 167,
+    154, 152, 167, 182,
+    107, 167, 91, 107, 107, 167,                        // coeff_abs_level_greater2 (6)
+    154, 154, 154, 154, 154, 154, 154, 154,             // log2_res_scale_abs
+    154, 154,                                           // res_scale_sign_flag
+    154, 154,                                           // cu_chroma_qp_offset_*
+};
+
 }  // namespace
 
 void CabacContext::init_hevc(int slice_qp, int init_type) {
     const int qp = slice_qp < 0 ? 0 : (slice_qp > 51 ? 51 : slice_qp);
-    (void)init_type;  // 阶段二补 P/B 的 init_values[1..2]
+    const std::uint8_t* values = (init_type == kInitTypeB)
+                                     ? kInitValuesB
+                                     : ((init_type == kInitTypeP) ? kInitValuesP : kInitValues);
     for (int i = 0; i < kContextCount; ++i) ctx[i].state = 0;
     // 与 FFmpeg cabac_init_state() 逐字一致。
     for (int i = 0; i < kInitValueCount; ++i) {
-        const int v = kInitValues[i];
+        const int v = values[i];
         const int m = (v >> 4) * 5 - 45;
         const int n = ((v & 15) << 3) - 16;
         int pre = 2 * (((m * qp) >> 4) + n) - 127;

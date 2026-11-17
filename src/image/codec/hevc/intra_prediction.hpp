@@ -71,17 +71,37 @@ struct IntraModeSignal {
 
 IntraModeSignal signal_intra_mode(int target_mode, const MpmCandidates& cands);
 
+// 该模式要写多少 bin 的模式语法（与 cabac_syntax.cpp 逐条同构）：
+//   prev_intra_luma_pred_flag 1 个 ctx bin；
+//   prev=1 → put_mpm_idx：idx 0 写 1 bin，idx 1/2 写 2 bin；
+//   prev=0 → put_rem_intra_luma_pred_mode：5 个 bypass bin。
+// 与模式无关的常量语法（part_mode / intra_chroma_pred_mode / split_transform）
+// 不计入，因为它们在候选之间是同一个常数，不参与比较。
+int mode_signal_bins(int target_mode, const MpmCandidates& cands);
+
+// 约束式 RDO 的相对失真余量（默认 0.05，可由 TERMCHART_HEVC_RDO_SLACK 覆盖）。
+// 模式决策与 CBF 决策共用同一个值，避免两处口径漂移。
+double rdo_distortion_slack();
+
 // 逐 CU 的亮度帧内模式决策：对 35 个模式各模拟一遍
 // 「预测 → 变换量化 → 逆量化重建」，按重建块对源块的 SSD 选最小。
 //
 // tu_log2 必须是【真实使用的 TU 尺寸】：2 表示 8x8 CU 分裂成 4 个 4x4 TU，
 // 3/4/5 表示单个 8/16/32 TU。模拟必须与真实编码同尺寸、同 TU 次序，否则
 // 大 TU 下会用 4x4 的失真模型挑模式（历史缺陷）。只影响模式选择，不产生新
-// 语法，任意返回值都能被 FFmpeg 正确解码。暂不含 λ·bits。
+// 语法，任意返回值都能被 FFmpeg 正确解码。
+//
+// rd_lambda > 0 时切到率失真口径 J = SSD + λ·(模式语法 bin + 残差 bin)，
+// bin 数全部由 encode_residual 实算；rd_lambda == 0 是默认路径，代价退化为
+// 纯 SSD（逐位不变，码流与既有基线字节级一致）。mpm_cands 为 nullptr 时只计
+// 残差 bin：CU 分裂评估层没有 tab_ipm，而模式语法 bin 在分裂/停止两路都存在，
+// 真正区分两路的是残差 bin，故这是合理口径而非缺陷。
 // 要求 (x0,y0) 按 CU 对齐、整块在图像内；越界返回 INTRA_DC(1)。
 int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
                            const std::uint8_t* rec, int rec_stride,
-                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2);
+                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2,
+                           double rd_lambda = 0.0,
+                           const MpmCandidates* mpm_cands = nullptr);
 
 // 旧的 4x4 TU 档接口，等价于 tu_log2=2。
 int choose_intra_luma_mode_8x8(const std::uint8_t* src, int src_stride,

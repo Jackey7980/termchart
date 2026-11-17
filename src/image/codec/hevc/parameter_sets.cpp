@@ -1,6 +1,8 @@
 // parameter_sets.cpp —— VPS / SPS / PPS 位序列（A2：从 hevc_encode.cpp 原样迁入）
 #include "parameter_sets.hpp"
 
+#include <algorithm>
+
 #include "../bitstream/bit_writer.hpp"
 
 namespace termchart::image::codec::hevc {
@@ -44,8 +46,8 @@ std::string write_vps(const Vps& vps) {
     w.u(0xFFFF, 16);  // vps_reserved_0xffff_16bits
     profile_tier_level(w, vps.general_level_idc, vps.general_profile_idc);
     w.u(1, 1);    // vps_sub_layer_ordering_info_present_flag
-    w.ue(0);      // vps_max_dec_pic_buffering_minus1[0]
-    w.ue(0);      // vps_max_num_reorder_pics[0]
+    w.ue(static_cast<unsigned>(vps.max_dec_pic_buffering_minus1));  // vps_max_dec_pic_buffering_minus1[0]
+    w.ue(static_cast<unsigned>(vps.max_num_reorder_pics));  // vps_max_num_reorder_pics[0]
     w.ue(0);      // vps_max_latency_increase_plus1[0]
     w.u(0, 6);    // vps_max_layer_id
     w.ue(0);      // vps_num_layer_sets_minus1
@@ -77,10 +79,10 @@ std::string write_sps(const Sps& sps) {
     }
     w.ue(0);      // bit_depth_luma_minus8
     w.ue(0);      // bit_depth_chroma_minus8
-    w.ue(0);      // log2_max_pic_order_cnt_lsb_minus4
+    w.ue(static_cast<unsigned>(sps.log2_max_pic_order_cnt_lsb_minus4));  // log2_max_pic_order_cnt_lsb_minus4
     w.u(0, 1);    // sps_sub_layer_ordering_info_present_flag = 0
-    w.ue(0);      // sps_max_dec_pic_buffering_minus1（层 0）
-    w.ue(0);      // sps_max_num_reorder_pics（层 0）
+    w.ue(static_cast<unsigned>(sps.sps_max_dec_pic_buffering_minus1));  // sps_max_dec_pic_buffering_minus1（层 0）
+    w.ue(static_cast<unsigned>(sps.max_num_reorder_pics));  // sps_max_num_reorder_pics（层 0）
     w.ue(0);      // sps_max_latency_increase_plus1（层 0）
     // CTB = 64（MinCb=8, MaxCb=8+diff3=64）；log2_min_cb_minus3=0、diff_max_min=3。
     w.ue(0);      // log2_min_luma_coding_block_size_minus3
@@ -98,7 +100,9 @@ std::string write_sps(const Sps& sps) {
     w.ue(static_cast<unsigned>(sps.max_transform_hierarchy_depth_intra));  // max_transform_hierarchy_depth_intra
     w.u(0, 1);    // scaling_list_enabled_flag
     w.u(0, 1);    // amp_enabled_flag
-    w.u(0, 1);    // sample_adaptive_offset_enabled_flag
+    // sample_adaptive_offset_enabled_flag（HEVC 7.3.4.2.1）。默认 0 保持既有
+    // 字节级基线；阶段三打开 SAO 时置 1，slice header 随之写 slice_sao_*_flag。
+    w.u(sps.sao_enabled ? 1u : 0u, 1);  // sample_adaptive_offset_enabled_flag
     if (sps.pcm_enabled) {
         w.u(1, 1);    // pcm_enabled_flag
         w.u(7, 4);    // pcm_sample_bit_depth_luma_minus1
@@ -126,6 +130,8 @@ std::string write_sps(const Sps& sps) {
     w.u(0, 1);    // frame_field_info_present_flag
     w.u(0, 1);    // default_display_window_flag
     w.u(0, 1);    // vui_timing_info_present_flag
+    // FFmpeg 不解析 VUI bitstream_restriction 里的 max_num_reorder_frames，
+    // 重排序上限由 profile_tier_level 的 sps_max_num_reorder_pics 声明。
     w.u(0, 1);    // bitstream_restriction_flag
     if (sps.range_extension) {
         w.u(1, 1);    // sps_extension_present_flag

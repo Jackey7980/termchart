@@ -15,6 +15,11 @@ struct Vps {
     int general_level_idc = 30;
     // 必须与 SPS 一致：VPS 的 PTL 与 SPS 不匹配时部分解码器直接拒流。
     int general_profile_idc = 1;
+    // vps_max_dec_pic_buffering_minus1[0]。帧间档至少要 1（能留住 1 帧参考）；
+    // 0 是既有 I_PCM 基线口径（单帧、无参考），改动会移位后续 VPS 比特。
+    int max_dec_pic_buffering_minus1 = 0;
+    // vps_max_num_reorder_pics[0]：B 片档与 SPS 同步置 1。
+    int max_num_reorder_pics = 0;
 };
 
 struct Sps {
@@ -42,6 +47,17 @@ struct Sps {
     // 黄金基线的字节级口径，PCM 档不得改；真压缩档只有 4x4 TU，必须显式设 0，
     // 让解码端在 8x8 根节点隐式分裂、不读 split_transform_flag。
     int log2_diff_max_min_transform_block_size = 3;
+    // sample_adaptive_offset_enabled_flag（HEVC 7.3.4.2.1）。false = 沿用既有
+    // 字节级基线（SPS 该位写 0）；true = 声明 SAO，slice header 追加
+    // slice_sao_luma/chroma_flag，每个 CTB 前追加 sao() 语法（见 sao.hpp）。
+    bool sao_enabled = false;
+    // log2_max_pic_order_cnt_lsb_minus4。0 = 既有单帧基线（不写 POC，IDR 也不需要）；
+    // 帧间档必须 >0：非 IDR 切片的 slice_pic_order_cnt_lsb 位宽 = 该值 + 4。
+    int log2_max_pic_order_cnt_lsb_minus4 = 0;
+    // sps_max_dec_pic_buffering_minus1（层 0）。参考帧 + 当前帧至少 2 帧 → 写 1。
+    int sps_max_dec_pic_buffering_minus1 = 0;
+    // sps_max_num_reorder_pics[0]：B 片档须 >=1，否则解码器按解码序直接输出。
+    int max_num_reorder_pics = 0;
 };
 
 struct Pps {

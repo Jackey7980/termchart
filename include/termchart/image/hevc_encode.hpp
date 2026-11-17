@@ -5,8 +5,9 @@
 //   Pcm   —— I_PCM 无损档，字节级稳定，作为 diag_hevc.py 的黄金回归基线；
 //   Intra —— 阶段一真帧内压缩：35 种亮度模式逐 CU 决策 + 4x4 变换量化 + 残差 CABAC，
 //            三套系数扫描随模式切换，已通过 FFmpeg 软/硬解逐像素门禁；
-//   Inter —— 阶段二占位：帧间预测与参考帧管理尚未实现，请求该档**显式返回空串**，
-//            不静默降级到 Intra/Pcm（fail-loud 契约）。
+//   Inter —— 阶段二帧间档：P 片真实现，Merge/AMVP + 1/4 像素插值（8-tap/4-tap）
+//            + 可选双参考 L0=[POC-1,POC-2]（hevc_multi_ref）。整数/亚像素/多参考
+//            三条路径均经 ffmpeg 真解码 recon==dec 门禁，默认开关保字节级基线。
 #ifndef TERMCHART_IMAGE_HEVC_ENCODE_HPP
 #define TERMCHART_IMAGE_HEVC_ENCODE_HPP
 
@@ -21,7 +22,7 @@ namespace termchart::image {
 
 // 按 EncodeOptions::video_mode 分派档位。默认 Pcm：输出完整独立的 I_PCM 码流
 // （VPS + SPS + PPS + 每帧一个 IDR slice），字节级稳定，供 diag_hevc.py 做黄金回归。
-// Intra 已落地；Inter 未落地时返回空串，不静默降级。
+// Intra 与 Inter 均已落地；不支持的档位组合显式报错，不静默降级。
 TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image

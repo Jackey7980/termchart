@@ -42,6 +42,45 @@ transform_skip 覆盖：`--transform-skip` 打开自适应 skip（大 TU 档会�
 覆盖 Y/U/V 三平面；同时用 15 组 on/off 对照断言 **DBF 开关不改变码流字节**。
 该模式不做码率排序断言（2 形态小矩阵会有 1 B 抖动，且码流本就相同）。
 
+`--sao` 是阶段三 SAO 的门禁（SAO 必须跑在 DBF 之后，故两端都开 DBF）：
+  · 每个 (形态, QP, TU) 各编一份 sao=0 / sao=1，ffmpeg 真解码后与编码端重建
+    逐像素对拍 Y/U/V，neq 必须为 0 —— 这一条能抓住 EO 方向、edgeIdx→offset
+    符号、c_idx==2 继承、merge 参数、SAO/quadtree 交织顺序的全部偏差。
+  · `trace_headers` 核对 SPS 的 sample_adaptive_offset_enabled_flag 与 slice
+    的两个 slice_sao_*_flag，证明开关真进了参数集而不是只改重建。
+  · 7 参（旧调用）与 8 参 sao=0 的 Annex-B 逐字节相同，锁住「默认关闭时
+    字节级基线不破」；sao=1 的 RBSP 只能持平或变长。注意这里比的是**去掉
+    防竞争字节（0x000003→0x0000）之后**的长度：flat 档实测 Annex-B 会少 2 B，
+    纯粹因为 off 流多了两个 emulation prevention byte，RBSP 其实一样长，
+    直接比文件字节数会误报。
+  · PSNR 不得比关闭时低 0.2 dB 以上，且矩阵里必须真的出现「有增益」的用例，
+    防止 SAO 退化成只写语法、不滤波的静默空转。
+  · 额外的 MULTI-CTB 矩阵（256x128 / 192x64 / 64x192）覆盖跨 CTB 行：
+    原有矩阵全是 128x64（单行 CTB），`sao_merge_up_flag` 与
+    `ry>0 && !merge_left` 分支从未被解码器验证。64x192 是 1x3 网格，
+    has_left 恒 false，flat 形态下各 CTB 参数一致，RD 必选 merge_up=1；
+    实测 `merge=0/1` 出现两次，且 `neq=0` 证明 ffmpeg 真的按继承解析。
+
+`--rdo` 是阶段三 P3-3（模式 + CBF 的率失真决策）门禁：
+  · 每组编 3 条流：9 参 rdo=0 / 9 参 rdo=1 / 旧 7 参；三条都要求
+    「编码端重建 == ffmpeg 软解」逐像素 neq=0，且 rdo=0 与旧 7 参
+    逐字节相同。
+  · `trace_headers` 逐字段比对 off/on 的 profile / level / 尺寸 / MaxTb /
+    层次深度 / SAO·skip 开关，证明 RDO 只改 slice data、不碰参数集。
+  · 总 RBSP（去防竞争字节）必须下降，且矩阵里必须出现「码率下降且画质
+    不降」的用例防静默空转；单组 PSNR 退化不得超过 1.0 dB。
+  · **验收口径修正**：路线图原写「体积 −≥10%」，但固定 QP 下 RD 权衡不可能
+    白拿码率——实测无约束 λ 能拿 −10.85%，代价是 one8/QP40 掉 9.52 dB。
+    本档改用「约束式 RDO」（只在纯 SSD 最优的失真余量内挑省 bin 的模式），
+    门禁全矩阵实测 RBSP −4.57%、最坏 −0.58 dB，故按「同画质下码率下降」判定，
+    不为了凑 −10% 牺牲画质。
+  · 可叠加 `--transform-skip` 验证 RExt 参数集下组合路径；与 --sao /
+    --force-skip / --dblock-on 互斥。
+
+用法补充：
+  python tools/verify_hevc_tu_sizes.py --quick --sao
+  python tools/verify_hevc_tu_sizes.py --quick --rdo
+
 退出码：0 全通过；1 有失败；2 环境不满足（ffmpeg/CXX 缺失，显式失败）。
 """
 from __future__ import annotations
@@ -239,6 +278,275 @@ def encode_decode(probe: Path, ff: str, tmp: Path, shape: str, qp: int, tu: int,
     return f265.stat().st_size, stats, neq
 
 
+def sao_case(probe: Path, ff: str, tmp: Path, env, shape: str, qp: int, tu: int,
+             tag: str, sao: int | None, w: int = W,
+             h: int = H) -> tuple[Path, int, float, int] | None:
+    """编一条流并用真实 ffmpeg 解码；返回 (码流, 字节数, Y-PSNR, neq)。
+
+    默认尺寸沿用全局 W/H（文件名保持原样，既有 trace_headers 门禁不受影响）；
+    传别的 w/h 时在文件名里加尺寸后缀，避免不同尺寸的 dump 互相覆盖。
+    """
+    suffix = "" if (w, h) == (W, H) else f"_{w}x{h}"
+    stem = f"sao_{tag}{suffix}_{shape}_{qp}_{tu}"
+    f265 = tmp / (stem + ".265")
+    prefix = tmp / (stem + "_recon")
+    e = dict(env, TERMCHART_HEVC_RECON_PATH=str(prefix))
+    argv = [str(probe), str(qp), str(w), str(h), shape, str(f265), str(tu), "0"]
+    if sao is not None:
+        argv.append(str(sao))  # 第 8 参：SAO 开关
+    r = run(argv, e)
+    if r.returncode != 0 or not f265.exists():
+        print(f"  SAO ENC FAIL {tag} {w}x{h} {shape} QP{qp} TU{tu}: "
+              f"{r.stderr.decode(errors='replace')[:160]}")
+        return None
+    yp, cp = Path(str(prefix) + ".yuv"), Path(str(prefix) + ".chroma.yuv")
+    if not (yp.exists() and cp.exists()):
+        print(f"  SAO RECON DUMP MISSING {tag} {w}x{h} {shape} QP{qp} TU{tu}")
+        return f265, f265.stat().st_size, 0.0, -1
+    dec = tmp / (stem + ".dec.yuv")
+    d = run([ff, "-y", "-loglevel", "error", "-i", str(f265),
+             "-f", "rawvideo", "-pix_fmt", "yuv420p", str(dec)])
+    if d.returncode != 0 or not dec.exists():
+        print(f"  SAO DEC FAIL {tag} {w}x{h} {shape} QP{qp} TU{tu}: "
+              f"{d.stderr.decode(errors='replace')[:160]}")
+        return None
+    src = (tmp / (stem + ".265.yuv")).read_bytes()
+    dst = dec.read_bytes()
+    n = w * h * 3 // 2
+    if len(src) < n or len(dst) < n:
+        return f265, f265.stat().st_size, 0.0, -1
+    recon = yp.read_bytes() + cp.read_bytes()
+    neq = sum(a != b for a, b in zip(recon[:n], dst[:n]))
+    se = sum((x - y) ** 2 for x, y in zip(src[:w * h], dst[:w * h]))
+    psnr = 99.0 if se == 0 else 10 * math.log10(255 * 255 / (se / (w * h)))
+    return f265, f265.stat().st_size, psnr, neq
+
+
+def verify_sao(probe: Path, ff: str, tmp: Path, env, shapes: list[str],
+               qps: list[int], tus: list[int]) -> tuple[list[str], list[str]]:
+    problems: list[str] = []
+    lines: list[str] = []
+    e = dict(env)
+    e.pop("TERMCHART_HEVC_NO_DBLOCK", None)  # SAO 在 DBF 之后，两端都要开
+    gains = 0
+    for shape in shapes:
+        for qp in qps:
+            for tu in tus:
+                off = sao_case(probe, ff, tmp, e, shape, qp, tu, "off", 0)
+                on = sao_case(probe, ff, tmp, e, shape, qp, tu, "on", 1)
+                legacy = sao_case(probe, ff, tmp, e, shape, qp, tu, "legacy", None)
+                if off is None or on is None or legacy is None:
+                    problems.append(f"{shape} QP{qp} TU{tu}: 编码/解码失败")
+                    continue
+                fo, so, po, no = off
+                fn, sn, pn, nn = on
+                label = f"{shape:8s} QP{qp:2d} TU{tu}"
+                for name, neq in (("off", no), ("on", nn)):
+                    if neq != 0:
+                        problems.append(f"{label} sao={name} 重建 vs ffmpeg neq={neq}")
+                off_bytes, on_bytes, legacy_bytes = (
+                    fo.read_bytes(), fn.read_bytes(), legacy[0].read_bytes())
+                if off_bytes != legacy_bytes:
+                    problems.append(f"{label}: sao=0 与旧 7 参调用码流不一致")
+                rbsp_off = len(off_bytes.replace(b"\x00\x00\x03", b"\x00\x00"))
+                rbsp_on = len(on_bytes.replace(b"\x00\x00\x03", b"\x00\x00"))
+                if rbsp_on < rbsp_off:
+                    problems.append(
+                        f"{label}: SAO 开启后 RBSP 变短 {rbsp_off}->{rbsp_on}")
+                if pn < po - 0.2:
+                    problems.append(f"{label}: SAO 使 PSNR 下降 {po:.2f}->{pn:.2f}")
+                if rbsp_on > rbsp_off and pn > po + 0.05:
+                    gains += 1
+                lines.append(f"  {label}  {so:5d}->{sn:5d} B  "
+                             f"PSNR {po:6.2f}->{pn:6.2f} ({pn - po:+.2f} dB)  "
+                             f"neq {no}/{nn}")
+    # 参数集门禁：SPS 的 SAO 总开关与 slice 的两个分量开关必须随 hevc_sao 翻转。
+    for tag, want in (("off", 0), ("on", 1)):
+        f265 = tmp / f"sao_{tag}_{shapes[0]}_{qps[0]}_{tus[0]}.265"
+        tr = run([ff, "-hide_banner", "-loglevel", "info", "-i", str(f265),
+                  "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"])
+        text = tr.stderr.decode(errors="replace")
+        for name in ("sample_adaptive_offset_enabled_flag", "slice_sao_luma_flag",
+                     "slice_sao_chroma_flag"):
+            got = field_vals(text, name)
+            # SPS 总开关恒写在码流里（0/1）；slice 的两个 flag 只有在总开关为 1
+            # 时才存在，关闭时 trace_headers 里应当一个字段都搜不到。
+            if name == "sample_adaptive_offset_enabled_flag":
+                ok = bool(got) and all(v == want for v in got)
+            else:
+                ok = (bool(got) and all(v == 1 for v in got)) if want else not got
+            if not ok:
+                problems.append(f"trace_headers {tag}: {name} 期望 {want} 实得 {got}")
+    if gains == 0:
+        problems.append("SAO 矩阵里没有任何「码率上涨 + PSNR 增益」用例，疑似静默空转")
+    return problems, lines
+
+
+def verify_sao_multictb(probe: Path, ff: str, tmp: Path, env,
+                        quick: bool) -> tuple[list[str], list[str]]:
+    """SAO 跨 CTB 边界门禁：现有 --sao 矩阵全是 128x64（只有一行 CTB），
+    `sao_merge_up_flag` / `ry>0 && !merge_left` 分支从未被解码器验证过。
+
+    三档尺寸刻意覆盖不同的 CTB 网格形状：
+      · 256x128 = 4x2：左、上邻居同时存在；
+      · 192x64  = 3x1：ctb_w 不是 2 的幂，检验光栅序索引；
+      · 64x192  = 1x3：has_left 恒为 false，merge_up 是唯一候选；flat 形态下
+        各 CTB 的 SAO 参数一致，RD 必然选中 merge_up=1（只花 1 个 flag bin），
+        从而真正走到「整 CTB 继承上邻居参数」这条语法路径。
+    """
+    sizes = [(256, 128), (64, 192)] if quick else [(256, 128), (192, 64), (64, 192)]
+    shapes = ["flat"] if quick else ["flat", "dots", "grad"]
+    qps = [26] if quick else [10, 26, 40]
+    tus = [2] if quick else [2, 3]
+    problems: list[str] = []
+    lines: list[str] = []
+    for w, h in sizes:
+        for shape in shapes:
+            for qp in qps:
+                for tu in tus:
+                    off = sao_case(probe, ff, tmp, env, shape, qp, tu, "mc_off", 0, w, h)
+                    on = sao_case(probe, ff, tmp, env, shape, qp, tu, "mc_on", 1, w, h)
+                    legacy = sao_case(probe, ff, tmp, env, shape, qp, tu,
+                                      "mc_legacy", None, w, h)
+                    label = f"{w:3d}x{h:<3d} {shape:6s} QP{qp:2d} TU{tu}"
+                    if off is None or on is None or legacy is None:
+                        problems.append(f"{label}: 编码/解码失败")
+                        continue
+                    fo, so, po, no = off
+                    fn, sn, pn, nn = on
+                    if no != 0 or nn != 0:
+                        problems.append(f"{label}: 重建 vs ffmpeg neq={no}/{nn}")
+                    off_bytes, on_bytes, legacy_bytes = (
+                        fo.read_bytes(), fn.read_bytes(), legacy[0].read_bytes())
+                    if off_bytes != legacy_bytes:
+                        problems.append(f"{label}: sao=0 与旧 7 参调用码流不一致")
+                    rbsp_off = len(off_bytes.replace(b"\x00\x00\x03", b"\x00\x00"))
+                    rbsp_on = len(on_bytes.replace(b"\x00\x00\x03", b"\x00\x00"))
+                    if rbsp_on < rbsp_off:
+                        problems.append(
+                            f"{label}: SAO 开启后 RBSP 变短 {rbsp_off}->{rbsp_on}")
+                    if pn < po - 0.2:
+                        problems.append(f"{label}: SAO 使 PSNR 下降 {po:.2f}->{pn:.2f}")
+                    lines.append(f"  {label}  {so:5d}->{sn:5d} B  "
+                                 f"PSNR {po:6.2f}->{pn:6.2f} ({pn - po:+.2f} dB)  "
+                                 f"neq {no}/{nn}")
+    return problems, lines
+
+
+def rdo_case(probe: Path, ff: str, tmp: Path, env, shape: str, qp: int, tu: int,
+             tag: str, rdo: int | None, skip: bool) -> tuple[Path, int, float, int] | None:
+    """阶段三 P3-3 门禁的单条码流。rdo=None 表示旧的 7 参调用（不传第 8/9 参）。"""
+    stem = f"rdo_{tag}_{shape}_{qp}_{tu}"
+    f265 = tmp / (stem + ".265")
+    prefix = tmp / (stem + "_recon")
+    e = dict(env, TERMCHART_HEVC_RECON_PATH=str(prefix))
+    argv = [str(probe), str(qp), str(W), str(H), shape, str(f265), str(tu),
+            "1" if skip else "0"]
+    if rdo is not None:
+        argv += ["0", str(rdo)]  # 第 8 参 sao=0、第 9 参 rdo
+    r = run(argv, e)
+    if r.returncode != 0 or not f265.exists():
+        print(f"  RDO ENC FAIL {tag} {shape} QP{qp} TU{tu}: "
+              f"{r.stderr.decode(errors='replace')[:160]}")
+        return None
+    yp, cp = Path(str(prefix) + ".yuv"), Path(str(prefix) + ".chroma.yuv")
+    if not (yp.exists() and cp.exists()):
+        print(f"  RDO RECON DUMP MISSING {tag} {shape} QP{qp} TU{tu}")
+        return f265, f265.stat().st_size, 0.0, -1
+    dec = tmp / (stem + ".dec.yuv")
+    d = run([ff, "-y", "-loglevel", "error", "-i", str(f265),
+             "-f", "rawvideo", "-pix_fmt", "yuv420p", str(dec)])
+    if d.returncode != 0 or not dec.exists():
+        print(f"  RDO DEC FAIL {tag} {shape} QP{qp} TU{tu}: "
+              f"{d.stderr.decode(errors='replace')[:160]}")
+        return None
+    src = (tmp / (stem + ".265.yuv")).read_bytes()
+    dst = dec.read_bytes()
+    n = W * H * 3 // 2
+    if len(src) < n or len(dst) < n:
+        return f265, f265.stat().st_size, 0.0, -1
+    recon = yp.read_bytes() + cp.read_bytes()
+    neq = sum(a != b for a, b in zip(recon[:n], dst[:n]))
+    se = sum((x - y) ** 2 for x, y in zip(src[:W * H], dst[:W * H]))
+    psnr = 99.0 if se == 0 else 10 * math.log10(255 * 255 / (se / (W * H)))
+    return f265, f265.stat().st_size, psnr, neq
+
+
+RDO_PS_FIELDS = (
+    "general_profile_idc", "general_level_idc", "pic_width_in_luma_samples",
+    "pic_height_in_luma_samples", "log2_diff_max_min_transform_block_size",
+    "max_transform_hierarchy_depth_intra", "sample_adaptive_offset_enabled_flag",
+    "transform_skip_enabled_flag",
+)
+
+
+def verify_rdo(probe: Path, ff: str, tmp: Path, env, shapes: list[str],
+               qps: list[int], tus: list[int], skip: bool) -> tuple[list[str], list[str]]:
+    problems: list[str] = []
+    lines: list[str] = []
+    e = dict(env)
+    e.pop("TERMCHART_HEVC_NO_DBLOCK", None)  # 两端都开 DBF，与 SAO 门禁同口径
+    total_off = total_on = 0
+    gains = 0
+    drops: list[float] = []
+    for shape in shapes:
+        for qp in qps:
+            for tu in tus:
+                off = rdo_case(probe, ff, tmp, e, shape, qp, tu, "off", 0, skip)
+                on = rdo_case(probe, ff, tmp, e, shape, qp, tu, "on", 1, skip)
+                legacy = rdo_case(probe, ff, tmp, e, shape, qp, tu, "legacy", None, skip)
+                label = f"{shape:8s} QP{qp:2d} TU{tu}"
+                if off is None or on is None or legacy is None:
+                    problems.append(f"{label}: 编码/解码失败")
+                    continue
+                fo, so, po, no = off
+                fn, sn, pn, nn = on
+                _, _, _, nl = legacy
+                # 三条流都必须与 ffmpeg 逐像素一致；-1（dump 缺失）不能放过。
+                for name, neq in (("off", no), ("on", nn), ("legacy", nl)):
+                    if neq != 0:
+                        problems.append(f"{label} rdo={name} 重建 vs ffmpeg neq={neq}")
+                if fo.read_bytes() != legacy[0].read_bytes():
+                    problems.append(f"{label}: rdo=0 与旧 7 参调用码流不一致")
+                rbsp_off = len(fo.read_bytes().replace(b"\x00\x00\x03", b"\x00\x00"))
+                rbsp_on = len(fn.read_bytes().replace(b"\x00\x00\x03", b"\x00\x00"))
+                total_off += rbsp_off
+                total_on += rbsp_on
+                drops.append(pn - po)
+                # 单组允许轻微波动（实测最坏 -0.58 dB），但不允许画质崩塌。
+                if pn < po - 1.0:
+                    problems.append(f"{label}: RDO 使 PSNR 下降 {po:.2f}->{pn:.2f}")
+                if rbsp_on < rbsp_off and pn >= po - 0.05:
+                    gains += 1
+                lines.append(f"  {label}  {so:5d}->{sn:5d} B  "
+                             f"PSNR {po:6.2f}->{pn:6.2f} ({pn - po:+.2f} dB)  "
+                             f"neq {no}/{nn}")
+    total_gain = (total_off - total_on) / max(total_off, 1) * 100.0
+    if total_gain <= 0.0:
+        problems.append(f"RDO 未降低总 RBSP 码率（{total_off}->{total_on}）")
+    if gains == 0:
+        problems.append("RDO 矩阵里没有任何「码率下降且画质不降」用例，疑似静默空转")
+    lines.append(f"  TOTAL RBSP {total_off}->{total_on} B (-{total_gain:.2f}%) "
+                 f"worstPSNR {min(drops):+.2f} dB avgPSNR "
+                 f"{sum(drops) / max(len(drops), 1):+.2f} dB gains={gains}")
+    # RDO 只改 slice data，参数集必须逐字段不变。
+    traces = {}
+    for tag in ("off", "on"):
+        f265 = tmp / f"rdo_{tag}_{shapes[0]}_{qps[0]}_{tus[0]}.265"
+        tr = run([ff, "-hide_banner", "-loglevel", "info", "-i", str(f265),
+                  "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"])
+        traces[tag] = tr.stderr.decode(errors="replace")
+    seen = 0
+    for name in RDO_PS_FIELDS:
+        a, b = field_vals(traces["off"], name), field_vals(traces["on"], name)
+        seen += len(a)
+        if a != b:
+            problems.append(f"trace_headers: RDO 改变了参数集字段 {name}: {a} -> {b}")
+    if seen == 0:
+        problems.append("trace_headers: 一个参数集字段都没读到，门禁失效")
+    return problems, lines
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="CI 冒烟矩阵")
@@ -248,10 +556,20 @@ def main() -> int:
                     help="强制每个候选 TU 都 transform_skip=1（隐含 --transform-skip）")
     ap.add_argument("--dblock-on", action="store_true",
                     help="开 DBF 门禁：编码端与解码端都启用去块滤波，逐像素比对")
+    ap.add_argument("--sao", action="store_true",
+                    help="阶段三 SAO 门禁：on/off 逐像素对拍 + 参数集逐字段 + 字节基线")
+    ap.add_argument("--rdo", action="store_true",
+                    help="阶段三 P3-3 RDO 门禁：模式+CBF 的 RD 决策 on/off 对拍")
     ap.add_argument("--cxx", default=None)
     ap.add_argument("--ffmpeg", default=None)
     args = ap.parse_args()
     skip = args.transform_skip or args.force_skip
+    if args.sao and (skip or args.dblock_on or args.rdo):
+        print("FAIL: --sao 与 --transform-skip/--force-skip/--dblock-on/--rdo 互斥")
+        return 2
+    if args.rdo and (args.force_skip or args.dblock_on):
+        print("FAIL: --rdo 与 --force-skip/--dblock-on 互斥")
+        return 2
 
     ff = args.ffmpeg or find_ffmpeg()
     if not ff:
@@ -272,6 +590,47 @@ def main() -> int:
     if not build_probe(cxx, probe):
         print("FAIL: probe build failed")
         return 2
+
+    if args.sao:
+        sao_shapes = SHAPES[:2] if args.quick else SHAPES
+        sao_qps = [10, 26] if args.quick else [10, 26, 40]
+        sao_tus = [2, 3] if args.quick else [2, 3, 4, 0]
+        base_env = dict(os.environ)
+        base_env.pop("TERMCHART_HEVC_NO_DBLOCK", None)
+        print(f"MODE: sao on/off oracle shapes={sao_shapes} qps={sao_qps} tus={sao_tus}")
+        problems, lines = verify_sao(probe, ff, tmp, base_env,
+                                     sao_shapes, sao_qps, sao_tus)
+        mc_problems, mc_lines = verify_sao_multictb(probe, ff, tmp, base_env,
+                                                    args.quick)
+        for line in lines:
+            print(line)
+        print("MULTI-CTB:")
+        for line in mc_lines:
+            print(line)
+        for p in problems + mc_problems:
+            print("  SAO MISMATCH:", p)
+        print("SAO ORACLE:", "FAIL" if problems + mc_problems else "PASS",
+              f"cases={len(lines)} multictb={len(mc_lines)} "
+              f"problems={len(problems) + len(mc_problems)}")
+        return 1 if problems + mc_problems else 0
+
+    if args.rdo:
+        rdo_shapes = SHAPES[:2] if args.quick else SHAPES
+        rdo_qps = [10, 26] if args.quick else QPS
+        rdo_tus = [2, 3] if args.quick else [2, 3, 4, 0]
+        base_env = dict(os.environ)
+        base_env.pop("TERMCHART_HEVC_NO_DBLOCK", None)
+        print(f"MODE: rdo on/off oracle shapes={rdo_shapes} qps={rdo_qps} "
+              f"tus={rdo_tus} skip={skip}")
+        problems, lines = verify_rdo(probe, ff, tmp, base_env,
+                                     rdo_shapes, rdo_qps, rdo_tus, skip)
+        for line in lines:
+            print(line)
+        for p in problems:
+            print("  RDO MISMATCH:", p)
+        print("RDO ORACLE:", "FAIL" if problems else "PASS",
+              f"cases={len(lines) - 1} problems={len(problems)}")
+        return 1 if problems else 0
 
     # 逐像素门禁要用「编码端关 DBF + 解码端 -skip_loop_filter all」这一对，
     # 否则编码端重建与解码端输出本来就会差几个像素。

@@ -81,6 +81,52 @@ struct EncodeOptions {
     //（4x4 沿用 PPS 默认 max=2，更大 TU 走 RExt 参数集，见上一字段）。
     // 色度 TU 恒为亮度的一半（4:2:0）。Pcm 档忽略本字段；其它值返回空串。
     int hevc_log2_tu_size = 2;
+    // 真压缩档（Intra）是否启用 SAO（8.7.3 样点自适应偏移）：
+    //   false（默认）⇒ SPS sample_adaptive_offset_enabled_flag=0、码流与既有
+    //          字节级基线逐字节一致；
+    //   true ⇒ SPS 声明 SAO、slice header 写 slice_sao_luma/chroma_flag、每个 CTB
+    //          前写 sao() 语法（merge 标志 + type_idx + offset）。编码端按
+    //          「真实滤波 SSE + λ·bin」逐 CTB 在 BO/EO/不启用三者间选优，并与
+    //          左/上邻居比较是否直接 merge 邻居参数；重建出口先 DBF 再 SAO。
+    // Pcm 档忽略本字段。
+    bool hevc_sao = false;
+    // 真压缩档（Intra）是否启用帧内模式的率失真决策（阶段三 P3-3）：
+    //   false（默认）⇒ 35 个候选模式按纯重建 SSD 选优，码流与既有字节级基线
+    //          逐字节一致；
+    //   true ⇒ 代价换成 J = SSD + λ·(模式语法 bin + 残差 bin)。bin 数由
+    //          encode_residual 实算，模式语法按 prev_intra_luma_pred_flag /
+    //          mpm_idx / rem_intra_luma_pred_mode 的真实 bin 数计入，故会倾向
+    //          MPM 候选与残差稀疏的模式。λ = auto_lambda(slice_qp)，与
+    //          transform_skip、自动 TU 档用的是同一个 λ 口径。
+    // 只影响 slice data 的模式选择，不新增/改写任何参数集字段；任意结果都是
+    // 合法 HEVC 码流。Pcm 档忽略本字段。
+    bool hevc_rdo = false;
+    // Inter 档（P 片）是否在整数运动搜索之后做 1/4 像素精化（阶段二 P2 亚像素）：
+    //   false（默认）⇒ MV 恒为 2 亮度采样（8 个 1/4 单位）的整数倍，运动补偿
+    //          退化为纯拷贝，码流与既有整数 P 帧字节级基线逐字节一致；
+    //   true ⇒ 在整数最优 MV 附近 ±4 个 1/4 单位做全搜索，用 8-tap luma /
+    //          4-tap chroma 插值算预测。插值严格对齐 FFmpeg hevcdsp（由
+    //          tools/verify_hevc_subpel.py 的 recon==dec 门禁锁定），MVD 用
+    //          现成的 mvd_coding 语法（单位本就是 1/4 采样），无需改参数集。
+    //          任意结果都是合法 HEVC 码流。Pcm / Intra 档忽略本字段。
+    bool hevc_subpel_me = false;
+    // Inter 档（P 片）是否启用两个前向参考帧（阶段二 P2 多参考）：
+    //   false（默认）⇒ 只参考前一帧（单参考），码流与既有字节级基线逐字节一致；
+    //   true ⇒ 参考列表 L0 = [POC-1, POC-2]，每个 CU 对两帧各做运动搜索，
+    //          选最优 (MV, ref_idx)。merge 候选按 ref_idx 复制（规范不缩放），
+    //          AMVP 只用同 ref_idx 的邻居（规避跨参考 POC 缩放）；SPS/VPS 的
+    //          max_dec_pic_buffering_minus1 从 1 增到 2。任意结果都是合法码流。
+    //          注意：本开关仅多参考前向 P 帧，不含双向 B 片预测。Pcm/Intra 忽略。
+    bool hevc_multi_ref = false;
+    // Inter 档是否启用双向 B 片（GOP=3：I0 → P2 → B1 → P4 → B3 ...）。
+    // POC 按显示序号 ×2 分配；B 片 L0=前一个 P/IDR、L1=后一个 P，均为单参考。
+    // 帧在【解码序】写出（P 先于其后的 B），POC 负责恢复显示序。默认 false，
+    // 保证既有 Inter 码流逐字节不变。Pcm/Intra 忽略。
+    bool hevc_b_slice = false;
+    // B 片内是否混用 merge / AMVP / 双向 AMVP。默认 false：整片只用 merge
+    // （仍含 combined bi-pred 双向候选），与 FFmpeg 逐像素门禁全形态通过；
+    // true 为实验性混合模式，部分运动形态下解码端候选列表会分叉。
+    bool hevc_b_amvp = false;
 };
 
 // 单帧编码（PNG/JPEG/静态图）。

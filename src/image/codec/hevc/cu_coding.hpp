@@ -68,6 +68,90 @@ struct CuIntra8x8 {
 // 返回空序列表示输入超出当前支持范围（残差编码失败）。
 std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu);
 
+// ── P 片帧间 CU ──────────────────────────────────────────────────────────
+// bin 序列（ffmpeg hevcdec.c hls_coding_unit 2477-2600 + hls_prediction_unit）：
+//   skip_flag
+//   [skip=1] merge_idx  ← 到此结束（pred_mode/part_mode/merge_flag/rqt_root_cbf
+//                          一个都不读）
+//   [skip=0] pred_mode_flag=1(INTER) → part_mode(2Nx2N) → merge_flag
+//            → merge: merge_idx
+//            → AMVP : (ref_idx_l0) + mvd_coding + mvp_lx_flag
+//            → rqt_root_cbf（仅 merge_flag==0 时读；2Nx2N+merge 推断为 1）
+//            → transform_tree（与帧内 4x4 路径完全同构）
+// 变换树差异只有两点：亮度/色度恒为 DCT-II（不是帧内的 DST-VII），扫描恒为 DIAG。
+struct CuInter8x8 {
+    int skip_ctx_inc = 0;   // 左/上 CU 的 skip_flag 之和，0..2（cabac.c:587-600）
+    bool skip = false;      // true ⇒ P_Skip
+    int max_merge_cand = 5; // slice: five_minus_max_num_merge_cand=0 ⇒ 5
+    int merge_idx = 0;
+    bool merge = true;      // false ⇒ AMVP
+    int nb_refs_l0 = 1;     // 单参考 ⇒ 解码端不读 ref_idx_l0
+    int mvd_x = 0;          // 1/4 亮度采样单位（MvdL0[0]）
+    int mvd_y = 0;
+    int mvp_lx_flag = 0;    // 0/1
+
+    // 残差：skip=true 时全部忽略。
+    bool emit_rqt_root_cbf = false;  // AMVP 必为 true；2Nx2N+merge 恒 false
+    int rqt_root_cbf = 1;            // 0 ⇒ 无 transform_tree
+    int cbf_cb = 0;
+    int cbf_cr = 0;
+    const std::int16_t* luma4x4[4] = {nullptr, nullptr, nullptr, nullptr};
+    const std::int16_t* chroma4x4[2] = {nullptr, nullptr};
+    bool transform_skip_enabled = false;
+    int transform_skip_luma[4] = {0, 0, 0, 0};
+    int transform_skip_chroma[2] = {0, 0};
+};
+
+// 返回空序列 = 输入非法或残差编码失败。
+std::vector<Bin> encode_cu_inter_8x8(const CuInter8x8& cu);
+
+// ── B 片帧间 CU ──────────────────────────────────────────────────────────
+// prediction_unit()（HEVC 7.3.8.8）在 P 片基础上多出的部分：
+//   merge_flag==1 → merge_idx（与 P 片相同）
+//   merge_flag==0 → inter_pred_idc 先发，再按列表分组：
+//     idc != PRED_L1 → (ref_idx_l0) + mvd_coding(L0) + mvp_l0_flag
+//     idc != PRED_L0 → (ref_idx_l1) + [mvd_coding(L1) unless mvd_l1_zero_flag
+//                                    && idc == PRED_BI] + mvp_l1_flag
+// ctx 见 cabac_context：inter_pred_idc 22+ct_depth（小 PB 用 22+4）。
+struct CuInterB8x8 {
+    int skip_ctx_inc = 0;
+    bool skip = false;
+    int max_merge_cand = 5;
+    int merge_idx = 0;
+    bool merge = true;           // false ⇒ AMVP（随后发 inter_pred_idc 两组）
+    int inter_pred_idc = 2;      // 0=PRED_L0 / 1=PRED_L1 / 2=PRED_BI
+    int ct_depth = 2;            // 8x8 CU 在 CTB32 下的深度；决定 inter_pred_idc 的 ctx
+    int nb_refs_l0 = 1;          // ==1 时解码端不读 ref_idx_l0
+    int nb_refs_l1 = 1;          // ==1 时解码端不读 ref_idx_l1
+    int ref_idx_l0 = 0;
+    int ref_idx_l1 = 0;
+    bool mvd_l1_zero_flag = false;  // 必须与 slice header 一致
+    int mvd_x = 0;                  // L0 的 Mvd（1/4 亮度采样）
+    int mvd_y = 0;
+    int mvd_x_l1 = 0;               // L1 的 Mvd
+    int mvd_y_l1 = 0;
+    int mvp_lx_flag = 0;
+    int mvp_lx_flag_l1 = 0;
+
+    // 残差：与 P 片同构（skip=true 时全部忽略）。
+    bool emit_rqt_root_cbf = false;
+    int rqt_root_cbf = 1;
+    int cbf_cb = 0;
+    int cbf_cr = 0;
+    const std::int16_t* luma4x4[4] = {nullptr, nullptr, nullptr, nullptr};
+    const std::int16_t* chroma4x4[2] = {nullptr, nullptr};
+    bool transform_skip_enabled = false;
+    int transform_skip_luma[4] = {0, 0, 0, 0};
+    int transform_skip_chroma[2] = {0, 0};
+};
+
+// 返回空序列 = 输入非法或残差编码失败。
+std::vector<Bin> encode_cu_inter_b_8x8(const CuInterB8x8& cu);
+
+// P 片中的帧内 CU：skip_flag=0 + pred_mode_flag=0 之后接标准帧内语法。
+// 注意 P 片里 part_mode 在 MinCb 档依然要读，调用方必须让 cu.emit_part_mode=true。
+std::vector<Bin> encode_cu_intra_in_p_8x8(const CuIntra8x8& cu, int skip_ctx_inc);
+
 struct CuIntra8x8Decoded {
     bool part_2nx2n = true;
     bool prev_intra_luma_pred_flag = true;

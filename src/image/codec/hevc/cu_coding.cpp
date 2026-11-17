@@ -87,6 +87,41 @@ std::vector<Bin> encode_cu_intra_tuN(const CuIntra8x8& cu) {
     return out;
 }
 
+// 帧间的 transform_tree：MaxTb=4x4 档下 bin 序列与帧内 4x4 路径同构——
+// 根节点（log2=3）读 cbf_cb/cbf_cr（split_transform_flag 因 3>log2_max_trafo 不读），
+// 四个 4x4 叶子（trafoDepth=1）读 cbf_luma（ctx 40，因为 trafo_depth!=0），
+// 色度残差在 blk_idx==3 的 TU 内、亮度残差之后。区别只在扫描恒为 DIAG。
+bool emit_transform_tree_4x4(std::vector<Bin>& out, int cbf_cb, int cbf_cr,
+                             const std::int16_t* const luma4x4[4],
+                             const std::int16_t* const chroma4x4[2],
+                             bool transform_skip_enabled,
+                             const int transform_skip_luma[4],
+                             const int transform_skip_chroma[2]) {
+    put_cbf_cb_cr(out, 1, 0, cbf_cb);
+    put_cbf_cb_cr(out, 2, 0, cbf_cr);
+    for (int i = 0; i < 4; ++i) {
+        const bool nz = block_nonzero(luma4x4[i]);
+        put_cbf_luma(out, 1, nz ? 1 : 0);
+        if (!nz) continue;
+        if (transform_skip_enabled) put_transform_skip_flag(out, 0, transform_skip_luma[i]);
+        bool ok = true;
+        const auto rb = encode_residual_4x4(luma4x4[i], &ok, kScanDiag);
+        if (!ok || rb.empty()) return false;
+        out.insert(out.end(), rb.begin(), rb.end());
+    }
+    for (int c = 0; c < 2; ++c) {
+        const int cbf = c ? cbf_cr : cbf_cb;
+        if (!cbf) continue;
+        if (!block_nonzero(chroma4x4[c])) return false;  // cbf=1 却全零是非法码流
+        if (transform_skip_enabled) put_transform_skip_flag(out, c + 1, transform_skip_chroma[c]);
+        bool ok = true;
+        const auto rb = encode_residual_4x4(chroma4x4[c], &ok, kScanDiag, c + 1);
+        if (!ok || rb.empty()) return false;
+        out.insert(out.end(), rb.begin(), rb.end());
+    }
+    return true;
+}
+
 }  // namespace
 
 std::vector<Bin> encode_cu_intra_8x8(const CuIntra8x8& cu) {
@@ -208,6 +243,100 @@ bool decode_cu_intra_8x8(const Bin* bins, std::size_t count, const CuIntra8x8Sha
     }
     if (consumed) *consumed = c.consumed();
     return true;
+}
+
+std::vector<Bin> encode_cu_inter_8x8(const CuInter8x8& cu) {
+    std::vector<Bin> out;
+    put_skip_flag(out, cu.skip_ctx_inc, cu.skip ? 1 : 0);
+
+    if (cu.skip) {
+        // hevcdec.c:2498-2504 —— skip_flag=1 时直接调 hls_prediction_unit，
+        // 中间那些 pred_mode_flag / part_mode / merge_flag 一个 bin 都不读，
+        // merge_flag 在预测单元内按 skip_flag 直接视为 1。
+        put_merge_idx(out, cu.merge_idx, cu.max_merge_cand);
+        return out;
+    }
+
+    put_pred_mode_flag(out, 0);      // pred_mode_flag=0 ⇒ MODE_INTER（=1 是 INTRA）
+    put_part_mode_inter_2nx2n(out);  // 8x8 == MinCb ⇒ part_mode 必读
+    put_merge_flag(out, cu.merge ? 1 : 0);
+    if (cu.merge) {
+        put_merge_idx(out, cu.merge_idx, cu.max_merge_cand);
+    } else {
+        put_ref_idx_l0(out, 0, cu.nb_refs_l0);  // 单参考时为空序列
+        put_mvd_coding(out, cu.mvd_x, cu.mvd_y);
+        put_mvp_lx_flag(out, cu.mvp_lx_flag);
+    }
+
+    // hevcdec.c:2593 的读取条件：pred_mode != INTRA 且非 (2Nx2N && merge_flag)。
+    if (cu.emit_rqt_root_cbf) {
+        put_rqt_root_cbf(out, cu.rqt_root_cbf);
+        if (!cu.rqt_root_cbf) return out;  // 显式无残差，transform_tree 不出现
+    } else if (!cu.rqt_root_cbf) {
+        return {};  // 未写该 bin 时解码端推断为 1，写 0 会与解码端分叉
+    }
+
+    if (!emit_transform_tree_4x4(out, cu.cbf_cb, cu.cbf_cr, cu.luma4x4, cu.chroma4x4,
+                                 cu.transform_skip_enabled, cu.transform_skip_luma,
+                                 cu.transform_skip_chroma))
+        return {};
+    return out;
+}
+
+std::vector<Bin> encode_cu_inter_b_8x8(const CuInterB8x8& cu) {
+    std::vector<Bin> out;
+    put_skip_flag(out, cu.skip_ctx_inc, cu.skip ? 1 : 0);
+
+    if (cu.skip) {
+        put_merge_idx(out, cu.merge_idx, cu.max_merge_cand);
+        return out;
+    }
+
+    put_pred_mode_flag(out, 0);      // MODE_INTER
+    put_part_mode_inter_2nx2n(out);  // 8x8 == MinCb ⇒ 必读
+    put_merge_flag(out, cu.merge ? 1 : 0);
+    if (cu.merge) {
+        put_merge_idx(out, cu.merge_idx, cu.max_merge_cand);
+    } else {
+        const int idc = cu.inter_pred_idc < 0 ? 0 : (cu.inter_pred_idc > 2 ? 2 : cu.inter_pred_idc);
+        put_inter_pred_idc(out, cu.ct_depth, idc, false);
+        if (idc != 1) {  // PRED_L1 ⇒ L0 那组整体不发
+            put_ref_idx_l0(out, cu.ref_idx_l0, cu.nb_refs_l0);
+            put_mvd_coding(out, cu.mvd_x, cu.mvd_y);
+            put_mvp_lx_flag(out, cu.mvp_lx_flag);
+        }
+        if (idc != 0) {  // PRED_L0 ⇒ L1 那组整体不发
+            put_ref_idx_l1(out, cu.ref_idx_l1, cu.nb_refs_l1);
+            // mvd_l1_zero_flag 且 PRED_BI 时 MvdL1 被推断为 0，不发 mvd_coding。
+            if (!(cu.mvd_l1_zero_flag && idc == 2))
+                put_mvd_coding(out, cu.mvd_x_l1, cu.mvd_y_l1);
+            put_mvp_lx_flag(out, cu.mvp_lx_flag_l1);
+        }
+    }
+
+    // hevcdec.c:2593：pred_mode != INTRA 且非 (2Nx2N && merge_flag) 才读该 bin。
+    if (cu.emit_rqt_root_cbf) {
+        put_rqt_root_cbf(out, cu.rqt_root_cbf);
+        if (!cu.rqt_root_cbf) return out;
+    } else if (!cu.rqt_root_cbf) {
+        return {};
+    }
+
+    if (!emit_transform_tree_4x4(out, cu.cbf_cb, cu.cbf_cr, cu.luma4x4, cu.chroma4x4,
+                                 cu.transform_skip_enabled, cu.transform_skip_luma,
+                                 cu.transform_skip_chroma))
+        return {};
+    return out;
+}
+
+std::vector<Bin> encode_cu_intra_in_p_8x8(const CuIntra8x8& cu, int skip_ctx_inc) {
+    std::vector<Bin> out;
+    put_skip_flag(out, skip_ctx_inc, 0);
+    put_pred_mode_flag(out, 1);  // pred_mode_flag=1 ⇒ MODE_INTRA（=0 是 INTER）
+    const auto inner = encode_cu_intra_8x8(cu);
+    if (inner.empty()) return {};
+    out.insert(out.end(), inner.begin(), inner.end());
+    return out;
 }
 
 }  // namespace termchart::image::codec::hevc

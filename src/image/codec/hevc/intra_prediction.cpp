@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
 #include "intra_prediction.hpp"
+#include "residual_coding.hpp"  // RDO 档实算残差 bin 数 / 扫描表
 #include "transquant.hpp"  // 模式决策模拟重建走与真实编码同一条 encode_tu_4x4
 
 namespace termchart::image::codec::hevc {
@@ -148,6 +150,27 @@ IntraModeSignal signal_intra_mode(int target_mode, const MpmCandidates& cands) {
     s.mpm_idx = 0;
     s.rem_intra_luma_pred_mode = rem;
     return s;
+}
+
+int mode_signal_bins(int target_mode, const MpmCandidates& cands) {
+    const IntraModeSignal s = signal_intra_mode(target_mode, cands);
+    // put_prev_intra_luma_pred_flag 恒写 1 个 ctx bin。
+    if (s.prev_intra_luma_pred_flag) {
+        // put_mpm_idx：idx=0 写 1 个 0；idx=1 写 1,0；idx=2 写 1,1。
+        return 1 + (s.mpm_idx < 2 ? s.mpm_idx + 1 : 2);
+    }
+    return 1 + 5;  // prev flag + put_rem_intra_luma_pred_mode 的 5 个 bypass bin
+}
+
+// 约束式 RDO 的相对失真余量：只允许 SSD 不超过「纯 SSD 最优 ×(1+slack)」的
+// 候选参与省 bin 的择优。5% 的 SSD 余量对应最多 0.21 dB，是可控的画质代价。
+// 验证注入点：与 TERMCHART_HEVC_AUTO_LAMBDA 同风格，供外部 oracle 标定。
+double rdo_distortion_slack() {
+    static const double k = [] {
+        const char* e = std::getenv("TERMCHART_HEVC_RDO_SLACK");
+        return (e && *e) ? std::atof(e) : 0.05;
+    }();
+    return k;
 }
 
 static void predict_intra_impl(int mode, const std::uint8_t* rec, int stride,
@@ -404,7 +427,8 @@ void predict_intra_luma(int mode, const std::uint8_t* rec, int stride,
 
 int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
                            const std::uint8_t* rec, int rec_stride,
-                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2) {
+                           int x0, int y0, int pic_w, int pic_h, int qp, int tu_log2,
+                           double rd_lambda, const MpmCandidates* mpm_cands) {
     if (tu_log2 < 2 || tu_log2 > 5) return 1;  // INTRA_DC
     // tu_log2==2 表示 8x8 CU 分裂成 4 个 4x4 TU；>=3 表示单个 n×n TU。
     const bool split4 = (tu_log2 == 2);
@@ -434,10 +458,15 @@ int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
         }
     }
 
-    int best_mode = 1;
-    long long best_ssd = 1LL << 60;
+    // 两阶段：先把 35 个候选的失真与代价都记下来，再按档位挑。
+    // 无约束的 J = SSD + λ·bins 会拿画质硬换码率（实测 QP40 个别组掉 9.5 dB），
+    // 故 RDO 档改成「约束式」：先定纯 SSD 最优，只在失真余量内的候选里挑
+    // bins 最省的。默认档 (rd_lambda==0) 走原来逐字相同的严格小于比较。
+    long long cand_ssd[35] = {};
+    double cand_cost[35] = {};
     std::vector<std::uint8_t> pred(static_cast<std::size_t>(cu * cu));
     std::vector<std::int16_t> level(static_cast<std::size_t>(cu * cu));
+    std::int16_t level4[4][16] = {};
     for (int mode = 0; mode < 35; ++mode) {
         // 每个候选模式都从同一份「本 CU 尚未重建」的基准出发（只回滚本 CU）。
         for (int y = 0; y < cu; ++y)
@@ -458,6 +487,8 @@ int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
                 encode_tu_4x4(&src[static_cast<std::size_t>(ty) * src_stride + tx], src_stride,
                               pred.data(), &trial[static_cast<std::size_t>(ty) * pic_w + tx],
                               pic_w, l16, qp, /*use_dst=*/true);
+                if (rd_lambda > 0.0)
+                    std::memcpy(level4[i], l16, sizeof(l16));
                 for (int y = 0; y < 4; ++y)
                     for (int x = 0; x < 4; ++x) {
                         const int d = static_cast<int>(
@@ -484,9 +515,50 @@ int choose_intra_luma_mode(const std::uint8_t* src, int src_stride,
                     ssd += static_cast<long long>(d) * d;
                 }
         }
-        if (ssd < best_ssd) {
-            best_ssd = ssd;
-            best_mode = mode;
+        double cost = static_cast<double>(ssd);
+        if (rd_lambda > 0.0) {
+            // 扫描表口径与发射层一致：log2<4 按帧内模式切 VERT/HORIZ，否则 DIAG
+            // （encode_residual 内部对 log2>3 也会强制 DIAG）。
+            const auto scan = scan_idx_for_intra_mode(mode);
+            double bins = mpm_cands ? static_cast<double>(mode_signal_bins(mode, *mpm_cands))
+                                    : 0.0;
+            bool ok = true;
+            if (split4) {
+                for (int i = 0; i < 4; ++i)
+                    bins += static_cast<double>(
+                        encode_residual(level4[i], 2, &ok, scan, 0).size());
+            } else {
+                bins += static_cast<double>(
+                    encode_residual(level.data(), tu_log2, &ok, scan, 0).size());
+            }
+            cost = ok ? static_cast<double>(ssd) + rd_lambda * bins : 1e300;
+        }
+        cand_ssd[mode] = ssd;
+        cand_cost[mode] = cost;
+    }
+
+    long long min_ssd = cand_ssd[0];
+    for (int m = 1; m < 35; ++m) min_ssd = std::min(min_ssd, cand_ssd[m]);
+    if (rd_lambda <= 0.0) {
+        // 与改动前逐字一致：严格小于才更新、模式从小到大先到先得。
+        long long best = 1LL << 60;
+        int best_mode = 1;
+        for (int m = 0; m < 35; ++m) {
+            if (cand_ssd[m] < best) {
+                best = cand_ssd[m];
+                best_mode = m;
+            }
+        }
+        return best_mode;
+    }
+    // 失真余量：min_ssd==0（无损块）时限为 0，绝不允许为省 bin 引入失真。
+    const double limit = static_cast<double>(min_ssd) * (1.0 + rdo_distortion_slack());
+    int best_mode = 1;
+    double best_cost = 1e300;
+    for (int m = 0; m < 35; ++m) {
+        if (static_cast<double>(cand_ssd[m]) <= limit && cand_cost[m] < best_cost) {
+            best_cost = cand_cost[m];
+            best_mode = m;
         }
     }
     return best_mode;

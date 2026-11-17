@@ -65,6 +65,52 @@ void put_cbf_luma(std::vector<Bin>& out, int trafo_depth, int value);
 void put_cbf_cb_cr(std::vector<Bin>& out, int c_idx, int trafo_depth, int value);
 void put_split_transform_flag(std::vector<Bin>& out, int log2_trafo_size, int value);
 
+// ── P 片帧间语法元素（上下文偏移见 cabac_context.hpp）─────────────────────
+// coding_unit() 里 P 片比 I 片多出的前缀（ffmpeg hevcdec.c:2477-2515）：
+//   skip_flag（ctx 6+inc，inc 由左/上 CU 的 skip_flag 决定）
+//   [skip_flag==1 到此为止，直接进 prediction_unit：只剩 merge_idx]
+//   pred_mode_flag（ctx 12；1=INTER, 0=INTRA）
+//   part_mode（ctx 13，仅 MinCbLog2SizeY 档只有首 bin：1=PART_2Nx2N）
+//   merge_flag（ctx 20）/ merge_idx（ctx 21 + bypass）
+//   mvd_coding()（greater0 共用 ctx 31、greater1 共用 ctx 34，其余 bypass）
+//   mvp_lx_flag（ctx 35）
+//   rqt_root_cbf（ctx 36；pred_mode!=INTRA 且非「2Nx2N+merge」时才读）
+void put_skip_flag(std::vector<Bin>& out, int ctx_inc, int value);
+void put_pred_mode_flag(std::vector<Bin>& out, int value);
+void put_part_mode_inter_2nx2n(std::vector<Bin>& out);
+void put_merge_flag(std::vector<Bin>& out, int value);
+void put_merge_idx(std::vector<Bin>& out, int idx, int max_cand);
+void put_rqt_root_cbf(std::vector<Bin>& out, int value);
+void put_mvd_coding(std::vector<Bin>& out, int mvd_x, int mvd_y);
+void put_mvp_lx_flag(std::vector<Bin>& out, int value);
+// 单参考（nb_refs==1）时解码端不读 ref_idx_l0，函数只在 nb_refs>1 时产出 bin。
+void put_ref_idx_l0(std::vector<Bin>& out, int idx, int nb_refs);
+// B 片同构：nb_refs==1 时不产出 bin。
+void put_ref_idx_l1(std::vector<Bin>& out, int idx, int nb_refs);
+
+// B 片 inter_pred_idc（0 = L0，1 = L1，2 = BI）。bin 结构照 ffmpeg
+// ff_hevc_inter_pred_idc_decode：
+//   nPbW+nPbH==12 → 单 bin @ 22+4（1=BI，0=L0）
+//   否则 bin0 @ 22+ct_depth（1=BI）；bin0=0 时 bin1 @ 22+4（1=L1，0=L0）
+void put_inter_pred_idc(std::vector<Bin>& out, int ct_depth, int idc, bool small_pb = false);
+bool get_inter_pred_idc(BinCursor& c, int ct_depth, bool small_pb, int& idc);
+
+// 「边决策边发射」的编码器用不到整段 vector，这里给出单元素版本。
+std::vector<Bin> merge_idx_bins(int idx, int max_cand);
+std::vector<Bin> mvd_coding_bins(int mvd_x, int mvd_y);
+
+bool get_skip_flag(BinCursor& c, int ctx_inc, int& value);
+bool get_pred_mode_flag(BinCursor& c, int& value);
+bool get_part_mode_inter_2nx2n(BinCursor& c, bool& part_2nx2n);
+bool get_merge_flag(BinCursor& c, int& value);
+bool get_merge_idx(BinCursor& c, int max_cand, int& idx);
+bool get_rqt_root_cbf(BinCursor& c, int& value);
+bool get_mvd_coding(BinCursor& c, int& mvd_x, int& mvd_y);
+bool get_mvp_lx_flag(BinCursor& c, int& value);
+// ref_idx_lx 回读（ff_hevc_ref_idx_lx_decode）：nb_refs==1 时无 bin，idx 取 0。
+bool get_ref_idx_l0(BinCursor& c, int nb_refs, int& idx);
+bool get_ref_idx_l1(BinCursor& c, int nb_refs, int& idx);
+
 // transform_skip_flag（ffmpeg cabac.c:850-853）：ctx = 47 + !!c_idx。
 // 只在 pps->transform_skip_enabled_flag 且 log2_trafo_size <=
 // log2_max_transform_skip_block_size 时读写，位置在残差语法最前面
