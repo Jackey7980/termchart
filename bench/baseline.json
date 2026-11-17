@@ -1,0 +1,29 @@
+{
+  "schema": "termchart-bench-baseline-v1",
+  "note": "性能基线（中位数微秒），来自 `cmake -DTERMCHART_BUILD_BENCH=ON` 后手动跑全量 `build/<preset>/bench/<name>`。数值只作量级参考与回归对比锚点，不是性能契约：不同机器/工具链会差数倍，判据应看同机相对退化（默认阈值建议 2x）而非绝对值。ctest 只跑 --quick 冒烟，不比基线。",
+  "captured": {
+    "date": "2026-11-16",
+    "os": "Windows (MinGW-w64 GCC 15.2)",
+    "generator": "Ninja"
+  },
+  "bench_raster": {
+    "what": "rasterize(FloatField, RasterKind) -> CellBuffer，正弦标量场现场生成",
+    "unit": "us",
+    "cases": {
+      "80x24":   { "braille": 66.0, "halfblock": 77.0, "quadrant": 36.0, "ascii": 115.0, "block": 184.0 },
+      "160x48":  { "braille": 255.0, "halfblock": 350.0, "quadrant": 218.0, "ascii": 655.0, "block": 793.0 },
+      "320x96":  { "braille": 1210.0, "halfblock": 1615.0, "quadrant": 983.0, "ascii": 2866.0, "block": 3434.0 }
+    },
+    "scaling_note": "尺寸 4 倍（80x24→160x48→320x96）各光栅器耗时约 4 倍，符合逐格 O(像素)，无平方级回归。"
+  },
+  "bench_diff": {
+    "what": "render::diff(CellBuffer, CellBuffer) 逐行差分，三档变化率",
+    "unit": "us",
+    "cases": {
+      "80x24":  { "identical": 42.0, "one-row": 43.0, "full": 26.0 },
+      "120x40": { "identical": 80.0, "one-row": 121.0, "full": 83.0 },
+      "200x60": { "identical": 289.0, "one-row": 187.0, "full": 184.0 }
+    },
+    "scaling_note": "小尺寸下相互噪声主导（数十微秒级）；200x60 三档同量级，说明 diff 对变化率不敏感（恒 O(格数)），符合预期。"
+  }
+}

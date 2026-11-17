@@ -6,7 +6,7 @@ if(NOT TERMCHART_BUILD_BENCH)
     return()
 endif()
 
-foreach(bench bench_sugiyama bench_force bench_mermaid_parse bench_render bench_svg_backend)
+foreach(bench bench_sugiyama bench_force bench_mermaid_parse bench_render bench_svg_backend bench_raster bench_diff)
     add_executable(${bench} ${bench}.cpp)
     target_link_libraries(${bench} PRIVATE termchart)
     termchart_set_warnings(${bench})
@@ -15,7 +15,7 @@ foreach(bench bench_sugiyama bench_force bench_mermaid_parse bench_render bench_
 endforeach()
 
 if(TERMCHART_BUILD_TESTS)
-    foreach(bench bench_sugiyama bench_force bench_mermaid_parse bench_render bench_svg_backend)
+    foreach(bench bench_sugiyama bench_force bench_mermaid_parse bench_render bench_svg_backend bench_raster bench_diff)
         add_test(NAME ${bench}_quick COMMAND ${bench} --quick)
     endforeach()
 endif()
