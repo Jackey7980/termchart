@@ -115,6 +115,9 @@ add_executable(termchart_tests
     unit/image/test_hevc_transform.cpp
     unit/image/test_hevc_transform_skip.cpp
     unit/image/test_hevc_tu_sizes.cpp
+    unit/image/test_av1_obu.cpp
+    unit/image/test_av1_daala.cpp
+    unit/image/test_av1_cdf.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp
