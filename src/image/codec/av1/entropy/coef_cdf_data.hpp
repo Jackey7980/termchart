@@ -1,4 +1,4 @@
-// Generated from dav1d src/cdf.c default_coef_cdf[2] (BSD-2).
+// AV1 残差 eob 默认 CDF 表（qcat=2）。
 #ifndef T_AV1_COEF_CDF_HPP
 #define T_AV1_COEF_CDF_HPP
 #include <cstdint>

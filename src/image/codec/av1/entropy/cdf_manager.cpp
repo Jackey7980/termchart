@@ -1,34 +1,34 @@
 #include "cdf_manager.hpp"
 
-#include <algorithm>
-
 namespace termchart::image::codec::av1 {
 
-void write_symbol(DaalaEncoder& enc, const std::uint16_t* cdf, int n, int symbol) {
+void write_symbol(RangeEncoder& enc, const std::uint16_t* cdf, int n, int symbol) {
+    if (n <= 1) return;
     if (symbol < 0) symbol = 0;
     if (symbol >= n) symbol = n - 1;
-    // dav1d 的 CDF[0] 是保留槽；阈值从 CDF[1] 开始，min_prob = 4*(n-val)。
-    for (int i = 0; i < n - 1; ++i) {
-        const int val = i + 1;
-        const int min_prob = 4 * (n - val);
-        enc.write_bit(symbol > i ? 1 : 0, static_cast<int>(cdf[val]), min_prob);
-    }
+
+    const unsigned r_hi8 = enc.range() >> 8;
+    const unsigned upper =
+        symbol > 0 ? range_split(r_hi8, cdf[symbol - 1], static_cast<unsigned>(n - symbol + 1))
+                   : enc.range();
+    const unsigned lower =
+        symbol + 1 < n ? range_split(r_hi8, cdf[symbol], static_cast<unsigned>(n - symbol)) : 0u;
+    enc.write_interval(lower, upper - lower);
 }
 
-bool read_symbol(DaalaDecoder& dec, const std::uint16_t* cdf, int n, int& symbol) {
-    if (n <= 0) return false;
-    symbol = n - 1;
-    for (int i = 0; i < n - 1; ++i) {
-        const int val = i + 1;
-        const int min_prob = 4 * (n - val);
-        int bit = 0;
-        if (!dec.read_bit(static_cast<int>(cdf[val]), bit, min_prob)) return false;
-        if (bit == 0) {
-            symbol = i;
-            return true;
-        }
-    }
-    return true;
+unsigned read_symbol(RangeDecoder& dec, const std::uint16_t* cdf, int n) {
+    if (n <= 1) return 0;
+    return dec.decode_symbol(cdf, n);
+}
+
+void update_cdf(std::uint16_t* cdf, int n, unsigned symbol) {
+    if (symbol >= static_cast<unsigned>(n)) return;
+    const unsigned count = cdf[n];
+    const unsigned rate = 4 + (count >> 4) + (n > 2 ? 1u : 0u);
+    unsigned i = 0;
+    for (; i < symbol; ++i) cdf[i] += static_cast<std::uint16_t>((32768 - cdf[i]) >> rate);
+    for (; i < static_cast<unsigned>(n); ++i) cdf[i] -= static_cast<std::uint16_t>(cdf[i] >> rate);
+    if (count < 32) cdf[n] = static_cast<std::uint16_t>(count + 1);
 }
 
 }  // namespace termchart::image::codec::av1

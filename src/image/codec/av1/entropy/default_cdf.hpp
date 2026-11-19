@@ -1,10 +1,10 @@
-// Generated from dav1d src/cdf.c / cdf.h / levels.h (BSD-2, VideoLAN & Two Orioles).
+// AV1 默认 CDF 表（Q15，静态初始化）。
 #ifndef T_AV1_DEFAULT_CDF_HPP
 #define T_AV1_DEFAULT_CDF_HPP
 #include <cstdint>
 #define ALIGN(x,y) x
-#define DAV1D_MAX_SEGMENTS 8
-#define DAV1D_N_SWITCHABLE_FILTERS 3
+#define TERMCHART_AV1_MAX_SEGMENTS 8
+#define TERMCHART_AV1_N_SWITCHABLE_FILTERS 3
 enum ObuMetaType {
     OBU_META_HDR_CLL     = 1,
     OBU_META_HDR_MDCV    = 2,
@@ -215,7 +215,7 @@ typedef struct CdfModeContext {
     ALIGN(uint16_t cfl_sign[8], 16);
     ALIGN(uint16_t angle_delta[8][8], 16);
     ALIGN(uint16_t filter_intra[5 + 3], 16);
-    ALIGN(uint16_t seg_id[3][DAV1D_MAX_SEGMENTS], 16);
+    ALIGN(uint16_t seg_id[3][TERMCHART_AV1_MAX_SEGMENTS], 16);
     ALIGN(uint16_t pal_sz[2][7][7 + 1], 16);
     ALIGN(uint16_t color_map[2][7][5][8], 16);
     ALIGN(uint16_t txsz[N_TX_SIZES - 1][3][4], 8);
@@ -238,7 +238,7 @@ typedef struct CdfModeContext {
     ALIGN(uint16_t y_mode[4][N_INTRA_PRED_MODES + 3], 32);
     ALIGN(uint16_t wedge_idx[9][16], 32);
     ALIGN(uint16_t comp_inter_mode[8][N_COMP_INTER_PRED_MODES], 16);
-    ALIGN(uint16_t filter[2][8][DAV1D_N_SWITCHABLE_FILTERS + 1], 8);
+    ALIGN(uint16_t filter[2][8][TERMCHART_AV1_N_SWITCHABLE_FILTERS + 1], 8);
     ALIGN(uint16_t interintra_mode[4][4], 8);
     ALIGN(uint16_t motion_mode[N_BS_SIZES][3 + 1], 8);
     ALIGN(uint16_t skip_mode[3][2], 4);
