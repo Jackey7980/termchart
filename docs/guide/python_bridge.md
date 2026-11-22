@@ -1,5 +1,46 @@
 # Python 桥（pybind11）
 
+## 在任意目录的 .py 里使用
+
+装一次到 site-packages，之后不需要 `PYTHONPATH`，也不用把 `.pyd` 拷来拷去：
+
+```sh
+pip install ./bindings/python
+```
+
+Windows 上 CMake 默认挑 Visual Studio，而本项目在 MinGW 下开发，用 MSVC 编会失败；
+显式指定 Ninja（编译器取 PATH 里的 `g++`）：
+
+```powershell
+$env:CMAKE_GENERATOR = "Ninja"
+pip install ./bindings/python
+```
+
+验证：
+
+```sh
+python -c "import termchart as tc; print(tc.version(), tc.__file__)"
+```
+
+之后在任何目录、任何终端的脚本里 `import termchart` 都指向 site-packages 里的
+`termchart.cpXXX-*.pyd`。改完 C++ 源码后重跑同一条 `pip install` 即可升级。
+
+> 免编译的 ctypes 版 `termchart_capi` 不走 pip：把 `bindings/python` 加进
+> `PYTHONPATH`，并设 `TERMCHART_CAPI_LIB` 指向 `libtermchart_capi.dll`
+> （在 `build/<preset>/libs/capi/`），详见 [C ABI 与 Python 桥](c_api.md)。
+
+Windows 控制台默认按 GBK 解码，而图表含 `•` `█` 等字符，`print` 会抛
+`UnicodeEncodeError`。终端里临时开 UTF-8 模式：
+
+```powershell
+$env:PYTHONUTF8 = "1"
+```
+
+永久生效用 `setx PYTHONUTF8 1`（新开终端起效），或改用 Windows Terminal / VS Code 终端。
+`save_png` / `save_svg` 走 UTF-8 路径，中文用户名目录可以直接用。
+
+## 从源码手工构建
+
 默认不构建（`TERMCHART_BUILD_PYTHON=OFF`）。开启并构建：
 
 ```sh

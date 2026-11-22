@@ -20,10 +20,11 @@ import ctypes
 from . import _capi as _c
 
 __all__ = [
-    "plot", "scatter", "bar", "print_chart", "Chart",
+    "plot", "scatter", "bar", "print_chart", "Chart", "kinds",
     "render_line", "print_line", "hello",
     "write_stdout", "write_stderr", "flush",
     "auto_plot", "version", "TermchartError",
+    "Image", "load_image", "decode_image",
 ]
 
 _c._load()  # 加载共享库（自动搜索常见构建目录 / TERMCHART_CAPI_LIB）
@@ -106,64 +107,69 @@ def _make_api_opts(width=0, height=0, depth="truecolor", unicode=True,
 
 # ── 图表（折线 / 散点 / 柱状）────────────────────────────────────────────────
 
-def _render(kind: str, **data) -> str:
+def _quick_opts(width, height, depth, title, show_legend):
+    opts = _c.PlotOpts()
+    opts.width = int(width or 0)
+    opts.height = int(height or 0)
+    opts.title = title.encode("utf-8") if title else None
+    opts.depth = _DEPTH.get(depth or "truecolor", _c.TC_DEPTH_TRUECOLOR)
+    opts.show_legend = 1 if show_legend else 0
+    return opts
+
+
+def _quick_two_phase(call) -> str:
+    """tc_quick_* 的两段式缓冲：先问长度，再取字节。"""
+    need = ctypes.c_uint64(0)
+    st = call(None, 0, ctypes.byref(need), None)
+    if st != _c.TC_ERR_BUFFER_TOO_SMALL:
+        raise TermchartError("quick render failed (status %d)" % (st,))
+    buf = ctypes.create_string_buffer(need.value)
+    got = ctypes.c_uint64(0)
     err = ctypes.c_void_p()
-    chart = _c.tc_chart_create(kind.encode("utf-8"), ctypes.byref(err))
-    if not chart:
-        raise TermchartError("failed to create chart handle (%r)" % (kind,))
-    try:
-        if kind == "bar":
-            values = data["values"]
-            n = len(values)
-            vals = (ctypes.c_double * n)(*values)
-            labels = data.get("labels")
-            if labels:
-                arr = (ctypes.c_char_p * len(labels))(
-                    *[l.encode("utf-8") for l in labels]
-                )
-                labels_ptr = ctypes.cast(arr, ctypes.POINTER(ctypes.c_char_p))
-                n_labels = len(labels)
-            else:
-                labels_ptr = None
-                n_labels = 0
-            st = _c.tc_chart_add_bar(chart, vals, n, labels_ptr, n_labels)
-        else:
-            x = data["x"]
-            y = data["y"]
-            n = len(x)
-            xs = (ctypes.c_double * n)(*x)
-            ys = (ctypes.c_double * n)(*y)
-            st = _c.tc_chart_add_points(chart, xs, ys, n)
-        if st != 0:
-            raise TermchartError("tc_chart_add_* failed: status %d" % st)
+    st = call(buf, need.value, ctypes.byref(got), ctypes.byref(err))
+    if st != 0:
+        _raise("quick render", st, err)
+    return bytes(buf.raw[: got.value]).decode("utf-8")
 
-        opts = _c.PlotOpts()
-        opts.width = data.get("width", 0)
-        opts.height = data.get("height", 0)
-        title = data.get("title")
-        opts.title = title.encode("utf-8") if title else None
-        opts.depth = _DEPTH.get(data.get("depth", "truecolor"), _c.TC_DEPTH_TRUECOLOR)
-        opts.show_legend = 1 if data.get("show_legend") else 0
 
-        if data.get("to_stdout"):
-            st = _c.tc_chart_print(chart, ctypes.byref(opts), None)
-            if st != 0:
-                raise TermchartError("tc_chart_print failed: status %d" % st)
-            return ""
+def _render(kind: str, **data) -> str:
+    """一行式出图：直通 tc_quick_*，也就是 C++ 的 api::render_plot / render_scatter / render_bar。
 
-        out = ctypes.c_char_p()
-        err = ctypes.c_void_p()
-        st = _c.tc_chart_render_ansi(
-            chart, ctypes.byref(opts), ctypes.byref(out), ctypes.byref(err)
+    绑定层**不**自己拼 Chart——拼出来系列名、配色、图例默认值会和 C++ 那一版
+    对不上（实测就差了这两处）。走同一函数，输出才逐字节相同。
+    """
+    opts = _quick_opts(
+        data.get("width"), data.get("height"), data.get("depth"),
+        data.get("title"), data.get("show_legend"),
+    )
+    if kind == "bar":
+        values = list(data["values"])
+        n = len(values)
+        vals = (ctypes.c_double * n)(*values)
+        labels = data.get("labels")
+        arr = (ctypes.c_char_p * len(labels))(*[l.encode("utf-8") for l in labels]) if labels else None
+        text = _quick_two_phase(
+            lambda buf, cap, need, err: _c.tc_quick_bar(
+                vals, arr, n, ctypes.byref(opts), buf, cap, need, err
+            )
         )
-        if st != 0:
-            _raise("render", st, err)
+    else:
+        x = list(data["x"])
+        y = list(data["y"])
+        n = min(len(x), len(y))
+        xs = (ctypes.c_double * n)(*x[:n])
+        ys = (ctypes.c_double * n)(*y[:n])
+        quick_kind = _c.TC_QUICK_SCATTER if kind == "scatter" else _c.TC_QUICK_LINE
+        text = _quick_two_phase(
+            lambda buf, cap, need, err: _c.tc_quick_xy(
+                quick_kind, xs, ys, n, ctypes.byref(opts), buf, cap, need, err
+            )
+        )
 
-        result = out.value
-        _c.tc_free_string(out)
-        return result.decode("utf-8") if isinstance(result, bytes) else result
-    finally:
-        _c.tc_chart_free(chart)
+    if data.get("to_stdout"):
+        sys.stdout.write(text)
+        return ""
+    return text
 
 
 def plot(x, y, *, title=None, width=0, height=0, depth="truecolor", show_legend=False) -> str:
@@ -288,7 +294,7 @@ _STR_PROPS = {"x_label", "y_label"}
 
 
 def kinds():
-    """返回当前 C 库登记的全部图种名（元组，字典序）。
+    """返回当前 C 库登记的全部图种名（列表，字典序）。
 
     图种会随版本增加；用本函数发现可用 kind，而不是硬编码列表。
     """
@@ -301,7 +307,7 @@ def kinds():
     st = _c.tc_chart_kinds(buf, need.value, ctypes.byref(got), None)
     if st != 0:
         raise TermchartError("tc_chart_kinds failed (%d)" % (st,))
-    return tuple(buf.raw[: got.value].decode("utf-8").split())
+    return buf.raw[: got.value].decode("utf-8").split()
 
 
 class Chart:
@@ -626,3 +632,216 @@ class Chart:
             with open(str(path), "wb") as fh:
                 fh.write(data)
         return data
+
+
+# ── 图像（tc_image_* ↔ image::Bitmap）────────────────────────────────────────
+#
+# 像素操作全部落在 C 侧同名成员（fill / fill_rect / blit_over / scaled_to /
+# with_alpha / without_alpha），Python 只搬字节。这就是"Python 效果与 C++
+# 逐字节一致"的依据：没有第二套栅格化、没有第二套混合公式。
+
+def _err_text(err) -> str:
+    if not err:
+        return ""
+    buf = ctypes.create_string_buffer(512)
+    _c.tc_error_message(err, buf, 512)
+    text = buf.value.decode("utf-8", "replace")
+    _c.tc_error_free(err)
+    return text
+
+
+class Image:
+    """图像句柄：对应 C++ ``image::Bitmap``（3/4 通道、行紧致）。
+
+        img = Image.create(64, 64)
+        img.fill(20, 24, 32)
+        img.fill_rect(8, 8, 32, 32, 255, 140, 0)
+        img.save("out.png")
+
+        src = Image.load("logo.png")
+        base.blit_over(src, 100, 50)      # 源 alpha 做 source-over
+    """
+
+    __slots__ = ("_h",)
+
+    def __init__(self, handle):
+        if not handle:
+            raise TermchartError("null image handle")
+        self._h = handle
+
+    # ── 构造 ──
+    @classmethod
+    def create(cls, width, height, channels=4):
+        err = ctypes.c_void_p()
+        h = _c.tc_image_create(int(width), int(height), int(channels), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image create failed: %s" % (_err_text(err),))
+        return cls(h)
+
+    @classmethod
+    def load(cls, path):
+        err = ctypes.c_void_p()
+        h = _c.tc_image_load(str(path).encode("utf-8"), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image load failed: %s" % (_err_text(err),))
+        return cls(h)
+
+    @classmethod
+    def decode(cls, data):
+        buf = bytes(data)
+        if not buf:
+            raise TermchartError("image decode: empty input")
+        arr = (ctypes.c_uint8 * len(buf)).from_buffer_copy(buf)
+        err = ctypes.c_void_p()
+        h = _c.tc_image_decode(arr, len(buf), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image decode failed: %s" % (_err_text(err),))
+        return cls(h)
+
+    # ── 生命周期 ──
+    def close(self):
+        if self._h:
+            _c.tc_image_free(self._h)
+            self._h = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _alive(self):
+        if not self._h:
+            raise TermchartError("image already closed")
+        return self._h
+
+    # ── 尺寸 ──
+    @property
+    def width(self) -> int:
+        return int(_c.tc_image_width(self._alive()))
+
+    @property
+    def height(self) -> int:
+        return int(_c.tc_image_height(self._alive()))
+
+    @property
+    def channels(self) -> int:
+        return int(_c.tc_image_channels(self._alive()))
+
+    def __repr__(self):
+        if not self._h:
+            return "<termchart.Image closed>"
+        return "<termchart.Image %dx%d ch=%d>" % (self.width, self.height, self.channels)
+
+    # ── 像素 ──
+    def pixels(self) -> bytes:
+        """行紧致 ``width*height*channels`` 原始字节。"""
+        h = self._alive()
+        need = ctypes.c_uint64(0)
+        st = _c.tc_image_pixels(h, None, 0, ctypes.byref(need), None)
+        if st != _c.TC_ERR_BUFFER_TOO_SMALL and st != 0:
+            raise TermchartError("image pixels failed (%d)" % (st,))
+        buf = ctypes.create_string_buffer(need.value)
+        got = ctypes.c_uint64(0)
+        err = ctypes.c_void_p()
+        st = _c.tc_image_pixels(
+            h, ctypes.cast(buf, ctypes.POINTER(ctypes.c_uint8)), need.value,
+            ctypes.byref(got), ctypes.byref(err),
+        )
+        if st != 0:
+            raise TermchartError("image pixels failed: %s" % (_err_text(err),))
+        return bytes(buf.raw[: got.value])
+
+    def numpy(self):
+        """返回 ``(H, W, C)`` 的 uint8 数组（拷贝；需要 numpy）。"""
+        import numpy as np  # 延迟导入：不用图像功能就不必装 numpy
+
+        return np.frombuffer(self.pixels(), dtype=np.uint8).reshape(
+            self.height, self.width, self.channels
+        ).copy()
+
+    # ── 派生（返回新图，源不变；与 C++ 返回 Bitmap 的成员同构）──
+    def scaled_to(self, width, height):
+        err = ctypes.c_void_p()
+        h = _c.tc_image_scaled(self._alive(), int(width), int(height), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image scaled_to failed: %s" % (_err_text(err),))
+        return Image(h)
+
+    def with_alpha(self, alpha=255):
+        err = ctypes.c_void_p()
+        h = _c.tc_image_with_alpha(self._alive(), int(alpha), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image with_alpha failed: %s" % (_err_text(err),))
+        return Image(h)
+
+    def without_alpha(self):
+        err = ctypes.c_void_p()
+        h = _c.tc_image_without_alpha(self._alive(), ctypes.byref(err))
+        if not h:
+            raise TermchartError("image without_alpha failed: %s" % (_err_text(err),))
+        return Image(h)
+
+    # ── 原地绘制 ──
+    def fill(self, r, g, b, a=255):
+        _c.tc_image_fill(self._alive(), int(r), int(g), int(b), int(a))
+        return self
+
+    def fill_rect(self, x, y, w, h, r, g, b, a=255):
+        _c.tc_image_fill_rect(
+            self._alive(), int(x), int(y), int(w), int(h), int(r), int(g), int(b), int(a)
+        )
+        return self
+
+    def blit_over(self, src, dx, dy):
+        if not isinstance(src, Image):
+            raise TermchartError("blit_over: src must be a termchart Image")
+        _c.tc_image_blit_over(self._alive(), src._alive(), int(dx), int(dy))
+        return self
+
+    # ── 编码 ──
+    def encode(self, format="png", quality=85) -> bytes:
+        """编码成字节流（png / jpeg / gif / webp）。无损格式忽略 quality。"""
+        h = self._alive()
+        fmt = format.encode("utf-8")
+        need = ctypes.c_uint64(0)
+        st = _c.tc_image_encode(h, fmt, int(quality), None, 0, ctypes.byref(need), None)
+        if st != _c.TC_ERR_BUFFER_TOO_SMALL:
+            raise TermchartError("image encode failed (%d)" % (st,))
+        buf = ctypes.create_string_buffer(need.value)
+        got = ctypes.c_uint64(0)
+        err = ctypes.c_void_p()
+        st = _c.tc_image_encode(
+            h, fmt, int(quality), buf, need.value, ctypes.byref(got), ctypes.byref(err)
+        )
+        if st != 0:
+            raise TermchartError("image encode failed: %s" % (_err_text(err),))
+        return bytes(buf.raw[: got.value])
+
+    def save(self, path, format=None, quality=85) -> None:
+        """写文件；format 省略时按路径后缀推断（显式传参时不看后缀）。"""
+        fmt = (format or "").encode("utf-8")
+        err = ctypes.c_void_p()
+        st = _c.tc_image_save(
+            self._alive(), str(path).encode("utf-8"), fmt or None, int(quality),
+            ctypes.byref(err),
+        )
+        if st != 0:
+            raise TermchartError("image save failed: %s" % (_err_text(err),))
+
+
+def load_image(path):
+    """解码文件为 Image（PNG/BMP 零依赖；JPEG/GIF/WebP 视构建开关）。"""
+    return Image.load(path)
+
+
+def decode_image(data):
+    """解码内存字节为 Image。"""
+    return Image.decode(data)

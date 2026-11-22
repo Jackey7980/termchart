@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -39,8 +40,14 @@
 #include "termchart/core/style.hpp"
 #include "termchart/gui/scene_renderer.hpp"
 #include "termchart/image/bitmap.hpp"
+#include "termchart/image/decoder.hpp"
 #include "termchart/image/encode.hpp"
+#include "termchart/util/file.hpp"
 #include "termchart/version.hpp"
+
+// 通用图表模型走 C ABI：tc_chart_create(kind) 覆盖全部已登记图种，新增图种
+// 自动对 Python 可见，不必在这里按图种手写一遍包装（那正是"牵一发而动全身"）。
+#include "termchart_capi.h"
 
 #ifdef TERMCHART_HAVE_QT
 #include "termchart_gui_qt/qt_backend.hpp"
@@ -276,12 +283,16 @@ void save_png_pixels(py::object pixels, int w, int h, const std::string& path) {
 }
 
 void write_text_file(const std::string& path, const std::string& text) {
-    std::ofstream stream(path, std::ios::binary);
-    if (!stream) {
+    // 走 util::fopen_utf8：Windows 上 ofstream(窄字符串) 按 ANSI 解释路径，
+    // 含中文的用户目录会直接打不开（save_svg 因此失败）。
+    std::FILE* fp = termchart::util::fopen_utf8(path, "wb");
+    if (fp == nullptr) {
         throw std::runtime_error("termchart: cannot open file: " + path);
     }
-    stream.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!stream) {
+    const std::size_t written = std::fwrite(text.data(), 1, text.size(), fp);
+    const bool ok = (written == text.size());
+    std::fclose(fp);
+    if (!ok) {
         throw std::runtime_error("termchart: cannot write file: " + path);
     }
 }
@@ -362,24 +373,580 @@ std::unique_ptr<Chart> make_line_series(py::object series, const std::string& ti
     return make_line(x, y, title);
 }
 
+// ── C ABI helpers ────────────────────────────────────────────────────────
+
+std::string take_error(tc_error_handle err) {
+    if (err == nullptr) {
+        return {};
+    }
+    char buf[512] = {0};
+    tc_error_message(err, buf, sizeof(buf));
+    tc_error_free(err);
+    return std::string(buf);
+}
+
+void check_status(tc_status st, tc_error_handle err, const char* what) {
+    if (st == TC_OK) {
+        // 成功时 err 理论上不填；仍释放以杜绝泄漏。
+        if (err != nullptr) {
+            tc_error_free(err);
+        }
+        return;
+    }
+    const std::string msg = take_error(err);
+    throw std::runtime_error(std::string("termchart: ") + what + " failed (status " +
+                             std::to_string(st) + ")" + (msg.empty() ? "" : ": " + msg));
+}
+
+tc_color_depth depth_of(const std::string& name) {
+    if (name == "none") return TC_DEPTH_NONE;
+    if (name == "16" || name == "ansi16") return TC_DEPTH_16;
+    if (name == "256" || name == "ansi256") return TC_DEPTH_256;
+    return TC_DEPTH_TRUECOLOR;
+}
+
+termchart::image::ImageFormat format_of(const std::string& name) {
+    std::string f = name;
+    std::transform(f.begin(), f.end(), f.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (f == "png") return termchart::image::ImageFormat::Png;
+    if (f == "jpg" || f == "jpeg") return termchart::image::ImageFormat::Jpeg;
+    if (f == "gif") return termchart::image::ImageFormat::Gif;
+    if (f == "webp") return termchart::image::ImageFormat::Webp;
+    if (f == "mp4") return termchart::image::ImageFormat::Mp4;
+    throw std::runtime_error("termchart: unsupported image format '" + name +
+                             "' (png / jpeg / gif / webp / mp4)");
+}
+
+std::vector<std::string> strings_of(py::object labels) {
+    std::vector<std::string> out;
+    if (labels.is_none()) {
+        return out;
+    }
+    out.reserve(static_cast<std::size_t>(py::len(labels)));
+    for (auto item : py::iter(labels)) {
+        out.push_back(py::cast<std::string>(item));
+    }
+    return out;
+}
+
+// 标签指针只在调用期间需要有效：把 string 留在调用方的容器里。
+std::vector<const char*> c_strings(const std::vector<std::string>& values) {
+    std::vector<const char*> out;
+    out.reserve(values.size());
+    for (const auto& s : values) {
+        out.push_back(s.c_str());
+    }
+    return out;
+}
+
+std::vector<double> doubles_of(py::object obj) {
+    if (obj.is_none()) {
+        return {};
+    }
+    return to_doubles(obj);
+}
+
+py::array_t<std::uint8_t> bitmap_to_numpy(const termchart::image::Bitmap& bmp);
+
+// ── 通用图表对象（全部图种，走 tc_chart_* 模型）──────────────────────────
+
+class PyChart {
+public:
+    explicit PyChart(const std::string& kind) : kind_(kind) {
+        tc_error_handle err = nullptr;
+        handle_ = tc_chart_create(kind_.c_str(), &err);
+        if (handle_ == nullptr) {
+            const std::string msg = take_error(err);
+            throw std::runtime_error("termchart: unknown chart kind '" + kind_ + "'" +
+                                     (msg.empty() ? "" : ": " + msg) +
+                                     " (see termchart.kinds() for the full list)");
+        }
+    }
+
+    PyChart(const PyChart&) = delete;
+    PyChart& operator=(const PyChart&) = delete;
+
+    ~PyChart() {
+        if (handle_ != nullptr) {
+            tc_chart_free(handle_);
+        }
+    }
+
+    [[nodiscard]] const std::string& kind() const noexcept { return kind_; }
+
+    // ── 数据入口（与 C ABI 的五种形状一一对应）──
+
+    void add_points(py::object x, py::object y) {
+        std::vector<double> xs = doubles_of(x);
+        std::vector<double> ys = doubles_of(y);
+        const std::size_t n = std::min(xs.size(), ys.size());
+        if (n == 0) {
+            throw std::runtime_error("termchart: add_points needs non-empty x/y");
+        }
+        check_status(tc_chart_add_points(alive(), xs.data(), ys.data(), n), nullptr,
+                     "add_points");
+    }
+
+    void add_series(py::object x, py::object y, const std::string& name,
+                    py::object color) {
+        add_many(py::make_tuple(py::make_tuple(x, y, name, color)));
+    }
+
+    void add_many(py::iterable series) {
+        std::vector<std::vector<double>> xs_store;
+        std::vector<std::vector<double>> ys_store;
+        std::vector<std::string> names_store;
+        std::vector<tc_series> items;
+
+        for (auto item : series) {
+            auto t = py::cast<py::tuple>(item);
+            if (py::len(t) < 2) {
+                throw std::runtime_error("termchart: series items need (x, y[, name[, color]])");
+            }
+            xs_store.push_back(to_doubles(t[0]));
+            ys_store.push_back(to_doubles(t[1]));
+            names_store.push_back(py::len(t) > 2 && !t[2].is_none()
+                                      ? py::cast<std::string>(t[2])
+                                      : std::string{});
+            tc_series s{};
+            s.name = names_store.back().empty() ? nullptr : names_store.back().c_str();
+            if (py::len(t) > 3 && !t[3].is_none()) {
+                const auto spec = py::cast<py::tuple>(t[3]);
+                s.color.kind = TC_COLOR_RGB;
+                s.color.r = py::cast<int>(spec[0]);
+                s.color.g = py::cast<int>(spec[1]);
+                s.color.b = py::cast<int>(spec[2]);
+            }
+            s.x = xs_store.back().data();
+            s.y = ys_store.back().data();
+            s.n = std::min(xs_store.back().size(), ys_store.back().size());
+            if (s.n == 0) {
+                throw std::runtime_error("termchart: series needs non-empty x/y");
+            }
+            items.push_back(s);
+        }
+
+        if (items.empty()) {
+            return;
+        }
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_add_series(alive(), items.data(), items.size(), &err), err,
+                     "add_series");
+    }
+
+    void set_values(py::object values, py::object labels) {
+        std::vector<double> vals = doubles_of(values);
+        std::vector<std::string> labs = strings_of(labels);
+        std::vector<const char*> lab_ptrs = c_strings(labs);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_values(alive(), vals.data(), vals.size(),
+                                         lab_ptrs.empty() ? nullptr : lab_ptrs.data(),
+                                         lab_ptrs.size(), &err),
+                     err, "set_values");
+    }
+
+    void set_matrix(py::object rows, py::object row_labels, py::object col_labels) {
+        std::vector<std::vector<double>> rows_store;
+        std::vector<const double*> row_ptrs;
+        std::size_t ncol = 0;
+        for (auto row : py::iter(rows)) {
+            rows_store.push_back(to_doubles(py::reinterpret_borrow<py::object>(row)));
+            if (ncol == 0) {
+                ncol = rows_store.back().size();
+            } else if (rows_store.back().size() != ncol) {
+                throw std::runtime_error("termchart: set_matrix rows must all have the same length");
+            }
+        }
+        if (rows_store.empty()) {
+            throw std::runtime_error("termchart: set_matrix needs at least one row");
+        }
+        row_ptrs.reserve(rows_store.size());
+        for (const auto& r : rows_store) {
+            row_ptrs.push_back(r.data());
+        }
+        std::vector<std::string> rl = strings_of(row_labels);
+        std::vector<std::string> cl = strings_of(col_labels);
+        std::vector<const char*> rl_ptrs = c_strings(rl);
+        std::vector<const char*> cl_ptrs = c_strings(cl);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_matrix(alive(), row_ptrs.data(), rows_store.size(), ncol,
+                                         rl_ptrs.empty() ? nullptr : rl_ptrs.data(),
+                                         rl_ptrs.size(),
+                                         cl_ptrs.empty() ? nullptr : cl_ptrs.data(),
+                                         cl_ptrs.size(), &err),
+                     err, "set_matrix");
+    }
+
+    void set_scalar(double value) {
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_scalar(alive(), value, &err), err, "set_scalar");
+    }
+
+    void set_tree(py::object nodes) {
+        std::vector<int> parents;
+        std::vector<double> values;
+        std::vector<std::string> names;
+        for (auto item : py::iter(nodes)) {
+            auto t = py::cast<py::tuple>(item);
+            if (py::len(t) != 3) {
+                throw std::runtime_error("termchart: tree nodes are (parent_index, name, value)");
+            }
+            parents.push_back(py::cast<int>(t[0]));
+            names.push_back(py::cast<std::string>(t[1]));
+            values.push_back(py::cast<double>(t[2]));
+        }
+        if (parents.empty()) {
+            throw std::runtime_error("termchart: set_tree needs at least one node");
+        }
+        std::vector<const char*> name_ptrs = c_strings(names);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_tree(alive(), parents.data(), name_ptrs.data(),
+                                       values.data(), parents.size(), &err),
+                     err, "set_tree");
+    }
+
+    void set_text(py::iterable rows, py::object blob) {
+        std::vector<std::vector<std::string>> cells;
+        std::vector<std::vector<const char*>> cell_ptrs;
+        std::vector<const char* const*> row_ptrs;
+        std::vector<std::uint64_t> counts;
+        for (auto row : rows) {
+            std::vector<std::string> line;
+            for (auto cell : py::iter(row)) {
+                line.push_back(py::cast<std::string>(cell));
+            }
+            cells.push_back(std::move(line));
+        }
+        for (const auto& line : cells) {
+            cell_ptrs.push_back(c_strings(line));
+            counts.push_back(line.size());
+        }
+        for (const auto& line : cell_ptrs) {
+            row_ptrs.push_back(line.data());
+        }
+        std::string geo = blob.is_none() ? std::string{} : py::cast<std::string>(blob);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_text(alive(), row_ptrs.data(), row_ptrs.size(),
+                                       counts.data(),
+                                       geo.empty() ? nullptr : geo.c_str(), &err),
+                     err, "set_text");
+    }
+
+    void set_regions(py::iterable regions) {
+        std::vector<std::string> names;
+        std::vector<double> values;
+        std::vector<double> cell_x;
+        std::vector<double> cell_y;
+        std::vector<std::uint64_t> starts;
+        std::vector<std::uint64_t> counts;
+        for (auto item : py::iter(regions)) {
+            auto t = py::cast<py::tuple>(item);
+            if (py::len(t) < 2) {
+                throw std::runtime_error("termchart: regions are (name, value[, cells])");
+            }
+            names.push_back(py::cast<std::string>(t[0]));
+            values.push_back(py::cast<double>(t[1]));
+            starts.push_back(cell_x.size());
+            std::size_t added = 0;
+            if (py::len(t) > 2 && !t[2].is_none()) {
+                for (auto cell : py::iter(t[2])) {
+                    auto xy = py::cast<py::tuple>(cell);
+                    cell_x.push_back(py::cast<double>(xy[0]));
+                    cell_y.push_back(py::cast<double>(xy[1]));
+                    ++added;
+                }
+            }
+            counts.push_back(added);
+        }
+        if (names.empty()) {
+            throw std::runtime_error("termchart: set_regions needs at least one region");
+        }
+        std::vector<const char*> name_ptrs = c_strings(names);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_regions(alive(), name_ptrs.data(), values.data(),
+                                          names.size(),
+                                          cell_x.empty() ? nullptr : cell_x.data(),
+                                          cell_y.empty() ? nullptr : cell_y.data(),
+                                          starts.data(), counts.data(), cell_x.size(), &err),
+                     err, "set_regions");
+    }
+
+    // ── 模型属性（一条通道，与 C ABI 的 tc_chart_set_prop 同构）──
+
+    void set_prop(const std::string& prop, py::object value) {
+        const tc_chart_prop id = prop_id(prop);
+        tc_value v{};
+        std::vector<double> nums;
+        std::string str;
+        if (value.is_none()) {
+            v.kind = TC_VAL_NONE;
+        } else if (prop == "auto_domain" || prop == "include_zero" ||
+                   prop == "emphasize_zero" || prop == "shade_negative") {
+            v.kind = TC_VAL_BOOL;
+            v.i = py::cast<bool>(value) ? 1 : 0;
+        } else if (prop == "x_label" || prop == "y_label") {
+            str = py::cast<std::string>(value);
+            v.kind = TC_VAL_STRING;
+            v.s = str.c_str();
+        } else {
+            nums = to_doubles(value);
+            v.kind = TC_VAL_DOUBLE_ARRAY;
+            v.p = nums.data();
+            v.n = nums.size();
+        }
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_set_prop(alive(), id, &v, &err), err,
+                     ("set_prop(" + prop + ")").c_str());
+    }
+
+    // ── 输出 ──
+
+    std::string ansi(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+                     std::optional<std::string> title, std::optional<bool> show_legend,
+                     const std::string& depth) {
+        tc_plot_opts opts = plot_opts(width, height, title, show_legend, depth);
+        char* out = nullptr;
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_render_ansi(alive(), &opts, &out, &err), err, "render");
+        const std::string text = out == nullptr ? std::string{} : std::string(out);
+        tc_free_string(out);
+        return text;
+    }
+
+    void print(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+               std::optional<std::string> title, std::optional<bool> show_legend,
+               const std::string& depth) {
+        tc_plot_opts opts = plot_opts(width, height, title, show_legend, depth);
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_print(alive(), &opts, &err), err, "print");
+    }
+
+    std::string to_svg(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+                       std::optional<std::string> title, std::optional<bool> show_legend) {
+        tc_plot_opts opts = plot_opts(width, height, title, show_legend, std::string{"truecolor"});
+        return take_buffer(&tc_chart_to_svg, opts, "to_svg");
+    }
+
+    std::string to_png(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+                       std::optional<std::string> title, std::optional<bool> show_legend) {
+        tc_plot_opts opts = plot_opts(width, height, title, show_legend, std::string{"truecolor"});
+        return take_buffer(&tc_chart_to_png, opts, "to_png");
+    }
+
+    // 像素数组：复用 PNG 导出 → 零依赖 PNG 解码，避免与 SVG/PNG 走出两套栅格化。
+    py::array_t<std::uint8_t> pixels(std::optional<std::uint32_t> width,
+                                     std::optional<std::uint32_t> height,
+                                     std::optional<std::string> title,
+                                     std::optional<bool> show_legend) {
+        const std::string png = to_png(width, height, title, show_legend);
+        const auto decoded = termchart::image::decode_image(
+            reinterpret_cast<const std::uint8_t*>(png.data()), png.size());
+        if (!decoded.has_value()) {
+            throw std::runtime_error("termchart: pixels() failed to decode the rendered PNG");
+        }
+        return bitmap_to_numpy(decoded.value());
+    }
+
+private:
+    [[nodiscard]] tc_chart_handle alive() const {
+        if (handle_ == nullptr) {
+            throw std::runtime_error("termchart: chart is already closed");
+        }
+        return handle_;
+    }
+
+    static tc_chart_prop prop_id(const std::string& prop) {
+        if (prop == "y_domain") return TC_PROP_Y_DOMAIN;
+        if (prop == "auto_domain") return TC_PROP_AUTO_DOMAIN;
+        if (prop == "include_zero") return TC_PROP_INCLUDE_ZERO;
+        if (prop == "emphasize_zero") return TC_PROP_EMPHASIZE_ZERO;
+        if (prop == "shade_negative") return TC_PROP_SHADE_NEGATIVE;
+        if (prop == "x_ticks") return TC_PROP_X_TICKS;
+        if (prop == "x_label") return TC_PROP_X_LABEL;
+        if (prop == "y_label") return TC_PROP_Y_LABEL;
+        throw std::runtime_error("termchart: unknown chart property '" + prop +
+                                 "' (y_domain / auto_domain / include_zero / emphasize_zero / "
+                                 "shade_negative / x_ticks / x_label / y_label)");
+    }
+
+    static tc_plot_opts plot_opts(std::optional<std::uint32_t> width,
+                                  std::optional<std::uint32_t> height,
+                                  const std::optional<std::string>& title,
+                                  std::optional<bool> show_legend,
+                                  const std::string& depth) {
+        tc_plot_opts opts{};
+        opts.width = width.value_or(0);
+        opts.height = height.value_or(0);
+        opts.title = title.has_value() ? title->c_str() : nullptr;
+        opts.depth = depth_of(depth);
+        opts.show_legend = (show_legend.value_or(false)) ? 1 : 0;
+        return opts;
+    }
+
+    using BufferFn = tc_status (*)(tc_chart_handle, const tc_plot_opts*, char*, uint64_t,
+                                   uint64_t*, tc_error_handle*);
+
+    std::string take_buffer(BufferFn fn, tc_plot_opts& opts, const char* what) {
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(fn(alive(), &opts, nullptr, 0, &need, &err), err, what);
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(fn(alive(), &opts, buf.data(), buf.size(), &got, &err), err, what);
+        return std::string(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    tc_chart_handle handle_ = nullptr;
+    std::string kind_;
+};
+
+// ── 图像（Bitmap + 编解码，走 image:: 模块）────────────────────────────────
+
+py::array_t<std::uint8_t> bitmap_to_numpy(const termchart::image::Bitmap& bmp) {
+    py::array_t<std::uint8_t, py::array::c_style> arr(
+        {static_cast<py::ssize_t>(bmp.height()), static_cast<py::ssize_t>(bmp.width()),
+         static_cast<py::ssize_t>(bmp.channels())});
+    std::memcpy(arr.mutable_data(), bmp.data(), bmp.size());
+    return arr;
+}
+
+termchart::image::Bitmap bitmap_from_numpy(py::object obj) {
+    py::array arr = py::array::ensure(obj);
+    if (!arr) {
+        throw std::runtime_error("termchart: image wants a uint8 numpy array");
+    }
+    py::buffer_info info = arr.request();
+    if (info.ndim != 3 || info.itemsize != 1) {
+        throw std::runtime_error("termchart: image must be an (H, W, 3|4) uint8 array");
+    }
+    const std::uint32_t h = static_cast<std::uint32_t>(info.shape[0]);
+    const std::uint32_t w = static_cast<std::uint32_t>(info.shape[1]);
+    const std::uint8_t c = static_cast<std::uint8_t>(info.shape[2]);
+    if (c != 3 && c != 4) {
+        throw std::runtime_error("termchart: image must have 3 or 4 channels");
+    }
+    termchart::image::Bitmap bmp(w, h, c);
+    if (info.strides[0] == static_cast<py::ssize_t>(w) * c &&
+        info.strides[1] == static_cast<py::ssize_t>(c)) {
+        std::memcpy(bmp.data(), info.ptr, bmp.size());
+    } else {
+        const char* base = static_cast<const char*>(info.ptr);
+        for (std::uint32_t y = 0; y < h; ++y) {
+            for (std::uint32_t x = 0; x < w; ++x) {
+                for (std::uint8_t ch = 0; ch < c; ++ch) {
+                    const char* p = base + info.strides[0] * y + info.strides[1] * x + ch;
+                    bmp.set(x, y, ch, *reinterpret_cast<const std::uint8_t*>(p));
+                }
+            }
+        }
+    }
+    return bmp;
+}
+
+std::string read_file_bytes(const std::string& path) {
+    std::FILE* fp = termchart::util::fopen_utf8(path, "rb");
+    if (fp == nullptr) {
+        throw std::runtime_error("termchart: cannot open file: " + path);
+    }
+    std::string out;
+    char chunk[8192];
+    std::size_t n = 0;
+    while ((n = std::fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+        out.append(chunk, n);
+    }
+    std::fclose(fp);
+    return out;
+}
+
+void write_file_bytes(const std::string& path, const std::string& data) {
+    std::FILE* fp = termchart::util::fopen_utf8(path, "wb");
+    if (fp == nullptr) {
+        throw std::runtime_error("termchart: cannot open file: " + path);
+    }
+    const std::size_t written = std::fwrite(data.data(), 1, data.size(), fp);
+    std::fclose(fp);
+    if (written != data.size()) {
+        throw std::runtime_error("termchart: cannot write file: " + path);
+    }
+}
+
 // ── pybind entry wrappers ───────────────────────────────────────────────
+
+// 一行式出图直通 C ABI 的 tc_quick_*（= api::render_plot / render_scatter /
+// render_bar）。不再自己拼 Chart：那样系列名、配色、图例默认值会和 C++ 版本
+// 分叉——这正是 Python 与 C++ "看起来不一样"的来源。
+std::string quick_render_xy(tc_quick_kind kind, py::object x, py::object y,
+                            const std::string& title, std::uint32_t width,
+                            std::uint32_t height) {
+    const std::vector<double> xs = to_doubles(x);
+    const std::vector<double> ys = to_doubles(y);
+    const std::size_t n = std::min(xs.size(), ys.size());
+    if (n == 0) {
+        throw std::runtime_error("termchart: plot needs non-empty x/y");
+    }
+    tc_plot_opts opts{};
+    opts.width = width;
+    opts.height = height;
+    opts.title = title.empty() ? nullptr : title.c_str();
+    opts.depth = TC_DEPTH_TRUECOLOR;
+    std::uint64_t need = 0;
+    tc_error_handle err = nullptr;
+    const tc_status probe =
+        tc_quick_xy(kind, xs.data(), ys.data(), n, &opts, nullptr, 0, &need, &err);
+    if (probe != TC_ERR_BUFFER_TOO_SMALL) {
+        const std::string msg = take_error(err);
+        throw std::runtime_error("termchart: quick render failed" +
+                                 (msg.empty() ? std::string{} : ": " + msg));
+    }
+    std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+    std::uint64_t got = 0;
+    err = nullptr;
+    check_status(tc_quick_xy(kind, xs.data(), ys.data(), n, &opts, buf.data(), buf.size(), &got,
+                             &err),
+                 err, "quick render");
+    return std::string(buf.data(), static_cast<std::size_t>(got));
+}
 
 std::string py_plot(py::object x, py::object y, const std::string& title, std::uint32_t width,
                     std::uint32_t height) {
-    auto chart = make_line(x, y, title);
-    return to_ansi(*chart, width, height);
+    return quick_render_xy(TC_QUICK_LINE, x, y, title, width, height);
 }
 
 std::string py_scatter(py::object x, py::object y, const std::string& title, std::uint32_t width,
                        std::uint32_t height) {
-    auto chart = make_scatter(x, y, title);
-    return to_ansi(*chart, width, height);
+    return quick_render_xy(TC_QUICK_SCATTER, x, y, title, width, height);
 }
 
-std::string py_bar(const std::vector<std::string>& labels, py::object values,
-                   const std::string& title, std::uint32_t width, std::uint32_t height) {
-    auto chart = make_bar(labels, values, title);
-    return to_ansi(*chart, width, height);
+std::string py_bar(py::object values, py::object labels, const std::string& title,
+                   std::uint32_t width, std::uint32_t height) {
+    const std::vector<double> vals = to_doubles(values);
+    const std::vector<std::string> cats = strings_of(labels);
+    std::vector<const char*> cat_ptrs = c_strings(cats);
+    if (vals.empty()) {
+        throw std::runtime_error("termchart: bar needs non-empty values");
+    }
+    tc_plot_opts opts{};
+    opts.width = width;
+    opts.height = height;
+    opts.title = title.empty() ? nullptr : title.c_str();
+    opts.depth = TC_DEPTH_TRUECOLOR;
+    std::uint64_t need = 0;
+    tc_error_handle err = nullptr;
+    const tc_status probe = tc_quick_bar(vals.data(), cat_ptrs.empty() ? nullptr : cat_ptrs.data(),
+                                         vals.size(), &opts, nullptr, 0, &need, &err);
+    if (probe != TC_ERR_BUFFER_TOO_SMALL) {
+        const std::string msg = take_error(err);
+        throw std::runtime_error("termchart: quick bar failed" +
+                                 (msg.empty() ? std::string{} : ": " + msg));
+    }
+    std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+    std::uint64_t got = 0;
+    err = nullptr;
+    check_status(tc_quick_bar(vals.data(), cat_ptrs.empty() ? nullptr : cat_ptrs.data(),
+                              vals.size(), &opts, buf.data(), buf.size(), &got, &err),
+                 err, "quick bar");
+    return std::string(buf.data(), static_cast<std::size_t>(got));
 }
 
 std::string py_plot_svg(py::object x, py::object y, const std::string& title, std::uint32_t width,
@@ -394,9 +961,9 @@ std::string py_scatter_svg(py::object x, py::object y, const std::string& title,
     return to_svg(*chart, width, height);
 }
 
-std::string py_bar_svg(const std::vector<std::string>& labels, py::object values,
-                       const std::string& title, std::uint32_t width, std::uint32_t height) {
-    auto chart = make_bar(labels, values, title);
+std::string py_bar_svg(py::object values, py::object labels, const std::string& title,
+                       std::uint32_t width, std::uint32_t height) {
+    auto chart = make_bar(strings_of(labels), values, title);
     return to_svg(*chart, width, height);
 }
 
@@ -438,6 +1005,174 @@ std::string py_render_line(const std::string& text, std::uint32_t width) {
     return rendered.value();
 }
 
+// ── 图像对象（tc_image_* 句柄；方法就是 image::Bitmap 的同名成员）────────────
+
+class PyBitmap {
+public:
+    explicit PyBitmap(tc_image_handle handle) : handle_(handle) {}
+    PyBitmap(const PyBitmap&) = delete;
+    PyBitmap& operator=(const PyBitmap&) = delete;
+    // 工厂函数与 scaled_to/with_alpha 都按值返回，句柄所有权随之转移。
+    PyBitmap(PyBitmap&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
+    PyBitmap& operator=(PyBitmap&& other) noexcept {
+        if (this != &other) {
+            if (handle_ != nullptr) {
+                tc_image_free(handle_);
+            }
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+
+    ~PyBitmap() {
+        if (handle_ != nullptr) {
+            tc_image_free(handle_);
+        }
+    }
+
+    static PyBitmap create(std::uint32_t w, std::uint32_t h, std::uint8_t channels) {
+        tc_error_handle err = nullptr;
+        tc_image_handle handle = tc_image_create(w, h, channels, &err);
+        if (handle == nullptr) {
+            throw std::runtime_error("termchart: image create failed: " + take_error(err));
+        }
+        return PyBitmap(handle);
+    }
+
+    static PyBitmap load(const std::string& path) {
+        tc_error_handle err = nullptr;
+        tc_image_handle handle = tc_image_load(path.c_str(), &err);
+        if (handle == nullptr) {
+            throw std::runtime_error("termchart: image load failed: " + take_error(err));
+        }
+        return PyBitmap(handle);
+    }
+
+    static PyBitmap decode(py::bytes data) {
+        const std::string raw = data;
+        tc_error_handle err = nullptr;
+        tc_image_handle handle = tc_image_decode(
+            reinterpret_cast<const std::uint8_t*>(raw.data()), raw.size(), &err);
+        if (handle == nullptr) {
+            throw std::runtime_error("termchart: image decode failed: " + take_error(err));
+        }
+        return PyBitmap(handle);
+    }
+
+    [[nodiscard]] std::uint32_t width() const { return tc_image_width(alive()); }
+    [[nodiscard]] std::uint32_t height() const { return tc_image_height(alive()); }
+    [[nodiscard]] std::uint8_t channels() const { return tc_image_channels(alive()); }
+
+    // 原始像素是二进制：返回 py::bytes，别让 pybind11 当成 UTF-8 字符串解码。
+    py::bytes pixels() const { return py::bytes(pixels_raw()); }
+
+    py::array_t<std::uint8_t> numpy() const {
+        const std::string pix = pixels_raw();
+        py::array_t<std::uint8_t, py::array::c_style> arr(
+            {static_cast<py::ssize_t>(height()), static_cast<py::ssize_t>(width()),
+             static_cast<py::ssize_t>(channels())});
+        std::memcpy(arr.mutable_data(), pix.data(), pix.size());
+        return arr;
+    }
+
+    PyBitmap scaled_to(std::uint32_t w, std::uint32_t h) const {
+        tc_error_handle err = nullptr;
+        tc_image_handle out = tc_image_scaled(alive(), w, h, &err);
+        if (out == nullptr) {
+            throw std::runtime_error("termchart: image scaled_to failed: " + take_error(err));
+        }
+        return PyBitmap(out);
+    }
+
+    PyBitmap with_alpha(std::uint8_t alpha) const {
+        tc_error_handle err = nullptr;
+        tc_image_handle out = tc_image_with_alpha(alive(), alpha, &err);
+        if (out == nullptr) {
+            throw std::runtime_error("termchart: image with_alpha failed: " + take_error(err));
+        }
+        return PyBitmap(out);
+    }
+
+    PyBitmap without_alpha() const {
+        tc_error_handle err = nullptr;
+        tc_image_handle out = tc_image_without_alpha(alive(), &err);
+        if (out == nullptr) {
+            throw std::runtime_error("termchart: image without_alpha failed: " + take_error(err));
+        }
+        return PyBitmap(out);
+    }
+
+    void fill(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) const {
+        tc_image_fill(alive(), r, g, b, a);
+    }
+
+    void fill_rect(std::uint32_t x, std::uint32_t y, std::uint32_t w, std::uint32_t h,
+                   std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) const {
+        tc_image_fill_rect(alive(), x, y, w, h, r, g, b, a);
+    }
+
+    void blit_over(const PyBitmap& src, std::int32_t dx, std::int32_t dy) const {
+        tc_image_blit_over(alive(), src.handle_, dx, dy);
+    }
+
+    py::bytes encode(const std::string& format, std::uint8_t quality) const {
+        const std::uint64_t need = encode_size(format, quality);
+        std::vector<char> buf(static_cast<std::size_t>(need));
+        std::uint64_t got = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_image_encode(alive(), format.c_str(), quality, buf.data(), buf.size(),
+                                     &got, &err),
+                     err, "image encode");
+        return py::bytes(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    void save(const std::string& path, const std::string& format,
+              std::uint8_t quality) const {
+        tc_error_handle err = nullptr;
+        check_status(
+            tc_image_save(alive(), path.c_str(), format.empty() ? nullptr : format.c_str(),
+                          quality, &err),
+            err, "image save");
+    }
+
+private:
+    [[nodiscard]] tc_image_handle alive() const {
+        if (handle_ == nullptr) {
+            throw std::runtime_error("termchart: image is already closed");
+        }
+        return handle_;
+    }
+
+    std::string pixels_raw() const {
+        std::uint64_t need = 0;
+        const tc_status probe = tc_image_pixels(alive(), nullptr, 0, &need, nullptr);
+        if (probe != TC_ERR_BUFFER_TOO_SMALL) {
+            throw std::runtime_error("termchart: image pixels failed");
+        }
+        std::vector<std::uint8_t> buf(static_cast<std::size_t>(need));
+        std::uint64_t got = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_image_pixels(alive(), buf.data(), buf.size(), &got, &err), err,
+                     "image pixels");
+        return std::string(reinterpret_cast<const char*>(buf.data()),
+                           static_cast<std::size_t>(got));
+    }
+
+    std::uint64_t encode_size(const std::string& format, std::uint8_t quality) const {
+        std::uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        const tc_status probe =
+            tc_image_encode(alive(), format.c_str(), quality, nullptr, 0, &need, &err);
+        if (probe != TC_ERR_BUFFER_TOO_SMALL) {
+            throw std::runtime_error("termchart: image encode failed: " + take_error(err));
+        }
+        return need;
+    }
+
+    tc_image_handle handle_ = nullptr;
+};
+
 }  // namespace
 
 PYBIND11_MODULE(termchart, m) {
@@ -455,9 +1190,10 @@ PYBIND11_MODULE(termchart, m) {
     m.def("scatter", &py_scatter, py::arg("x"), py::arg("y"), py::arg("title") = std::string{},
           py::arg("width") = kDefaultWidth, py::arg("height") = kDefaultHeight,
           "Draw a scatter chart and return the ANSI text.");
-    m.def("bar", &py_bar, py::arg("labels"), py::arg("values"), py::arg("title") = std::string{},
-          py::arg("width") = kDefaultWidth, py::arg("height") = kDefaultHeight,
-          "Draw a bar chart and return the ANSI text. labels may be empty; values is a sequence.");
+    m.def("bar", &py_bar, py::arg("values"), py::arg("labels") = py::none(),
+          py::arg("title") = std::string{}, py::arg("width") = kDefaultWidth,
+          py::arg("height") = kDefaultHeight,
+          "Draw a bar chart and return the ANSI text. labels may be omitted; values is a sequence.");
 
     m.def("plot_svg", &py_plot_svg, py::arg("x"), py::arg("y"), py::arg("title") = std::string{},
           py::arg("width") = kDefaultWidth, py::arg("height") = kDefaultHeight,
@@ -465,7 +1201,7 @@ PYBIND11_MODULE(termchart, m) {
     m.def("scatter_svg", &py_scatter_svg, py::arg("x"), py::arg("y"),
           py::arg("title") = std::string{}, py::arg("width") = kDefaultWidth,
           py::arg("height") = kDefaultHeight, "Draw a scatter chart and return the SVG text.");
-    m.def("bar_svg", &py_bar_svg, py::arg("labels"), py::arg("values"),
+    m.def("bar_svg", &py_bar_svg, py::arg("values"), py::arg("labels") = py::none(),
           py::arg("title") = std::string{}, py::arg("width") = kDefaultWidth,
           py::arg("height") = kDefaultHeight, "Draw a bar chart and return the SVG text.");
 
@@ -479,6 +1215,82 @@ PYBIND11_MODULE(termchart, m) {
           py::arg("pixel_height") = kDefaultPixelHeight,
           "Draw a line chart and write a PNG file (chart -> Scene -> bitmap -> PNG)."
           );
+
+    // ── 通用图表模型：全部已登记图种，一个入口 ──
+    py::class_<PyChart>(m, "Chart")
+        .def(py::init<const std::string&>(), py::arg("kind"))
+        .def_property_readonly("kind", &PyChart::kind)
+        .def("add_points", &PyChart::add_points, py::arg("x"), py::arg("y"))
+        .def("add_series", &PyChart::add_series, py::arg("x"), py::arg("y"),
+             py::arg("name") = std::string{}, py::arg("color") = py::none())
+        .def("add_many", &PyChart::add_many, py::arg("series"))
+        .def("set_values", &PyChart::set_values, py::arg("values"),
+             py::arg("labels") = py::none())
+        .def("set_matrix", &PyChart::set_matrix, py::arg("rows"),
+             py::arg("row_labels") = py::none(), py::arg("col_labels") = py::none())
+        .def("set_scalar", &PyChart::set_scalar, py::arg("value"))
+        .def("set_tree", &PyChart::set_tree, py::arg("nodes"))
+        .def("set_text", &PyChart::set_text, py::arg("rows"), py::arg("blob") = py::none())
+        .def("set_regions", &PyChart::set_regions, py::arg("regions"))
+        .def("set_prop", &PyChart::set_prop, py::arg("prop"), py::arg("value"))
+        .def("ansi", &PyChart::ansi, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("title") = py::none(),
+             py::arg("show_legend") = py::none(), py::arg("depth") = std::string{"truecolor"})
+        .def("print", &PyChart::print, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("title") = py::none(),
+             py::arg("show_legend") = py::none(), py::arg("depth") = std::string{"truecolor"})
+        .def("to_svg", &PyChart::to_svg, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("title") = py::none(),
+             py::arg("show_legend") = py::none())
+        // PNG 是二进制：std::string 默认会被 pybind11 转成 str，遇到 0x89 就炸，
+        // 所以这里显式转 py::bytes（与 ctypes 桥返回的 bytes 对齐）。
+        .def("to_png", [](const PyChart& chart, std::optional<std::uint32_t> width,
+                          std::optional<std::uint32_t> height,
+                          std::optional<std::string> title, std::optional<bool> show_legend) {
+            // 方法非 const（内部要 alive() 校验），这里用 const_cast 避免改签名。
+            return py::bytes(const_cast<PyChart&>(chart).to_png(width, height, title, show_legend));
+        }, py::arg("width") = py::none(), py::arg("height") = py::none(),
+           py::arg("title") = py::none(), py::arg("show_legend") = py::none())
+        .def("pixels", &PyChart::pixels, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("title") = py::none(),
+             py::arg("show_legend") = py::none())
+        .def("__repr__", [](const PyChart& c) { return "<termchart.Chart '" + c.kind() + "'>"; });
+
+    m.def("kinds", []() {
+        std::uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        // buf=nullptr 时返回 TC_OK 并填 out_len，不是 BUFFER_TOO_SMALL。
+        const tc_status probe = tc_chart_kinds(nullptr, 0, &need, &err);
+        if (probe != TC_OK && probe != TC_ERR_BUFFER_TOO_SMALL) {
+            throw std::runtime_error("termchart: kinds failed: " + take_error(err));
+        }
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        std::uint64_t got = 0;
+        check_status(tc_chart_kinds(buf.data(), buf.size(), &got, &err), err, "kinds");
+        // tc_chart_kinds 用空格分隔（字典序）；按空白切分，别假设换行。
+        std::vector<std::string> out;
+        std::string current;
+        for (std::uint64_t i = 0; i < got; ++i) {
+            const char c = buf[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0') {
+                if (!current.empty()) {
+                    out.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(c);
+            }
+        }
+        if (!current.empty()) {
+            out.push_back(current);
+        }
+        return out;
+    }, "All registered chart kinds (use with Chart(kind)).");
+
+    m.def("auto_plot", [](const std::string& path) {
+        tc_error_handle err = nullptr;
+        check_status(tc_auto_plot(path.c_str(), &err), err, "auto_plot");
+    }, py::arg("path"), "Pick a chart automatically from a data file (CSV/JSON) and print it.");
 
     m.def("render_line", &py_render_line, py::arg("text"), py::arg("width") = 0u,
           "Render a piece of text as a styled ANSI terminal line.");
@@ -523,6 +1335,37 @@ PYBIND11_MODULE(termchart, m) {
     m.def("save_png_pixels", &save_png_pixels, py::arg("pixels"), py::arg("width"),
           py::arg("height"), py::arg("path"),
           "Encode a w*h*4 RGBA pixel buffer (bytes or uint8 ndarray) to a PNG file.");
+
+    // ── image 子模块：与 image::Bitmap 同名成员，像素不重算 ──
+    auto img = m.def_submodule("image", "Image decode/encode and pixel composition.");
+    py::class_<PyBitmap>(img, "Bitmap")
+        .def_static("create", &PyBitmap::create, py::arg("width"), py::arg("height"),
+                    py::arg("channels") = 4)
+        .def_static("load", &PyBitmap::load, py::arg("path"))
+        .def_static("decode", &PyBitmap::decode, py::arg("data"))
+        .def_property_readonly("width", &PyBitmap::width)
+        .def_property_readonly("height", &PyBitmap::height)
+        .def_property_readonly("channels", &PyBitmap::channels)
+        .def("pixels", &PyBitmap::pixels)
+        .def("numpy", &PyBitmap::numpy)
+        .def("scaled_to", &PyBitmap::scaled_to, py::arg("width"), py::arg("height"))
+        .def("with_alpha", &PyBitmap::with_alpha, py::arg("alpha") = 255)
+        .def("without_alpha", &PyBitmap::without_alpha)
+        .def("fill", &PyBitmap::fill, py::arg("r"), py::arg("g"), py::arg("b"),
+             py::arg("a") = 255)
+        .def("fill_rect", &PyBitmap::fill_rect, py::arg("x"), py::arg("y"), py::arg("w"),
+             py::arg("h"), py::arg("r"), py::arg("g"), py::arg("b"), py::arg("a") = 255)
+        .def("blit_over", &PyBitmap::blit_over, py::arg("src"), py::arg("dx"), py::arg("dy"))
+        .def("encode", &PyBitmap::encode, py::arg("format") = std::string{"png"},
+             py::arg("quality") = 85)
+        .def("save", &PyBitmap::save, py::arg("path"), py::arg("format") = std::string{},
+             py::arg("quality") = 85)
+        .def("__repr__", [](const PyBitmap& b) {
+            return "<termchart.image.Bitmap " + std::to_string(b.width()) + "x" +
+                   std::to_string(b.height()) + " ch=" + std::to_string(b.channels()) + ">";
+        });
+    img.def("load", &PyBitmap::load, py::arg("path"), "Decode an image file.");
+    img.def("decode", &PyBitmap::decode, py::arg("data"), "Decode image bytes.");
 
 #ifdef TERMCHART_HAVE_QT
     m.def("show_qt", [](py::object x, py::object y, const std::string& title, std::uint32_t width,

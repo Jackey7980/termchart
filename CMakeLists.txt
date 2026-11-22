@@ -174,15 +174,24 @@ if(EMSCRIPTEN AND TERMCHART_BUILD_WASM)
     set_target_properties(termchart_wasm PROPERTIES SUFFIX ".html")
 endif()
 
-# Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart；缺 pybind11 即报错。
-if(TERMCHART_BUILD_PYTHON)
-    add_subdirectory(bindings/python)
+# Python 绑定复用 C ABI 的通用图表模型（tc_chart_create(kind) + 数据形状入口 +
+# 属性通道 + SVG/PNG 导出），否则 Python 侧要按图种手写一遍包装——那正是
+# "牵一发而动全身"。因此 PYTHON=ON 时自动启用 CAPI（源码在仓库内，无外部依赖）。
+if(TERMCHART_BUILD_PYTHON AND NOT TERMCHART_BUILD_CAPI)
+    set(TERMCHART_BUILD_CAPI ON CACHE BOOL "构建 C ABI 适配层 termchart_capi（Python 绑定前置）" FORCE)
+    message(STATUS "TERMCHART_BUILD_PYTHON=ON：已自动启用 TERMCHART_BUILD_CAPI（Python 绑定复用 C ABI 模型）")
 endif()
 
-# C ABI 适配层（可选插件，默认关）：termchart_capi 共享库，链接 termchart；
+# C ABI 适配层（可选插件，默认关）：termchart_capi 共享库 + 静态库，链接 termchart；
 # 是 Python / Rust / Java 桥的共同前置（见 docs/design/ffi_plan.md §1）。
 if(TERMCHART_BUILD_CAPI)
     add_subdirectory(libs/capi)
+endif()
+
+# Python 绑定（可选插件，默认关）：pybind11 模块，链接 termchart 与 capi 静态库；
+# 缺 pybind11 即报错。
+if(TERMCHART_BUILD_PYTHON)
+    add_subdirectory(bindings/python)
 endif()
 
 # Java 高层出图桥（可选插件，默认关）：JNI glue 包 termchart_capi；需 CAPI + JDK。

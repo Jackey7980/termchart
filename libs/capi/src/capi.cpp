@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -24,6 +25,10 @@
 #include "termchart/api/autoviz_plot.hpp"
 #include "termchart/api/chart.hpp"
 #include "termchart/api/quick.hpp"
+#include "termchart/image/bitmap.hpp"
+#include "termchart/image/decoder.hpp"
+#include "termchart/image/encode.hpp"
+#include "termchart/util/file.hpp"
 #include "termchart/backend/vector/backend.hpp"
 #include "termchart/backend/vector/svg_backend.hpp"
 #include "termchart/canvas/canvas.hpp"
@@ -1446,6 +1451,307 @@ tc_status tc_chart_to_png(tc_chart_handle chart, const tc_plot_opts* o, char* bu
     }
     std::memcpy(buf, png.data(), png.size());
     if (out_len) *out_len = png.size();
+    return TC_OK;
+}
+
+// ── 一行出图（直通 api::render_*，不另拼 Chart）──────────────────────────────
+
+static api::PlotOpts quick_opts_of(const tc_plot_opts* o) {
+    api::PlotOpts p{};
+    if (o == nullptr) {
+        return p;
+    }
+    if (o->width) p.width = o->width;
+    if (o->height) p.height = o->height;
+    if (o->title) p.title = o->title;
+    if (o->depth != TC_DEPTH_NONE) p.depth = to_depth(o->depth);
+    p.show_legend = o->show_legend != 0;
+    return p;
+}
+
+static tc_status emit_result(const Result<std::string>& r, char* buf, std::uint64_t cap,
+                             std::uint64_t* out_len, tc_error_handle* err) {
+    if (!r.has_value()) {
+        return fail(err, "quick render failed (code " +
+                             std::to_string(static_cast<int>(r.error())) + ")",
+                    status_to_tc(r.error()));
+    }
+    const std::string& text = r.value();
+    if (out_len != nullptr) {
+        *out_len = text.size();
+    }
+    if (buf == nullptr || cap < text.size()) {
+        return TC_ERR_BUFFER_TOO_SMALL;
+    }
+    std::memcpy(buf, text.data(), text.size());
+    return TC_OK;
+}
+
+tc_status tc_quick_xy(tc_quick_kind kind, const double* x, const double* y, std::uint64_t n,
+                      const tc_plot_opts* opts, char* buf, std::uint64_t cap,
+                      std::uint64_t* out_len, tc_error_handle* err) {
+    if (x == nullptr || y == nullptr || n == 0) {
+        return fail(err, "quick plot: empty x/y", TC_ERR_INVALID_ARG);
+    }
+    const std::vector<double> xs(x, x + n);
+    const std::vector<double> ys(y, y + n);
+    const api::PlotOpts o = quick_opts_of(opts);
+    const auto r = (kind == TC_QUICK_SCATTER) ? api::render_scatter(xs, ys, o)
+                                              : api::render_plot(xs, ys, o);
+    return emit_result(r, buf, cap, out_len, err);
+}
+
+tc_status tc_quick_bar(const double* values, const char* const* labels, std::uint64_t n,
+                       const tc_plot_opts* opts, char* buf, std::uint64_t cap,
+                       std::uint64_t* out_len, tc_error_handle* err) {
+    if (values == nullptr || n == 0) {
+        return fail(err, "quick bar: empty values", TC_ERR_INVALID_ARG);
+    }
+    std::vector<double> vals(values, values + n);
+    std::vector<std::string> cats;
+    if (labels != nullptr) {
+        cats.reserve(static_cast<std::size_t>(n));
+        for (std::uint64_t i = 0; i < n; ++i) {
+            cats.push_back(labels[i] == nullptr ? std::string{} : std::string(labels[i]));
+        }
+    }
+    const api::PlotOpts o = quick_opts_of(opts);
+    return emit_result(api::render_bar(vals, cats, o), buf, cap, out_len, err);
+}
+
+// ── 图像（1:1 包 image::Bitmap，像素不重算）──────────────────────────────────
+
+static image::Bitmap* as_bitmap(tc_image_handle h) { return reinterpret_cast<image::Bitmap*>(h); }
+
+static std::string lower_ascii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return s;
+}
+
+// 显式映射，未知格式如实报错：不做"猜个格式编出去"。
+static bool image_format_from_name(const std::string& raw, image::ImageFormat* out) {
+    const std::string f = lower_ascii(raw);
+    if (f == "png") { *out = image::ImageFormat::Png; return true; }
+    if (f == "jpg" || f == "jpeg") { *out = image::ImageFormat::Jpeg; return true; }
+    if (f == "gif") { *out = image::ImageFormat::Gif; return true; }
+    if (f == "webp") { *out = image::ImageFormat::Webp; return true; }
+    return false;
+}
+
+static std::string extension_of(const std::string& path) {
+    const std::size_t dot = path.find_last_of('.');
+    return dot == std::string::npos ? std::string{} : path.substr(dot + 1);
+}
+
+static tc_image_handle decode_to_handle(const std::uint8_t* data, std::uint64_t size,
+                                        tc_error_handle* err) {
+    if (data == nullptr || size == 0) {
+        set_err(err, "image decode: empty input");
+        return nullptr;
+    }
+    auto decoded = image::decode_image(data, static_cast<std::size_t>(size));
+    if (!decoded.has_value()) {
+        set_err(err, "image decode failed (code " +
+                         std::to_string(static_cast<int>(decoded.error())) + ")");
+        return nullptr;
+    }
+    return reinterpret_cast<tc_image_handle>(new image::Bitmap(std::move(decoded.value())));
+}
+
+static tc_status encode_to_buffer(tc_image_handle image, const char* format, uint8_t quality,
+                                  char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                                  tc_error_handle* err) {
+    image::Bitmap* bmp = as_bitmap(image);
+    if (bmp == nullptr) {
+        return fail(err, "image encode: null handle", TC_ERR_INVALID_HANDLE);
+    }
+    image::ImageFormat fmt{};
+    if (format == nullptr || !image_format_from_name(format, &fmt)) {
+        return fail(err, "image encode: unsupported format '" + std::string(format ? format : "") +
+                             "' (png / jpeg / gif / webp)",
+                    TC_ERR_UNSUPPORTED);
+    }
+    std::string bytes;
+    try {
+        image::EncodeOptions opts{};
+        opts.quality = quality == 0 ? 85 : static_cast<int>(quality);
+        bytes = image::encode(*bmp, fmt, opts);
+    } catch (const std::exception& ex) {
+        return fail(err, std::string("image encode threw: ") + ex.what(), TC_ERR_RENDER);
+    } catch (...) {
+        return fail(err, "image encode threw: unknown", TC_ERR_RENDER);
+    }
+    if (out_len != nullptr) {
+        *out_len = bytes.size();
+    }
+    if (buf == nullptr || cap < bytes.size()) {
+        return TC_ERR_BUFFER_TOO_SMALL;
+    }
+    std::memcpy(buf, bytes.data(), bytes.size());
+    return TC_OK;
+}
+
+tc_image_handle tc_image_create(std::uint32_t width, std::uint32_t height, std::uint8_t channels,
+                                tc_error_handle* err) {
+    if (width == 0 || height == 0) {
+        set_err(err, "image create: width/height must be non-zero");
+        return nullptr;
+    }
+    std::uint8_t c = (channels == 3) ? 3 : 4;
+    return reinterpret_cast<tc_image_handle>(new image::Bitmap(width, height, c));
+}
+
+tc_image_handle tc_image_decode(const std::uint8_t* data, std::uint64_t size,
+                                tc_error_handle* err) {
+    return decode_to_handle(data, size, err);
+}
+
+tc_image_handle tc_image_load(const char* path, tc_error_handle* err) {
+    if (path == nullptr) {
+        set_err(err, "image load: null path");
+        return nullptr;
+    }
+    std::FILE* fp = util::fopen_utf8(path, "rb");
+    if (fp == nullptr) {
+        set_err(err, "image load: cannot open " + std::string(path));
+        return nullptr;
+    }
+    std::string bytes;
+    char chunk[8192];
+    std::size_t n = 0;
+    while ((n = std::fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+        bytes.append(chunk, n);
+    }
+    std::fclose(fp);
+    return decode_to_handle(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), err);
+}
+
+void tc_image_free(tc_image_handle image) { delete as_bitmap(image); }
+
+std::uint32_t tc_image_width(tc_image_handle image) {
+    const image::Bitmap* b = as_bitmap(image);
+    return b == nullptr ? 0u : b->width();
+}
+
+std::uint32_t tc_image_height(tc_image_handle image) {
+    const image::Bitmap* b = as_bitmap(image);
+    return b == nullptr ? 0u : b->height();
+}
+
+std::uint8_t tc_image_channels(tc_image_handle image) {
+    const image::Bitmap* b = as_bitmap(image);
+    return b == nullptr ? 0u : b->channels();
+}
+
+tc_status tc_image_pixels(tc_image_handle image, std::uint8_t* buf, std::uint64_t cap,
+                          std::uint64_t* out_len, tc_error_handle* err) {
+    const image::Bitmap* b = as_bitmap(image);
+    if (b == nullptr) {
+        return fail(err, "image pixels: null handle", TC_ERR_INVALID_HANDLE);
+    }
+    const std::uint64_t need = b->size();
+    if (out_len != nullptr) {
+        *out_len = need;
+    }
+    if (buf == nullptr || cap < need) {
+        return TC_ERR_BUFFER_TOO_SMALL;
+    }
+    std::memcpy(buf, b->data(), static_cast<std::size_t>(need));
+    return TC_OK;
+}
+
+tc_image_handle tc_image_scaled(tc_image_handle image, std::uint32_t width, std::uint32_t height,
+                                tc_error_handle* err) {
+    const image::Bitmap* b = as_bitmap(image);
+    if (b == nullptr) {
+        set_err(err, "image scaled: null handle");
+        return nullptr;
+    }
+    if (width == 0 || height == 0) {
+        set_err(err, "image scaled: width/height must be non-zero");
+        return nullptr;
+    }
+    return reinterpret_cast<tc_image_handle>(new image::Bitmap(b->scaled_to(width, height)));
+}
+
+tc_image_handle tc_image_with_alpha(tc_image_handle image, std::uint8_t alpha,
+                                    tc_error_handle* err) {
+    const image::Bitmap* b = as_bitmap(image);
+    if (b == nullptr) {
+        set_err(err, "image with_alpha: null handle");
+        return nullptr;
+    }
+    return reinterpret_cast<tc_image_handle>(new image::Bitmap(b->with_alpha(alpha)));
+}
+
+tc_image_handle tc_image_without_alpha(tc_image_handle image, tc_error_handle* err) {
+    const image::Bitmap* b = as_bitmap(image);
+    if (b == nullptr) {
+        set_err(err, "image without_alpha: null handle");
+        return nullptr;
+    }
+    return reinterpret_cast<tc_image_handle>(new image::Bitmap(b->without_alpha()));
+}
+
+void tc_image_fill(tc_image_handle image, std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                   std::uint8_t a) {
+    if (image::Bitmap* dst = as_bitmap(image)) {
+        dst->fill(r, g, b, a);
+    }
+}
+
+void tc_image_fill_rect(tc_image_handle image, std::uint32_t x, std::uint32_t y, std::uint32_t w,
+                        std::uint32_t h, std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                        std::uint8_t a) {
+    if (image::Bitmap* dst = as_bitmap(image)) {
+        dst->fill_rect(x, y, w, h, r, g, b, a);
+    }
+}
+
+void tc_image_blit_over(tc_image_handle dst, tc_image_handle src, std::int32_t dx,
+                        std::int32_t dy) {
+    image::Bitmap* d = as_bitmap(dst);
+    const image::Bitmap* s = as_bitmap(src);
+    if (d != nullptr && s != nullptr) {
+        d->blit_over(*s, static_cast<int>(dx), static_cast<int>(dy));
+    }
+}
+
+tc_status tc_image_encode(tc_image_handle image, const char* format, std::uint8_t quality,
+                          char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                          tc_error_handle* err) {
+    return encode_to_buffer(image, format, quality, buf, cap, out_len, err);
+}
+
+tc_status tc_image_save(tc_image_handle image, const char* path, const char* format,
+                        std::uint8_t quality, tc_error_handle* err) {
+    if (path == nullptr || path[0] == '\0') {
+        return fail(err, "image save: null path", TC_ERR_INVALID_ARG);
+    }
+    std::string fmt = format == nullptr || format[0] == '\0' ? extension_of(path) : format;
+    std::uint64_t need = 0;
+    tc_status st = encode_to_buffer(image, fmt.c_str(), quality, nullptr, 0, &need, err);
+    if (st != TC_ERR_BUFFER_TOO_SMALL) {
+        return st;  // 其它错误（含格式不支持）直接透出，不静默降级成 PNG
+    }
+    std::vector<char> buf(static_cast<std::size_t>(need));
+    st = encode_to_buffer(image, fmt.c_str(), quality, buf.data(), need, &need, err);
+    if (st != TC_OK) {
+        return st;
+    }
+    std::FILE* fp = util::fopen_utf8(path, "wb");
+    if (fp == nullptr) {
+        return fail(err, "image save: cannot open " + std::string(path), TC_ERR_IO);
+    }
+    const std::size_t written = std::fwrite(buf.data(), 1, buf.size(), fp);
+    std::fclose(fp);
+    if (written != buf.size()) {
+        return fail(err, "image save: short write to " + std::string(path), TC_ERR_IO);
+    }
     return TC_OK;
 }
 

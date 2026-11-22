@@ -6,6 +6,19 @@
 add_library(termchart_capi SHARED src/capi.cpp)
 add_library(termchart::capi ALIAS termchart_capi)
 
+# 静态版：给进程内绑定（Python .pyd）用。同一份源码编两种形态，模型与行为完全一致；
+# 静态链接让 wheel 里的扩展自包含，不必依赖运行时的 termchart_capi.dll。
+add_library(termchart_capi_static STATIC src/capi.cpp)
+add_library(termchart::capi_static ALIAS termchart_capi_static)
+target_include_directories(termchart_capi_static
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+target_link_libraries(termchart_capi_static PRIVATE termchart::termchart)
+if(WIN32)
+    target_link_options(termchart_capi_static PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
 target_include_directories(termchart_capi
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

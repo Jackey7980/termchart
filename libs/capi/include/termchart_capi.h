@@ -279,6 +279,268 @@ tc_status tc_flush_stdout(tc_error_handle* err);
  * 仅表头无数据 → 非 0；Unix 时间戳数字串不自动识别为时间列（同引擎口径）。 */
 tc_status tc_auto_plot(const char* filepath, tc_error_handle* err);
 
+/* ── 一行出图（对齐 api::render_plot / render_scatter / render_bar）──────────
+ *
+ * 这是 C++ 新手向 API 在 C 上的**投影**，而不是另写一套：绑定层若自己拼
+ * Chart，系列名、配色、图例默认值迟早和 C++ 那一版对不上（实测就差了图例
+ * 和配色）。所以 Python 的 plot/scatter/bar 必须走这里，输出才与
+ * `termchart::api::plot(...)` 逐字节相同。
+ */
+typedef enum tc_quick_kind {
+    TC_QUICK_LINE = 0,   /* api::render_plot */
+    TC_QUICK_SCATTER = 1 /* api::render_scatter */
+} tc_quick_kind;
+
+tc_status tc_quick_xy(tc_quick_kind kind, const double* x, const double* y, uint64_t n,
+                      const tc_plot_opts* opts, char* buf, uint64_t cap, uint64_t* out_len,
+                      tc_error_handle* err);
+
+tc_status tc_quick_bar(const double* values, const char* const* labels, uint64_t n,
+                       const tc_plot_opts* opts, char* buf, uint64_t cap, uint64_t* out_len,
+                       tc_error_handle* err);
+
+/* ── 图像（对齐 image::Bitmap 与 image::encode / decode_image）────────────────
+ *
+ * 句柄背后是 image::Bitmap（3/4 通道、行紧致）。所有像素操作都**一一对应**
+ * C++ 同名成员（fill / fill_rect / blit_over / scaled_to / with_alpha /
+ * without_alpha），不在绑定侧重算像素——这是"Python 效果与 C++ 逐字节一致"
+ * 的前提，也是图像能力只做一条桥的理由。
+ *
+ * 像素进出都走字节缓冲拷贝（不跨 ABI 传 std::vector，也不让库分配内存后再
+ * 交给调用方释）：tc_image_pixels / tc_image_encode 都是两段式——先 cap=0
+ * 问所需长度，再按长度分配重调。
+ *
+ * 解码支持的格式由构建开关决定：PNG / BMP 原生零依赖；JPEG / GIF / WebP 需
+ * TERMCHART_ENABLE_STB_IMAGE，未启用时返回 TC_ERR_UNSUPPORTED（不猜着解）。
+ */
+typedef struct tc_image* tc_image_handle;
+
+/* 空图（全透明/全零）。channels 只接受 3 或 4（其余按 4）。 */
+tc_image_handle tc_image_create(uint32_t width, uint32_t height, uint8_t channels,
+                                tc_error_handle* err);
+/* 从内存字节解码（按魔数识别格式）。 */
+tc_image_handle tc_image_decode(const uint8_t* data, uint64_t size, tc_error_handle* err);
+/* 从文件解码（UTF-8 路径，Windows 下同样安全）。 */
+tc_image_handle tc_image_load(const char* path, tc_error_handle* err);
+void tc_image_free(tc_image_handle image);
+
+/* 尺寸查询（句柄为空返回 0）。 */
+uint32_t tc_image_width(tc_image_handle image);
+uint32_t tc_image_height(tc_image_handle image);
+uint8_t tc_image_channels(tc_image_handle image);
+
+/* 像素读出：行紧致 width*height*channels 字节。两段式（同 SVG 导出）。 */
+tc_status tc_image_pixels(tc_image_handle image, uint8_t* buf, uint64_t cap, uint64_t* out_len,
+                          tc_error_handle* err);
+
+/* 派生新图（不修改源，返回新句柄，调用方负责 tc_image_free）。 */
+tc_image_handle tc_image_scaled(tc_image_handle image, uint32_t width, uint32_t height,
+                                tc_error_handle* err);
+tc_image_handle tc_image_with_alpha(tc_image_handle image, uint8_t alpha, tc_error_handle* err);
+tc_image_handle tc_image_without_alpha(tc_image_handle image, tc_error_handle* err);
+
+/* 原地绘制（越界裁剪 / 越界忽略；空句柄为无操作，不崩）。 */
+void tc_image_fill(tc_image_handle image, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+void tc_image_fill_rect(tc_image_handle image, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                        uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+/* 源 alpha 做 source-over 叠加到 dst；src 无 alpha 时无操作（先 with_alpha）。 */
+void tc_image_blit_over(tc_image_handle dst, tc_image_handle src, int32_t dx, int32_t dy);
+
+/* 编码成字节流。format："png" / "jpeg" / "gif" / "webp"（mp4 需多帧，此处不支持）。
+ * quality ∈ [1,100]，无损格式忽略。两段式缓冲。 */
+tc_status tc_image_encode(tc_image_handle image, const char* format, uint8_t quality, char* buf,
+                          uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+/* 编码并写文件（扩展名无关，格式由 format 决定；format 为空则按路径后缀推断）。 */
+tc_status tc_image_save(tc_image_handle image, const char* path, const char* format,
+                        uint8_t quality, tc_error_handle* err);
+
+/* ── 终端图像协议（对齐 protocol/：sixel / kitty / iTerm2 / 半块）─────────────
+ *
+ * 一张 tc_image_handle 可以用四种方式写进终端：像素级协议（sixel / kitty /
+ * iTerm2）或半块字符降级。编码结果**不含光标定位**（与 C++ 一致：放哪儿由
+ * 调用方决定），也不写 stdout——拿到字节自己 write / 塞进 Document 即可。
+ *
+ * 选择协议不在这里发明第二套规则：TC_PROTO_AUTO 直接走
+ * protocol::detect_protocol_caps() + protocol::pick_protocol()，与 C++ 同一条
+ * 降级链（Kitty > iTerm2 > Sixel > 半块）。全部不可用时返回
+ * TC_ERR_UNSUPPORTED，而不是悄悄降成空串。
+ */
+typedef enum tc_protocol_kind {
+    TC_PROTO_AUTO = 0,      /* 按本机终端能力挑（同 C++ 的降级链） */
+    TC_PROTO_SIXEL = 1,
+    TC_PROTO_KITTY = 2,
+    TC_PROTO_ITERM2 = 3,
+    TC_PROTO_HALFBLOCK = 4  /* 半块字符降级：只要有 truecolor 就能显示 */
+} tc_protocol_kind;
+
+typedef struct tc_protocol_opts {
+    uint32_t cell_width;   /* 单元格像素宽，0 = 默认 10（kitty / sixel 用来算格数） */
+    uint32_t cell_height;  /* 单元格像素高，0 = 默认 20 */
+    uint8_t rle;           /* 非 0 = 开启 sixel 游程压缩（默认开） */
+    uint8_t reserved;      /* 对齐占位，传 0 */
+} tc_protocol_opts;
+
+/* 编码成终端协议字节流（两段式缓冲，同 tc_image_encode）。
+ * 显式指定的 kind 一律照做（即便终端不支持，也便于落文件 / 转发）；
+ * TC_PROTO_AUTO 才会按环境探测并可能返回 TC_ERR_UNSUPPORTED。 */
+tc_status tc_image_to_protocol(tc_image_handle image, tc_protocol_kind kind,
+                               const tc_protocol_opts* opts, char* buf, uint64_t cap,
+                               uint64_t* out_len, tc_error_handle* err);
+
+/* 本机终端探测：写入推荐协议名——"kitty" / "iterm2" / "sixel" / "halfblock" / "none"。
+ * 两段式缓冲（结果很短，可先按 32 字节给 cap）。 */
+tc_status tc_protocol_detect(char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+
+/* ── 图表 → 终端协议（一步到位，省掉 tc_image_* 中转）────────────────────────
+ * 等价于「渲染成 PNG 再 tc_image_to_protocol」，但像素只在内存里流转一次。
+ * 供 Python 的 ``plt.show_image()`` 这类"直接贴进终端"的用法。 */
+tc_status tc_chart_to_protocol(tc_chart_handle chart, tc_protocol_kind kind,
+                               const tc_plot_opts* opts, const tc_protocol_opts* proto_opts,
+                               char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+
+/* ── 关系图 / 示意图（对齐 graph::diagrams 的 12 个 (Graph&, Canvas&, opts) 入口）
+ *
+ * 切法与图表完全一样：**一个句柄 + 一条属性通道**，没有 per-图种工厂。
+ *
+ *   tc_graph_create(kind)                        空图；kind 决定布局 + 渲染器
+ *   tc_graph_from_text(text, format, kind)        文本方言 → 同一张 Graph（走 dsl 注册表）
+ *   tc_graph_add_node / tc_graph_add_edge        建图
+ *   tc_graph_set_node_attr / set_edge_attr        图种专属标记（如状态机的 initial/final）
+ *   tc_graph_set_prop / set_style                 通用外观
+ *   tc_graph_render_ansi / print / to_png / to_protocol   出图
+ *
+ * 为什么值得这么切：mermaid / dot / d2 / plantuml 的解析器、Sugiyama 分层、
+ * 正交路由、箭头与标签避让全在 C++ 里。绑定层只需要「Text → 字节流」一条
+ * 通道，Python 就能拿到与 C++ 逐字节相同的流程图——而不是在 Python 里重画一遍。
+ *
+ * 登记的 kind（{Graph&, Canvas&, opts} 一族；参数选装见 tc_graph_prop 的能力表）：
+ *   "flowchart" / "state_machine" / "mindmap" / "orgchart" /
+ *   "dag" / "dependency" / "er_diagram" / "knowledge_graph" /
+ *   "social_network" / "uml_activity" / "uml_class" / "uml_usecase"
+ *
+ * 刻意**不**登记 "node_link"：它只画不布局，单独暴露只会得到叠在原点的空框。
+ * chord / sankey / metro_map / syntax_tree / petri_net 等需要专属数据结构的
+ * 图种同样不在此列——它们不是「节点 + 边」模型，硬塞进来就得发明私货 API。
+ */
+typedef struct tc_graph* tc_graph_handle;
+
+/* 节点形状（一一对应 graph::ShapeKind，值即枚举序，勿改顺序）。 */
+typedef enum tc_graph_shape {
+    TC_SHAPE_BOX = 0,
+    TC_SHAPE_ROUNDED = 1,
+    TC_SHAPE_DIAMOND = 2,
+    TC_SHAPE_ELLIPSE = 3,
+    TC_SHAPE_STADIUM = 4,
+    TC_SHAPE_HEXAGON = 5,
+    TC_SHAPE_CYLINDER = 6,
+    TC_SHAPE_ICON = 7
+} tc_graph_shape;
+
+/* 路由策略（一一对应 graph::RouteStyle）。 */
+typedef enum tc_graph_route {
+    TC_ROUTE_STRAIGHT = 0,
+    TC_ROUTE_ORTHOGONAL = 1
+} tc_graph_route;
+
+/* 通用属性。语义与 tc_chart_set_prop 一致：kind 不支持该属性时返回
+ * TC_ERR_UNSUPPORTED（fail-loud，不静默丢弃——见下方能力表）。 */
+typedef enum tc_graph_prop {
+    TC_GRAPH_PROP_SHAPE = 1,        /* TC_VAL_INT：tc_graph_shape */
+    TC_GRAPH_PROP_ROUTE = 2,        /* TC_VAL_INT：tc_graph_route */
+    TC_GRAPH_PROP_EDGE_LABELS = 3,  /* TC_VAL_BOOL：边上标注关系名 */
+    TC_GRAPH_PROP_ARROWS = 4,       /* TC_VAL_BOOL：画箭头 */
+    TC_GRAPH_PROP_NODE_BORDER = 5,  /* TC_VAL_BOOL：节点带边框 */
+    TC_GRAPH_PROP_MIN_WIDTH = 6,    /* TC_VAL_DOUBLE：节点框最小宽（>0 生效） */
+    TC_GRAPH_PROP_MIN_HEIGHT = 7,   /* TC_VAL_DOUBLE */
+    TC_GRAPH_PROP_H_GAP = 8,        /* TC_VAL_DOUBLE：同层水平间距（>0 生效） */
+    TC_GRAPH_PROP_V_GAP = 9,        /* TC_VAL_DOUBLE：层间垂直间距（>0 生效） */
+    TC_GRAPH_PROP_MARK_CYCLES = 10  /* TC_VAL_BOOL：把成环的边标红（仅 dependency） */
+} tc_graph_prop;
+
+/* 建一张空图。kind 不在登记表里 → 返回 NULL 并写 err（不做"猜一个相近的"）。
+ * format 见 tc_graph_from_text。 */
+tc_graph_handle tc_graph_create(const char* kind, tc_error_handle* err);
+
+/* 文本方言 → 图。format：
+ *   "mermaid"（含 flowchart / classDiagram / stateDiagram 自动识别）/ "dot" /
+ *   "d2" / "plantuml" / 以及 dsl 注册表里其余名字；
+ *   传 NULL 或 "" = 依次尝试注册表里的方言，第一个解析成功者胜出。
+ * kind 传 NULL = "flowchart"（与 C++ 示例一致）。解析失败返回 NULL + err（含
+ * 行号与期望 token）。 */
+tc_graph_handle tc_graph_from_text(const char* text, const char* format, const char* kind,
+                                   tc_error_handle* err);
+void tc_graph_free(tc_graph_handle graph);
+
+/* 加节点 / 加边。节点返回 id（0 = 失败：空图 / 句柄已释放）。
+ * 边端点不存在 → TC_ERR_INVALID_ARG。label 可为 NULL（无标注）。 */
+uint64_t tc_graph_add_node(tc_graph_handle graph, const char* label);
+tc_status tc_graph_add_edge(tc_graph_handle graph, uint64_t from, uint64_t to, const char* label,
+                            tc_error_handle* err);
+
+/* 图种专属标记（属性袋的通用写入口，不新增专用函数）。
+ * 例：mindmap / 状态机用 key="kind"、value="initial" / "final"。 */
+tc_status tc_graph_set_node_attr(tc_graph_handle graph, uint64_t node, const char* key,
+                                 const char* value, tc_error_handle* err);
+tc_status tc_graph_set_edge_attr(tc_graph_handle graph, uint64_t from, uint64_t to,
+                                 const char* key, const char* value, tc_error_handle* err);
+
+tc_status tc_graph_set_prop(tc_graph_handle graph, tc_graph_prop prop, const tc_value* value,
+                            tc_error_handle* err);
+/* 节点 / 边主色。两端都可为 NULL（NULL = 保持默认）。 */
+tc_status tc_graph_set_style(tc_graph_handle graph, const tc_style* node_style,
+                             const tc_style* edge_style, tc_error_handle* err);
+
+/* 规模查询（用于 Python 侧断言 / 调试）。 */
+uint64_t tc_graph_node_count(tc_graph_handle graph);
+uint64_t tc_graph_edge_count(tc_graph_handle graph);
+
+/* 出图。opts->width / height 为 0 时按包围盒自适应（上限 200×100），给了就
+ * 按给的尺寸画（超出部分由 canvas 裁剪——与 C++ 一致，不偷偷缩放）。
+ * 同一次调用即完成布局，因此同一句柄反复渲染结果稳定。 */
+tc_status tc_graph_render_ansi(tc_graph_handle graph, const tc_plot_opts* opts, char* buf,
+                               uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+tc_status tc_graph_print(tc_graph_handle graph, const tc_plot_opts* opts, tc_error_handle* err);
+tc_status tc_graph_to_png(tc_graph_handle graph, const tc_plot_opts* opts, char* buf, uint64_t cap,
+                          uint64_t* out_len, tc_error_handle* err);
+tc_status tc_graph_to_protocol(tc_graph_handle graph, tc_protocol_kind kind,
+                               const tc_plot_opts* opts, const tc_protocol_opts* proto_opts,
+                               char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+
+/* ── 文档（对齐 document/ + backend/structured：HTML / Markdown / 纯文本）──────
+ *
+ * 文档是"块序列"模型：标题 / 段落 / 代码 / 表格 / 图表。这里只做块的追加与
+ * 一次性导出，排版与转义全在 backend::structured 里（与 C++ 同一份实现）。
+ * 因此 Python 拿到的 HTML 与 C++ examples/36 逐字节相同。
+ */
+typedef struct tc_doc* tc_doc_handle;
+
+tc_doc_handle tc_doc_create(tc_error_handle* err);
+void tc_doc_free(tc_doc_handle doc);
+
+tc_status tc_doc_add_heading(tc_doc_handle doc, const char* text, uint32_t level,
+                             tc_error_handle* err);
+tc_status tc_doc_add_paragraph(tc_doc_handle doc, const char* text, tc_error_handle* err);
+tc_status tc_doc_add_code(tc_doc_handle doc, const char* text, const char* language,
+                          tc_error_handle* err);
+/* 表格：header 为列名（n_cols 个，可为 NULL），rows 为 row_mask 行、每行 n_cols 个单元
+ * （单元可为 NULL → 空串）。二维指针形状与 tc_chart_set_text 一致。 */
+tc_status tc_doc_add_table(tc_doc_handle doc, const char* const* header, uint64_t n_cols,
+                           const char* const* const* rows, uint64_t row_count,
+                           tc_error_handle* err);
+/* 图表块：把 tc_chart_handle 转成矢量场景（走 api::chart_to_scene，与 SVG 同一份
+ * 几何），再作为文档里的一张图。图种未迁移到 Scene 时返回 TC_ERR_UNSUPPORTED。 */
+tc_status tc_doc_add_chart(tc_doc_handle doc, tc_chart_handle chart, uint32_t width,
+                           uint32_t height, tc_error_handle* err);
+
+/* 一次性导出。format："html" / "markdown" / "plain"（其余 → TC_ERR_INVALID_ARG）。
+ * title 只对 html 生效（文档标题 / 浏览器标签）；css_href 可为 NULL（不挂样式表）。
+ * 两段式缓冲。 */
+tc_status tc_doc_export(tc_doc_handle doc, const char* format, const char* title,
+                        const char* css_href, char* buf, uint64_t cap, uint64_t* out_len,
+                        tc_error_handle* err);
+tc_status tc_doc_save(tc_doc_handle doc, const char* path, const char* format,
+                      tc_error_handle* err);
+
 /* 释放 render 返回的 C 侧字符串。 */
 void tc_free_string(char* s);
 

@@ -25,7 +25,9 @@ pybind11_add_module(termchart_pybind
 )
 set_target_properties(termchart_pybind PROPERTIES OUTPUT_NAME termchart)
 
-target_link_libraries(termchart_pybind PRIVATE termchart::termchart)
+# 链接 C ABI 静态库：Chart(kind) / kinds() / auto_plot 等全量模型直接复用
+# tc_* 实现，Python 侧不再按图种手写一遍包装（新增图种自动可用）。
+target_link_libraries(termchart_pybind PRIVATE termchart::termchart termchart::capi_static)
 target_compile_definitions(termchart_pybind PRIVATE TERMCHART_HAVE_PYBIND11=1)
 termchart_set_warnings(termchart_pybind)
 

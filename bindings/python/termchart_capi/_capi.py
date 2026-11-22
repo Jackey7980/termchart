@@ -35,6 +35,8 @@ TC_PROP_SHADE_NEGATIVE = 5
 TC_PROP_X_TICKS = 6
 TC_PROP_X_LABEL = 7
 TC_PROP_Y_LABEL = 8
+TC_QUICK_LINE = 0
+TC_QUICK_SCATTER = 1
 
 # ── 结构体（POD）──────────────────────────────────────────
 class PlotOpts(ctypes.Structure):
@@ -76,6 +78,9 @@ def _load(path=None):
     for d in [os.path.join(repo, 'build'), here]:
         for n in names:
             m = glob.glob(os.path.join(d, '**', n), recursive=True)
+            # 取最新构建的那份：build/ninja 与 build/py 常并存，
+            # 按字典序拿到旧库会让"库明明重建过却报函数不存在"。
+            m = sorted(m, key=os.path.getmtime, reverse=True)
             if m:
                 candidates.append(m[0])
     if not candidates:
@@ -86,7 +91,7 @@ def _load(path=None):
 
 
 def _bind(lib):
-    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_scalar, tc_chart_set_tree, tc_chart_set_text, tc_chart_set_regions, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_free_string, tc_error_message, tc_error_free
+    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_scalar, tc_chart_set_tree, tc_chart_set_text, tc_chart_set_regions, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_quick_xy, tc_quick_bar, tc_image_create, tc_image_decode, tc_image_load, tc_image_free, tc_image_width, tc_image_height, tc_image_channels, tc_image_pixels, tc_image_scaled, tc_image_with_alpha, tc_image_without_alpha, tc_image_fill, tc_image_fill_rect, tc_image_blit_over, tc_image_encode, tc_image_save, tc_free_string, tc_error_message, tc_error_free
     f = lib.tc_version_string
     f.restype = ctypes.c_char_p
     f.argtypes = []
@@ -232,6 +237,96 @@ def _bind(lib):
     f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
     tc_auto_plot = f
 
+    f = lib.tc_quick_xy
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.c_uint64, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_quick_xy = f
+
+    f = lib.tc_quick_bar
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_quick_bar = f
+
+    f = lib.tc_image_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint8, ctypes.c_void_p]
+    tc_image_create = f
+
+    f = lib.tc_image_decode
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
+    tc_image_decode = f
+
+    f = lib.tc_image_load
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_image_load = f
+
+    f = lib.tc_image_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_image_free = f
+
+    f = lib.tc_image_width
+    f.restype = ctypes.c_uint32
+    f.argtypes = [ctypes.c_void_p]
+    tc_image_width = f
+
+    f = lib.tc_image_height
+    f.restype = ctypes.c_uint32
+    f.argtypes = [ctypes.c_void_p]
+    tc_image_height = f
+
+    f = lib.tc_image_channels
+    f.restype = ctypes.c_uint8
+    f.argtypes = [ctypes.c_void_p]
+    tc_image_channels = f
+
+    f = lib.tc_image_pixels
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_image_pixels = f
+
+    f = lib.tc_image_scaled
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_image_scaled = f
+
+    f = lib.tc_image_with_alpha
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint8, ctypes.c_void_p]
+    tc_image_with_alpha = f
+
+    f = lib.tc_image_without_alpha
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    tc_image_without_alpha = f
+
+    f = lib.tc_image_fill
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint8]
+    tc_image_fill = f
+
+    f = lib.tc_image_fill_rect
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint8]
+    tc_image_fill_rect = f
+
+    f = lib.tc_image_blit_over
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32]
+    tc_image_blit_over = f
+
+    f = lib.tc_image_encode
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_image_encode = f
+
+    f = lib.tc_image_save
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_void_p]
+    tc_image_save = f
+
     f = lib.tc_free_string
     f.restype = None
     f.argtypes = [ctypes.c_char_p]
@@ -277,6 +372,24 @@ tc_write_stdout = None
 tc_write_stderr = None
 tc_flush_stdout = None
 tc_auto_plot = None
+tc_quick_xy = None
+tc_quick_bar = None
+tc_image_create = None
+tc_image_decode = None
+tc_image_load = None
+tc_image_free = None
+tc_image_width = None
+tc_image_height = None
+tc_image_channels = None
+tc_image_pixels = None
+tc_image_scaled = None
+tc_image_with_alpha = None
+tc_image_without_alpha = None
+tc_image_fill = None
+tc_image_fill_rect = None
+tc_image_blit_over = None
+tc_image_encode = None
+tc_image_save = None
 tc_free_string = None
 tc_error_message = None
 tc_error_free = None
