@@ -108,3 +108,10 @@ CMakeUserPresets.local.json
 # 一次性编码/解码中间产物（Y 平面比对、重建 dump、PCM 样本等）
 /*.yuv
 /*.nv12
+
+# 示例与 ctest 在仓库根生成的临时数字文件及一次性 smoke 输出
+/[0-9]
+/[0-9][0-9]
+/out.png
+/out.svg
+/test.py
