@@ -4,6 +4,8 @@
 // 构造与响应解析）在这里做确定性推演；真机隧道由示例与调用方环境验证。
 #include <doctest.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -30,6 +32,35 @@ using termchart::network::proxy::read_env;
 using termchart::network::proxy::resolve;
 
 using Env = std::vector<std::pair<std::string, std::string>>;
+
+void put_env(const char* name, const char* value) {
+#if defined(_WIN32)
+    (void)_putenv_s(name, value);  // value 为空串即删除该变量
+#else
+    if (value[0] == '\0') {
+        (void)unsetenv(name);
+    } else {
+        (void)setenv(name, value, 1);
+    }
+#endif
+}
+
+class EnvGuard {
+public:
+    explicit EnvGuard(const char* name) : name_(name) {
+        if (const char* old = std::getenv(name)) {
+            old_ = old;
+            had_ = true;
+        }
+    }
+    ~EnvGuard() { put_env(name_.c_str(), had_ ? old_.c_str() : ""); }
+    void set(const char* value) { put_env(name_.c_str(), value); }
+
+private:
+    std::string name_;
+    std::string old_;
+    bool had_ = false;
+};
 
 TEST_CASE("proxy::parse：scheme / userinfo / 裸 host:port") {
     const Result<Config> http = parse("http://127.0.0.1:7890");
@@ -208,6 +239,27 @@ TEST_CASE("proxy::read_env：形状（不依赖具体环境有无代理）") {
         CHECK_FALSE(kv.first.empty());
         CHECK_FALSE(kv.second.empty());
     }
+}
+
+TEST_CASE("proxy::read_env：必须收 NO_PROXY（resolve 的绕过判定依赖它）") {
+    EnvGuard upper("NO_PROXY");
+    EnvGuard lower("no_proxy");
+    upper.set("example.invalid");
+    lower.set("example.invalid");
+
+    const Env env = read_env();
+    const auto has = [&env](std::string_view key) {
+        return std::any_of(env.begin(), env.end(),
+                           [key](const auto& kv) { return kv.first == key; });
+    };
+    CHECK(has("NO_PROXY"));
+    CHECK(has("no_proxy"));
+
+    // 端到端判定：绕过表中命中的 host 必须直连，即使系统代理已配。
+    const auto sys = parse("http://sys-proxy:3128");
+    REQUIRE(sys.has_value());
+    CHECK(resolve("http", "example.invalid", Config{}, env, *sys).kind == Kind::None);
+    CHECK(resolve("http", "other.invalid", Config{}, env, *sys).kind == Kind::HttpConnect);
 }
 
 }  // namespace

@@ -144,8 +144,11 @@ Result<Config> parse(std::string_view text) noexcept {
 }
 
 std::vector<std::pair<std::string, std::string>> read_env() noexcept {
-    static const char* kKeys[] = {"HTTPS_PROXY", "https_proxy", "HTTP_PROXY",
-                                  "http_proxy",  "ALL_PROXY",   "all_proxy"};
+    // NO_PROXY/no_proxy 也要收：resolve() 从同一份 env 里 find_env("NO_PROXY")
+    // 判断目标是否绕过代理。此前只收 6 个代理键，导致用户设的 NO_PROXY
+    // 在生产路径里永远读不到（resolve 的单测手工构造 env 才没暴露）。
+    static const char* kKeys[] = {"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                                  "ALL_PROXY",   "all_proxy",   "NO_PROXY",   "no_proxy"};
     std::vector<std::pair<std::string, std::string>> out;
     for (const char* key : kKeys) {
         const char* value = std::getenv(key);

@@ -25,6 +25,35 @@ using termchart::network::http::Request;
 using termchart::network::http::Response;
 using termchart::network::http::Uri;
 
+void put_env(const char* name, const char* value) {
+#if defined(_WIN32)
+    (void)_putenv_s(name, value);  // value 为空串即删除该变量
+#else
+    if (value[0] == '\0') {
+        (void)unsetenv(name);
+    } else {
+        (void)setenv(name, value, 1);
+    }
+#endif
+}
+
+class EnvGuard {
+public:
+    explicit EnvGuard(const char* name) : name_(name) {
+        if (const char* old = std::getenv(name)) {
+            old_ = old;
+            had_ = true;
+        }
+    }
+    ~EnvGuard() { put_env(name_.c_str(), had_ ? old_.c_str() : ""); }
+    void set(const char* value) { put_env(name_.c_str(), value); }
+
+private:
+    std::string name_;
+    std::string old_;
+    bool had_ = false;
+};
+
 // 只测注册表 plumbing 的最小 TlsBackend（不做真握手）。
 class MemoryBackendStub final : public tls::TlsBackend {
 public:
@@ -311,6 +340,11 @@ TEST_CASE("network/http: execute 的 fail-loud 路径（离线）") {
 #endif
 
     SUBCASE("明文连不上 → IoError（127.0.0.1 保留端口）") {
+        // 真机开了系统代理且 ProxyOverride 未排除回环时，请求会打到代理并拿
+        // 到真实 HTTP 响应（400），测不到连接失败路径。显式 NO_PROXY 强制
+        // 直连，隔离机器代理配置；守卫在退出时恢复原值。
+        EnvGuard guard("NO_PROXY");
+        guard.set("127.0.0.1");
         const Result<Response> r = termchart::network::http::get("http://127.0.0.1:1/", options);
         CHECK_FALSE(r.has_value());
         CHECK(r.error() == ErrorCode::IoError);
