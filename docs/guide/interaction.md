@@ -8,6 +8,7 @@
 | event.hpp | `Event` = variant<Key/Mouse/Resize/Focus/Paste> |
 | dispatcher.hpp | 事件分发（订阅顺序即优先级，消费即停） |
 | hit_test.hpp | 命中测试（配合 chart/hit_region.hpp） |
+| spatial_index.hpp | `HitIndex` 空间哈希索引（同一批区域反复查询时 opt-in） |
 | focus.hpp | 焦点链 |
 | pan.hpp / zoom.hpp | 平移 / 缩放（`Viewport` + `ViewportOptions`） |
 | tooltip.hpp / crosshair.hpp | 提示框（`Tooltip` + `TooltipPlacement`）/ 十字线 |
@@ -49,6 +50,26 @@ regions.push_back(HitRegion::polygon(points, payload_id));
 
 约束：hit_test 只 switch `HitShape`（Rect/Circle/Polygon），禁图表名——
 interaction 不认识任何具体图表类型。
+
+### 同一批区域反复查询：HitIndex
+
+`topmost_hit` / `hit_payloads` 每次都是 O(N) 线性扫描，适合一次性判定。
+悬停、鼠标连续移动这类「建一次、查多次」的场景可换用 `HitIndex`：
+
+```cpp
+#include "termchart/interaction/spatial_index.hpp"
+
+termchart::interaction::HitIndex index(regions);   // 内部持有快照
+// 鼠标移动：查询近似 O(1)，语义与线性版完全一致
+const auto* hit = index.topmost(x, y);
+const auto ids = index.payloads(x, y);             // 自下而上
+index.reset(new_regions);                          // 区域变了就重建
+```
+
+- `topmost` 取最后登记者、`payloads` 自下而上，与 `hit_test.hpp` 逐位一致；
+- 返回指针指向索引内部快照，调用方不得跨 `reset()` 保存；
+- 超大/退化区域自动挂到溢出表，仍恒被检查，不会漏命中；
+- 查询点含 NaN/Inf 时退回线性语义，行为与一次性版本相同。
 
 ## 典型组合
 

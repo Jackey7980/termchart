@@ -7,6 +7,7 @@
 
 #include "termchart/api/print.hpp"
 #include "termchart/image/encode.hpp"
+#include "termchart/util/file.hpp"
 
 namespace termchart::api {
 
@@ -28,7 +29,7 @@ Status save_image(const image::Bitmap& bitmap, std::string_view path,
         return ErrorCode::InvalidArgument;  // 空位图 / 格式未实现
     }
     const std::string path_str(path);
-    std::FILE* fp = std::fopen(path_str.c_str(), "wb");
+    std::FILE* fp = util::fopen_utf8(path_str, "wb");
     if (fp == nullptr) {
         return ErrorCode::IoError;
     }
@@ -45,7 +46,7 @@ Status save_image(std::span<const image::Bitmap> frames, std::string_view path,
         return ErrorCode::InvalidArgument;  // 空帧序列 / 格式未实现
     }
     const std::string path_str(path);
-    std::FILE* fp = std::fopen(path_str.c_str(), "wb");
+    std::FILE* fp = util::fopen_utf8(path_str, "wb");
     if (fp == nullptr) {
         return ErrorCode::IoError;
     }

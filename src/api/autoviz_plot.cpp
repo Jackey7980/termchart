@@ -13,6 +13,7 @@
 #include "termchart/api/print.hpp"
 #include "termchart/autoviz/autoviz.hpp"
 #include "termchart/data/dataframe.hpp"
+#include "termchart/util/file.hpp"
 #include "termchart/util/logging.hpp"
 
 namespace termchart::api {
@@ -21,12 +22,27 @@ namespace {
 // 读整个文件。二进制模式：字节原样交给解析器（UTF-8/脏字节/CRLF 都不在
 // 这里猜，解析器的容错是它自己的职责）。
 Result<std::string> read_file(std::string_view path) {
-    std::ifstream in(std::string(path), std::ios::binary);
-    if (!in) {
+    // 走 util::fopen_utf8：窄字符 ifstream 在 Windows 上按 ANSI 解释路径，
+    // 中文目录下的 CSV/JSONL 会直接打不开（C API 侧表现为 InvalidArgument）。
+    const std::string path_str(path);
+    std::FILE* in = util::fopen_utf8(path_str, "rb");
+    if (in == nullptr) {
         return Unexpected<ErrorCode>(ErrorCode::InvalidArgument);
     }
-    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
+    std::string content;
+    char buffer[8192] = {};
+    for (;;) {
+        const std::size_t n = std::fread(buffer, 1, sizeof(buffer), in);
+        if (n > 0) {
+            content.append(buffer, n);
+        }
+        if (n < sizeof(buffer)) {
+            break;
+        }
+    }
+    const bool bad = std::ferror(in) != 0;
+    std::fclose(in);
+    if (bad) {
         return Unexpected<ErrorCode>(ErrorCode::IoError);
     }
     return Result<std::string>(std::move(content));

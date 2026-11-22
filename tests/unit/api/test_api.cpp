@@ -23,6 +23,7 @@
 #include "termchart/core/error.hpp"
 #include "termchart/core/point.hpp"
 #include "termchart/core/style.hpp"
+#include "termchart/util/file.hpp"
 #include "termchart/util/logging.hpp"
 
 namespace {
@@ -210,6 +211,28 @@ TEST_CASE("api: auto_plot 薄壳——地狱 CSV 出图、空路径/不存在文
 
     std::filesystem::remove(path);
     std::filesystem::remove(header_only);
+}
+
+TEST_CASE("api: auto_plot 接受 UTF-8 路径（中文目录）") {
+    // C ABI / Python 传进来的路径是 UTF-8 字节；Windows 上窄字符 ifstream 会按
+    // ANSI 解释，中文用户名目录下的同一文件会被判成 InvalidArgument。
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() / "termchart_autoviz_中文.csv";
+    const std::u8string wide_path = file.u8string();
+    const std::string utf8_path(wide_path.begin(), wide_path.end());
+    {
+        std::FILE* out = util::fopen_utf8(utf8_path, "wb");
+        REQUIRE(out != nullptr);
+        std::fputs("ts,region,revenue\n"
+                   "2024-01-15 08:30:00,华东,\"1,234.50\"\n"
+                   "2024-01-16 09:00:00,华北,(890.25)\n"
+                   "2024-02-01 10:15:30,华南,¥2,000.00\n",
+                   out);
+        std::fclose(out);
+    }
+    CHECK(auto_plot(utf8_path) == ErrorCode::Ok);
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
 }
 
 TEST_CASE("api: auto_plot 对表头口径存疑列发 WARN（只提示，不改出图）") {

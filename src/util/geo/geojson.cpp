@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <memory>
 
+#include "termchart/util/file.hpp"
+
 namespace termchart::util::geo {
 
 namespace {
@@ -274,14 +276,30 @@ bool parse_geojson(const std::string& text, GeoFeatureCollection& out,
 
 bool parse_geojson_file(const std::string& path, GeoFeatureCollection& out,
                         std::string& out_error) noexcept {
-    std::ifstream in(path);
-    if (!in) {
+    // 窄字符 ifstream 在 Windows 上按 ANSI 解释路径，中文目录下的 GeoJSON 会打不开。
+    std::FILE* in = util::fopen_utf8(path, "rb");
+    if (in == nullptr) {
         out_error = "cannot open: " + path;
         return false;
     }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return parse_geojson(ss.str(), out, out_error);
+    std::string text;
+    char buffer[8192] = {};
+    for (;;) {
+        const std::size_t n = std::fread(buffer, 1, sizeof(buffer), in);
+        if (n > 0) {
+            text.append(buffer, n);
+        }
+        if (n < sizeof(buffer)) {
+            break;
+        }
+    }
+    const bool bad = std::ferror(in) != 0;
+    std::fclose(in);
+    if (bad) {
+        out_error = "read failed: " + path;
+        return false;
+    }
+    return parse_geojson(text, out, out_error);
 }
 
 GeoBounds compute_bounds(const GeoFeatureCollection& fc) noexcept {

@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "termchart/util/file.hpp"
+
 namespace termchart::io {
 namespace {
 
@@ -50,7 +52,7 @@ LineReader& LineReader::operator=(LineReader&& other) noexcept {
 }
 
 Result<LineReader> LineReader::open(const std::string& path) noexcept {
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = util::fopen_utf8(path, "rb");
     if (f == nullptr) {
         return Unexpected<ErrorCode>(ErrorCode::IoError);
     }
