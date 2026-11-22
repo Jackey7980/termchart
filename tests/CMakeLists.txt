@@ -77,6 +77,7 @@ add_executable(termchart_tests
     unit/util/test_base64.cpp
     unit/util/test_geom.cpp
     unit/util/test_util_time.cpp
+    unit/util/test_util_file.cpp
 
     # ── scale ──
     unit/scale/test_scale.cpp
@@ -118,6 +119,7 @@ add_executable(termchart_tests
     unit/image/test_av1_obu.cpp
     unit/image/test_av1_range_coder.cpp
     unit/image/test_av1_cdf.cpp
+    unit/image/test_av1_intra_edge.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp
@@ -181,6 +183,7 @@ add_executable(termchart_tests
     # ── interaction ──
     unit/interaction/test_interaction_input.cpp
     unit/interaction/test_interaction_hit.cpp
+    unit/interaction/test_interaction_spatial_index.cpp
     unit/interaction/test_interaction_legend.cpp
     unit/interaction/test_interaction_highlight.cpp
     unit/interaction/test_interaction_select.cpp
