@@ -1,6 +1,7 @@
 #include "tile_group.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -444,16 +445,18 @@ void write_mv_component(RangeEncoder& enc, const CdfDefaultContext& cdf,
     (void)comp;
     enc.write_bool(delta < 0 ? 1 : 0, mv.sign[0]);
     const int magnitude = std::abs(delta) - 1;
-    const int cls = magnitude >> 3;
-    write_symbol(enc, mv.classes, 10, cls);
+    // diff = ((up << 3) | (fp << 1) | hp) + 1；up<=1 走 class0，
+    // up>=2 时 cls = bit_width(up)-1，up 的最高位由解码端按 1<<cls 补出。
+    const int up = magnitude >> 3;
+    const int cls = up <= 1 ? 0 : static_cast<int>(std::bit_width(static_cast<unsigned>(up))) - 1;
+    write_symbol(enc, mv.classes, 11, cls);
     if (cls == 0) {
-        const int class0 = (magnitude >> 2) & 1;
-        enc.write_bool(class0, mv.class0[0]);
-        write_symbol(enc, mv.class0_fp[class0], 4, (magnitude >> 1) & 3);
+        enc.write_bool(up, mv.class0[0]);
+        write_symbol(enc, mv.class0_fp[up], 4, (magnitude >> 1) & 3);
         enc.write_bool(magnitude & 1, mv.class0_hp[0]);
     } else {
         for (int n = 0; n < cls; ++n)
-            enc.write_bool((magnitude >> n) & 1, mv.classN[n][0]);
+            enc.write_bool((up >> n) & 1, mv.classN[n][0]);
         write_symbol(enc, mv.classN_fp, 4, (magnitude >> 1) & 3);
         enc.write_bool(magnitude & 1, mv.classN_hp[0]);
     }
@@ -463,12 +466,13 @@ std::string write_tile_group_inter_8x8(int mv_x, int mv_y, int joint_override) {
     const CdfDefaultContext& cdf = kDefaultCdf;
     RangeEncoder enc;
     write_partition_none(enc, cdf);
-    // skip=1；intra=0；参考槽 0；newmv_mode=0（NEWMV）+ 逐分量 MV 残差。
-    enc.write_bool(1, cdf.m.skip[0][0]);
+    // NEWMV 实验路径需要 skip=0：skip=1 时解码端不消费 MV 残差语法。
+    enc.write_bool(joint_override < 0 ? 1 : 0, cdf.m.skip[0][0]);
     enc.write_bool(1, cdf.m.intra[0][0]);
-    enc.write_bool(0, cdf.m.ref[0][0][0]);
-    enc.write_bool(0, cdf.m.ref[2][0][0]);
-    enc.write_bool(0, cdf.m.ref[3][0][0]);
+    // 块 B 的上方邻居是 intra 块，解码端 av1_get_ref*_ctx 推出 ctx=1（不是 0）。
+    enc.write_bool(0, cdf.m.ref[0][1][0]);
+    enc.write_bool(0, cdf.m.ref[2][1][0]);
+    enc.write_bool(0, cdf.m.ref[3][1][0]);
     if (joint_override < 0) {
         // 稳定主链：GLOBALMV + 全 IDENTITY 全局运动 → 零 MV 拷贝。
         enc.write_bool(1, cdf.m.newmv_mode[0][0]);
@@ -477,8 +481,12 @@ std::string write_tile_group_inter_8x8(int mv_x, int mv_y, int joint_override) {
         // 实验路径：NEWMV 残差语法（mv_joint + X/Y 分量）。
         enc.write_bool(0, cdf.m.newmv_mode[0][0]);
         write_symbol(enc, cdf.mv.joint, 3, joint_override);
-        write_mv_component(enc, cdf, 0, mv_y);
-        write_mv_component(enc, cdf, 1, mv_x);
+        // 只写 joint 标志置位的分量，否则解码端会把它当成后续语法。
+        if (mv_y != 0) write_mv_component(enc, cdf, 0, mv_y);
+        if (mv_x != 0) write_mv_component(enc, cdf, 1, mv_x);
+        enc.write_bool(1, kTxBypassLuma8x8[0]);
+        enc.write_bool(1, kTxBypassChroma4x4[0]);
+        enc.write_bool(1, kTxBypassChroma4x4[0]);
     }
     return wrap_tile_data(enc.finish());
 }

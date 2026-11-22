@@ -48,18 +48,15 @@ void RangeEncoder::write_cdf(const std::uint16_t* cdf, int n, int symbol) {
     if (symbol >= n) symbol = n - 1;
 
     const unsigned r = rng_;
-    const int N = n - 1;
-    // 仓内 cdf 表只存 n-1 个界；末符号的下界按规范视为 0（libaom 里是
-    // 表尾补齐的那个 0，本实现不存它，读取时直接取 0）。
-    const unsigned fl = cdf[symbol > 0 ? symbol - 1 : 0];
-    const unsigned fh = symbol + 1 < n ? cdf[symbol] : 0u;
+    const unsigned N = static_cast<unsigned>(n - 1);
     const unsigned r8 = r >> 8;
-    const unsigned pu = (r8 * (fl >> 6)) >> 1;
-    const unsigned pv = (r8 * (fh >> 6)) >> 1;
-    const unsigned rk = r - 4u * static_cast<unsigned>(N - symbol);
-    // s == 0 或 icdf 顶格时区间上界就是 r 本身，直接落在 rk（不做 8 位取整）。
-    const unsigned um = (symbol > 0 && fl < 32768u) ? pu + 4u : rk;
-    normalize(low_ + (rk - um), um - pv);
+    // 与 dav1d 的解码循环完全对齐：第 i 档上界 u、下界 v，
+    // v = range_split(r, cdf[i], N - i)，首符号上界就是 r，末符号下界为 0。
+    const unsigned u =
+        symbol == 0 ? r : range_split(r8, cdf[symbol - 1], N - symbol + 1);
+    const unsigned v =
+        symbol + 1 < n ? range_split(r8, cdf[symbol], N - symbol) : 0u;
+    normalize(low_ + (r - u), u - v);
 }
 
 void RangeEncoder::write_bool(int bit, unsigned f_one) {
