@@ -315,8 +315,8 @@
 **暂缓（按约束分层，全量规划不丢项）**：
 - [ ] 熵/CDF：CDF 自适应更新、多符号 CDF 树全量语法上下文（划分/模式/MV/残差全体）
 - [ ] 划分：128×128 超级块、其余 9 种 partition（HORZ/VERT/SPLIT/HORZ_A/B/VERT_A/B/HORZ_4/VERT_4）与跨 SB 邻居推导
-- [ ] 帧内：细角度子集 13..68（69 种模式中的 56 种 finer angles）、Smooth/Paeth 全集、Filter Intra、CFL、帧内边界滤波
-- [ ] 帧间：7 参考槽、8 插值滤波器、全像素/亚像素 ME、Warped Motion（平移/旋转缩放/仿射）、OBMC、复合预测（Average/Distance/Wedge 16 掩膜/Difference）、Masked Compound
+- [x] 帧内：细角度子集 13..68（69 种模式中的 56 种 finer angles）、Smooth/Paeth 全集、Filter Intra、CFL、帧内边界滤波（2026-11-22 阶段四收口；8x16 61 模式 + 5 档 filter intra + 32 组 CFL 经 libdav1d 逐像素 PASS）
+- [ ] 帧间：7 参考槽、8 插值滤波器、全像素/亚像素 ME、Warped Motion（平移/旋转缩放/仿射）、OBMC、复合预测（Average/Distance/Wedge 16 掩膜/Difference）、Masked Compound（阶段五已打通非 reduced 序列头 + KEY/INTER 两帧参考链，插值/OBMC/复合/warp 预测器与单测就位；逐块 MV/warp/复合语法与 ME 决策仍待接线）
 - [ ] 变换：ADST 4..16、Identity 4..64、2..64 各尺寸组合、量化矩阵 15 预设、复杂扫描序
 - [ ] 环路滤波：Deblocking 精确强度、CDEF（8 方向搜索 + 查表）、Loop Restoration（Wiener / Sgrproj 定点化）
 - [ ] 系统层：tile groups 多 tile、帧率/OrderHint/呈现时间、HDR/10-bit/12-bit、4:4:4、film grain、SVC/可伸缩、MP4 `av01`/`av1C` 封装
