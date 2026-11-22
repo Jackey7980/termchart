@@ -20,6 +20,10 @@ unsigned read_symbol(RangeDecoder& dec, const std::uint16_t* cdf, int n);
 // 编码 / 解码成功后的自适应更新（rate 随计数增长而降低）。
 void update_cdf(std::uint16_t* cdf, int n, unsigned symbol);
 
+// 写完 / 读完立即更新 CDF 的状态机封装；编解码端必须成对调用。
+void write_symbol_adaptive(RangeEncoder& enc, std::uint16_t* cdf, int n, int symbol);
+unsigned read_symbol_adaptive(RangeDecoder& dec, std::uint16_t* cdf, int n);
+
 }  // namespace termchart::image::codec::av1
 
 #endif  // TERMCHART_SRC_IMAGE_CODEC_AV1_ENTROPY_CDF_MANAGER_HPP

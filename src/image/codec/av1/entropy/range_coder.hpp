@@ -4,9 +4,13 @@
 //   split = ((range >> 8) * (cdf >> 6) >> 1) + 4 * remaining
 // remaining 是「当前分界之上还剩的符号数」，保证每个符号至少分到 4 个区间单位。
 //
-// 编码端维护「下界 / 区间宽度 / 未固化位数」三元状态，整字节先进暂存区，
-// 收尾时统一做进位传播；解码端用 64 位窗口，流耗尽后按「补 1」处理，
-// 与真实 AV1 解码器的取值语义一致。
+// 编码端是 libaom `od_ec_enc` 的逐位等价移植：low 记录区间**下界**（从底部量），
+// rng 归一化到 [32768, 65535]，cnt 记录 low 中的有效位数（初值 -9）。
+// s = cnt + d >= 40 时刷出 (s>>3)+1 个整字节并就地向前传播进位；收尾按
+// e = ((low + 0x3FFF) & ~0x3FFF) | 0x4000 输出「1 后全 0」的终止位模式。
+// 这两条是 AV1 规范 5.3.3/5.3.4 与 decodeframe.c 的
+// check_trailing_bits_after_symbol_coder 共同要求的，不能凭区间包含关系近似。
+// 解码端用 64 位窗口保存「到区间顶部的距离」，流耗尽后按补零处理。
 #ifndef TERMCHART_SRC_IMAGE_CODEC_AV1_ENTROPY_RANGE_CODER_HPP
 #define TERMCHART_SRC_IMAGE_CODEC_AV1_ENTROPY_RANGE_CODER_HPP
 
@@ -24,8 +28,8 @@ inline unsigned range_split(unsigned r_hi8, unsigned cdf, unsigned remaining) {
 
 class RangeEncoder {
 public:
-    // 直接写入规范算好的子区间 [lo, lo + width)；width 必须为正且不超过当前 range。
-    void write_interval(unsigned lo, unsigned width);
+    // 多符号写入；cdf 为 Q15 逆累积表（cdf[0..n-2] 递减，cdf[n-1] 视为 0）。
+    void write_cdf(const std::uint16_t* cdf, int n, int symbol);
 
     // 布尔符号：f_one 是 bit == 1 的概率（Q15，1..32767）。
     void write_bool(int bit, unsigned f_one);
@@ -38,10 +42,10 @@ public:
 private:
     void normalize(std::uint64_t low, unsigned rng);
 
-    std::vector<std::uint16_t> staged_;  // 待进位传播的整字节（可能暂时大于 255）
+    std::vector<std::uint8_t> buf_;  // 已固化的整字节（进位就地回传）
     std::uint64_t low_ = 0;
     unsigned rng_ = 0x8000;
-    int cnt_ = -9;  // 尚未凑满一个字节的位数（负值）
+    int cnt_ = -9;  // low 中的有效位数，初值 -9（跨过零位后即一个字节 + 一个进位位）
     bool finished_ = false;
     std::string result_;
 };

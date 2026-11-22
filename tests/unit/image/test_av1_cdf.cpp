@@ -59,3 +59,65 @@ TEST_CASE("av1: 自适应更新后多符号编解码仍一致") {
         av1::update_cdf(dec_cdf.data(), N_INTRA_PRED_MODES, got);
     }
 }
+
+namespace {
+std::array<std::uint16_t, N_INTRA_PRED_MODES + 1> reference_update(
+    std::array<std::uint16_t, N_INTRA_PRED_MODES + 1> cdf, int n, int sym) {
+    const int count = cdf[static_cast<std::size_t>(n)];
+    const int rate = 4 + (count >> 4) + (n > 3 ? 1 : 0);
+    for (int i = 0; i < n - 1; ++i) {
+        const int up = cdf[static_cast<std::size_t>(i)] +
+                       ((32768 - cdf[static_cast<std::size_t>(i)]) >> rate);
+        const int down = cdf[static_cast<std::size_t>(i)] -
+                         (cdf[static_cast<std::size_t>(i)] >> rate);
+        cdf[static_cast<std::size_t>(i)] =
+            static_cast<std::uint16_t>(i < sym ? up : down);
+    }
+    if (count < 32)
+        cdf[static_cast<std::size_t>(n)] = static_cast<std::uint16_t>(count + 1);
+    return cdf;
+}
+}  // namespace
+
+TEST_CASE("av1: CDF 自适应更新与 libaom 公式一致") {
+    constexpr int n = N_INTRA_PRED_MODES;
+    for (int sym = 0; sym < n; ++sym) {
+        std::array<std::uint16_t, n + 1> cdf{};
+        for (int i = 0; i < n; ++i)
+            cdf[static_cast<std::size_t>(i)] = av1::kDefaultCdf.kfym[0][0][i];
+        const auto expected = reference_update(cdf, n, sym);
+        av1::update_cdf(cdf.data(), n, static_cast<unsigned>(sym));
+        CHECK(cdf == expected);
+        for (int i = 1; i < n; ++i)
+            CHECK(cdf[static_cast<std::size_t>(i - 1)] >= cdf[static_cast<std::size_t>(i)]);
+    }
+}
+
+TEST_CASE("av1: 自适应状态机封装往返且计数饱和") {
+    constexpr int n = N_INTRA_PRED_MODES;
+    std::array<std::uint16_t, n + 1> enc_cdf{}, dec_cdf{};
+    for (int i = 0; i < n; ++i) {
+        enc_cdf[static_cast<std::size_t>(i)] = av1::kDefaultCdf.kfym[0][0][i];
+        dec_cdf[static_cast<std::size_t>(i)] = av1::kDefaultCdf.kfym[0][0][i];
+    }
+    std::array<int, 512> symbols{};
+    std::uint32_t seed = 0x5EEDu;
+    for (auto& s : symbols) {
+        seed = seed * 1664525u + 1013904223u;
+        s = static_cast<int>(seed % n);
+    }
+
+    av1::RangeEncoder enc;
+    for (int sym : symbols)
+        av1::write_symbol_adaptive(enc, enc_cdf.data(), n, sym);
+    const std::string bytes = enc.finish();
+
+    av1::RangeDecoder dec;
+    dec.init(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+    for (int sym : symbols)
+        REQUIRE(av1::read_symbol_adaptive(dec, dec_cdf.data(), n) ==
+                static_cast<unsigned>(sym));
+
+    CHECK(enc_cdf == dec_cdf);
+    CHECK(enc_cdf[static_cast<std::size_t>(n)] == 32);
+}

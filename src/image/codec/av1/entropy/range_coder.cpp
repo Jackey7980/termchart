@@ -3,84 +3,97 @@
 #include <bit>
 
 namespace termchart::image::codec::av1 {
+namespace {
+
+// 就地把 1 加到 pos 处的字节，并向更低的地址传播进位（libaom propagate_carry_bwd）。
+void propagate_carry_bwd(std::vector<std::uint8_t>& buf, std::size_t pos) {
+    while (true) {
+        const unsigned sum = static_cast<unsigned>(buf[pos]) + 1u;
+        buf[pos] = static_cast<std::uint8_t>(sum & 0xFFu);
+        if ((sum >> 8) == 0 || pos == 0) return;
+        --pos;
+    }
+}
+
+}  // namespace
 
 void RangeEncoder::normalize(std::uint64_t low, unsigned rng) {
     // rng 归一化到 [32768, 65535] 所需的左移位数
-    const int shift = 16 - static_cast<int>(std::bit_width(rng));
-    int have = cnt_ + shift;
-    if (have >= 0) {
-        int base = cnt_ + 16;  // 当前 low 中第一个尚未写出的字节起始位
-        std::uint64_t keep = (std::uint64_t{1} << base) - 1;
-        if (have >= 8) {
-            staged_.push_back(static_cast<std::uint16_t>(low >> base));
-            low &= keep;
-            base -= 8;
-            keep >>= 8;
-        }
-        staged_.push_back(static_cast<std::uint16_t>(low >> base));
-        low &= keep;
-        have = base + shift - 24;
+    const int d = 16 - static_cast<int>(std::bit_width(rng));
+    int s = cnt_ + d;
+    // libaom 只在 low 无法再容纳下一个符号（最多 15 位）时才刷字节：
+    // s >= 40 意味着 low 里已攒够 5 个整字节，再留 1 字节给进位。
+    if (s >= 40) {
+        const unsigned num_bytes_ready = static_cast<unsigned>((s >> 3) + 1);
+        const int c = cnt_ + 24 - static_cast<int>(num_bytes_ready << 3);
+        std::uint64_t output = low >> c;
+        low &= (std::uint64_t{1} << c) - 1;
+        const std::uint64_t carry_mask = std::uint64_t{1} << (num_bytes_ready << 3);
+        const std::uint64_t carry = output & carry_mask;
+        output &= carry_mask - 1;
+        const std::size_t offs = buf_.size();
+        for (unsigned i = num_bytes_ready; i-- > 0;)
+            buf_.push_back(static_cast<std::uint8_t>((output >> (i * 8)) & 0xFFu));
+        if (carry != 0 && offs > 0) propagate_carry_bwd(buf_, offs - 1);
+        s = (s & 7) - 8;
     }
-    low_ = low << shift;
-    rng_ = rng << shift;
-    cnt_ = have;
+    low_ = low << d;
+    rng_ = rng << d;
+    cnt_ = s;
 }
 
-void RangeEncoder::write_interval(unsigned lo, unsigned width) {
-    if (finished_ || width == 0 || width > rng_ || lo + width > rng_) return;
-    // 解码器比较的是「码字补数」的高位，因此规范空间的 [lo, lo+width)
-    // 对应编码器码字空间的 [range - lo - width, range - lo)。
-    normalize(low_ + (rng_ - (lo + width)), width);
+void RangeEncoder::write_cdf(const std::uint16_t* cdf, int n, int symbol) {
+    if (finished_ || n <= 1) return;
+    if (symbol < 0) symbol = 0;
+    if (symbol >= n) symbol = n - 1;
+
+    const unsigned r = rng_;
+    const int N = n - 1;
+    // 仓内 cdf 表只存 n-1 个界；末符号的下界按规范视为 0（libaom 里是
+    // 表尾补齐的那个 0，本实现不存它，读取时直接取 0）。
+    const unsigned fl = cdf[symbol > 0 ? symbol - 1 : 0];
+    const unsigned fh = symbol + 1 < n ? cdf[symbol] : 0u;
+    const unsigned r8 = r >> 8;
+    const unsigned pu = (r8 * (fl >> 6)) >> 1;
+    const unsigned pv = (r8 * (fh >> 6)) >> 1;
+    const unsigned rk = r - 4u * static_cast<unsigned>(N - symbol);
+    // s == 0 或 icdf 顶格时区间上界就是 r 本身，直接落在 rk（不做 8 位取整）。
+    const unsigned um = (symbol > 0 && fl < 32768u) ? pu + 4u : rk;
+    normalize(low_ + (rk - um), um - pv);
 }
 
 void RangeEncoder::write_bool(int bit, unsigned f_one) {
     const unsigned v = ((rng_ >> 8) * (f_one >> 6) >> 1) + 4u;  // bit == 1 的区间长度
-    if (bit != 0)
-        write_interval(0, v);
-    else
-        write_interval(v, rng_ - v);
+    if (finished_ || v == 0 || v >= rng_) return;
+    normalize(low_ + (bit != 0 ? rng_ - v : 0u), bit != 0 ? v : rng_ - v);
 }
 
 std::string RangeEncoder::finish() {
     if (finished_) return result_;
 
-    // 选最小的位数，使 [edge, edge + mask] 覆盖住当前区间，
-    // 这样后续无论补 0 还是补 1 都能解码出同样的符号。
-    const std::uint64_t l = low_;
-    const unsigned r = rng_;
-    int s = 9;
-    std::uint64_t mask = 0x7FFF;
-    std::uint64_t edge = (l + mask) & ~mask;
-    while ((edge | mask) >= l + r) {
-        ++s;
-        mask >>= 1;
-        edge = (l + mask) & ~mask;
-    }
-    s += cnt_;
-
-    int shift = cnt_ + 16;
-    while (s > 0) {
-        if (shift >= 0) {
-            staged_.push_back(static_cast<std::uint16_t>(edge >> shift));
-            edge &= (std::uint64_t{1} << shift) - 1;
-        } else {
-            staged_.push_back(static_cast<std::uint16_t>(edge << -shift));
-            edge = 0;
-        }
-        s -= 8;
-        shift -= 8;
+    // 与 libaom od_ec_enc_done 完全一致：s = 10 + cnt 是还需要写出的位数，
+    // e 的第 14 位置 1 作为终止位，剩余位全 0，正好满足 decodeframe.c 里
+    // check_trailing_bits_after_symbol_coder 的「1 后全 0」校验。
+    int c = cnt_;
+    int s = 10 + c;
+    const std::uint64_t m = 0x3FFF;
+    std::uint64_t e = ((low_ + m) & ~m) | (m + 1);
+    if (s > 0) {
+        std::uint64_t n = (std::uint64_t{1} << (c + 16)) - 1;
+        do {
+            const std::uint16_t val = static_cast<std::uint16_t>(e >> (c + 16));
+            const std::size_t offs = buf_.size();
+            buf_.push_back(static_cast<std::uint8_t>(val & 0xFFu));
+            if ((val & 0x100u) != 0 && offs > 0) propagate_carry_bwd(buf_, offs - 1);
+            e &= n;
+            s -= 8;
+            c -= 8;
+            n >>= 8;
+        } while (s > 0);
     }
 
-    // 进位传播：暂存字节可能因进位超过 255，从后向前逐字节归一。
-    int carry = 0;
-    for (std::size_t i = staged_.size(); i-- > 0;) {
-        const int sum = static_cast<int>(staged_[i]) + carry;
-        staged_[i] = static_cast<std::uint16_t>(sum & 0xFF);
-        carry = sum >> 8;
-    }
-
-    result_.reserve(staged_.size());
-    for (auto b : staged_) result_.push_back(static_cast<char>(b));
+    result_.reserve(buf_.size());
+    for (auto b : buf_) result_.push_back(static_cast<char>(b));
     finished_ = true;
     return result_;
 }
@@ -127,7 +140,7 @@ unsigned RangeDecoder::decode_symbol(const std::uint16_t* cdf, int n) {
     const unsigned r_hi8 = rng_ >> 8;
     unsigned upper = rng_;
     for (int i = 0; i + 1 < n; ++i) {
-        const unsigned v = range_split(r_hi8, cdf[i], static_cast<unsigned>(n - i));
+        const unsigned v = range_split(r_hi8, cdf[i], static_cast<unsigned>(n - 1 - i));
         if (c >= v) {
             normalize(dif_ - (static_cast<std::uint64_t>(v) << 48), upper - v);
             return static_cast<unsigned>(i);
