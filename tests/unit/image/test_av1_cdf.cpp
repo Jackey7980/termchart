@@ -121,3 +121,30 @@ TEST_CASE("av1: 自适应状态机封装往返且计数饱和") {
     CHECK(enc_cdf == dec_cdf);
     CHECK(enc_cdf[static_cast<std::size_t>(n)] == 32);
 }
+
+TEST_CASE("av1: 极端偏斜 CDF 的区间切分不吞并符号") {
+    // mv_joint 这类表：符号 0 约 95%，其余三个符号合计 5%。
+    // 每个符号单独成流时必须能在解码端读出原符号。
+    constexpr std::uint16_t skewed[4] = {1639, 656, 164, 0};
+    for (int symbol = 0; symbol < 4; ++symbol) {
+        av1::RangeEncoder enc;
+        enc.write_cdf(skewed, 4, symbol);
+        const std::string bytes = enc.finish();
+        av1::RangeDecoder dec;
+        dec.init(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+        CHECK(dec.decode_symbol(skewed, 4) == static_cast<unsigned>(symbol));
+    }
+
+    // 512 符号长流混合 0 与稀有符号，检验重归一化补位不会把稀有符号吞成 0。
+    std::array<int, 512> symbols{};
+    for (int i = 0; i < 512; ++i)
+        symbols[static_cast<std::size_t>(i)] = i % 8 == 0 ? 1 + i % 3 : 0;
+    av1::RangeEncoder enc;
+    for (int s : symbols) enc.write_cdf(skewed, 4, s);
+    const std::string bytes = enc.finish();
+    av1::RangeDecoder dec;
+    dec.init(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+    for (int i = 0; i < 512; ++i)
+        REQUIRE(dec.decode_symbol(skewed, 4) ==
+                static_cast<unsigned>(symbols[static_cast<std::size_t>(i)]));
+}
