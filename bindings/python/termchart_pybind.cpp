@@ -756,6 +756,11 @@ private:
         return handle_;
     }
 
+public:
+    // 供 PyDoc::add_chart 取出同一句柄；不复制图表，也不重新建模型。
+    [[nodiscard]] tc_chart_handle raw() const { return alive(); }
+
+private:
     static tc_chart_prop prop_id(const std::string& prop) {
         if (prop == "y_domain") return TC_PROP_Y_DOMAIN;
         if (prop == "auto_domain") return TC_PROP_AUTO_DOMAIN;
@@ -1170,7 +1175,363 @@ private:
         return need;
     }
 
+    std::uint64_t encode_size(const std::string& format, std::uint8_t quality) const {
+        std::uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        const tc_status probe =
+            tc_image_encode(alive(), format.c_str(), quality, nullptr, 0, &need, &err);
+        if (probe != TC_ERR_BUFFER_TOO_SMALL) {
+            throw std::runtime_error("termchart: image encode failed: " + take_error(err));
+        }
+        return need;
+    }
+
+    // 位图直接编码成终端协议字节流（sixel / kitty / iterm2 / 半块），
+    // 与 C++ protocol:: 的四个编码器逐字节相同。
+    py::bytes to_protocol(const std::string& kind, std::uint32_t cell_width,
+                          std::uint32_t cell_height, bool rle) const {
+        const tc_protocol_kind pk = protocol_kind(kind);
+        const tc_protocol_opts po = protocol_opts(cell_width, cell_height, rle);
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_image_to_protocol(alive(), pk, &po, nullptr, 0, &need, &err), err,
+                     "image to_protocol");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_image_to_protocol(alive(), pk, &po, buf.data(), buf.size(), &got, &err),
+                     err, "image to_protocol");
+        return py::bytes(buf.data(), static_cast<std::size_t>(got));
+    }
+
     tc_image_handle handle_ = nullptr;
+};
+
+// ── 关系图：一个句柄 + 属性通道（12 个图种共用）─────────────────────────────
+
+tc_graph_prop graph_prop_id(const std::string& prop) {
+    if (prop == "shape") return TC_GRAPH_PROP_SHAPE;
+    if (prop == "route") return TC_GRAPH_PROP_ROUTE;
+    if (prop == "edge_labels") return TC_GRAPH_PROP_EDGE_LABELS;
+    if (prop == "arrows") return TC_GRAPH_PROP_ARROWS;
+    if (prop == "node_border") return TC_GRAPH_PROP_NODE_BORDER;
+    if (prop == "min_width") return TC_GRAPH_PROP_MIN_WIDTH;
+    if (prop == "min_height") return TC_GRAPH_PROP_MIN_HEIGHT;
+    if (prop == "h_gap") return TC_GRAPH_PROP_H_GAP;
+    if (prop == "v_gap") return TC_GRAPH_PROP_V_GAP;
+    if (prop == "mark_cycles") return TC_GRAPH_PROP_MARK_CYCLES;
+    throw std::runtime_error("termchart: unknown graph property '" + prop +
+                             "' (shape / route / edge_labels / arrows / node_border / "
+                             "min_width / min_height / h_gap / v_gap / mark_cycles)");
+}
+
+// 把 Python 值包成 tc_value：数值走 INT/DOUBLE，布尔走 BOOL，None = 清除。
+tc_value graph_value(py::object value) {
+    tc_value v{};
+    if (value.is_none()) {
+        v.kind = TC_VAL_NONE;
+        return v;
+    }
+    if (py::isinstance<py::bool_>(value)) {
+        v.kind = TC_VAL_BOOL;
+        v.i = py::cast<bool>(value) ? 1 : 0;
+        return v;
+    }
+    if (py::isinstance<py::int_>(value)) {
+        v.kind = TC_VAL_INT;
+        v.i = py::cast<std::int64_t>(value);
+        return v;
+    }
+    if (py::isinstance<py::float_>(value)) {
+        v.kind = TC_VAL_DOUBLE;
+        v.d = py::cast<double>(value);
+        return v;
+    }
+    v.kind = TC_VAL_STRING;
+    v.s = nullptr;  // 字符串属性不走 graph 通道（属性袋走 set_node_attr）
+    throw std::runtime_error(
+        "termchart: graph property accepts int / float / bool / None only");
+}
+
+tc_style rgb_style(py::object rgb, bool* ok) {
+    tc_style st{};
+    *ok = false;
+    if (rgb.is_none()) return st;
+    if (!py::isinstance<py::tuple>(rgb) && !py::isinstance<py::list>(rgb)) {
+        throw std::runtime_error("termchart: color must be an (r, g, b) tuple");
+    }
+    const std::vector<int> v = py::cast<std::vector<int>>(rgb);
+    if (v.size() != 3) {
+        throw std::runtime_error("termchart: color must be an (r, g, b) tuple");
+    }
+    st.fg.kind = TC_COLOR_RGB;
+    st.fg.r = static_cast<std::uint8_t>(v[0]);
+    st.fg.g = static_cast<std::uint8_t>(v[1]);
+    st.fg.b = static_cast<std::uint8_t>(v[2]);
+    *ok = true;
+    return st;
+}
+
+class PyGraph {
+public:
+    explicit PyGraph(const std::string& kind) {
+        tc_error_handle err = nullptr;
+        handle_ = tc_graph_create(kind.c_str(), &err);
+        if (handle_ == nullptr) {
+            throw std::runtime_error("termchart: graph create failed: " + take_error(err));
+        }
+    }
+
+    static PyGraph from_text(const std::string& text, const std::string& format,
+                             const std::string& kind) {
+        tc_error_handle err = nullptr;
+        tc_graph_handle h =
+            tc_graph_from_text(text.c_str(), format.c_str(), kind.c_str(), &err);
+        if (h == nullptr) {
+            throw std::runtime_error("termchart: graph parse failed: " + take_error(err));
+        }
+        return PyGraph(h);
+    }
+
+    PyGraph(const PyGraph&) = delete;
+    PyGraph& operator=(const PyGraph&) = delete;
+    PyGraph(PyGraph&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
+    PyGraph& operator=(PyGraph&& other) noexcept {
+        if (this != &other) {
+            if (handle_ != nullptr) tc_graph_free(handle_);
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+
+    ~PyGraph() {
+        if (handle_ != nullptr) tc_graph_free(handle_);
+    }
+
+    std::uint64_t add_node(const std::string& label) const {
+        const std::uint64_t id = tc_graph_add_node(alive(), label.c_str());
+        if (id == 0) throw std::runtime_error("termchart: graph add_node failed");
+        return id;
+    }
+
+    void add_edge(std::uint64_t from, std::uint64_t to, const std::string& label) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_add_edge(alive(), from, to, label.empty() ? nullptr : label.c_str(),
+                                       &err),
+                     err, "graph add_edge");
+    }
+
+    void set_node_attr(std::uint64_t node, const std::string& key, const std::string& value) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_set_node_attr(alive(), node, key.c_str(), value.c_str(), &err), err,
+                     "graph set_node_attr");
+    }
+
+    void set_edge_attr(std::uint64_t from, std::uint64_t to, const std::string& key,
+                       const std::string& value) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_set_edge_attr(alive(), from, to, key.c_str(), value.c_str(), &err),
+                     err, "graph set_edge_attr");
+    }
+
+    void set_prop(const std::string& prop, py::object value) const {
+        tc_value v = graph_value(std::move(value));
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_set_prop(alive(), graph_prop_id(prop), &v, &err), err,
+                     ("set_prop(" + prop + ")").c_str());
+    }
+
+    void set_style(py::object node_color, py::object edge_color) const {
+        bool has_node = false;
+        bool has_edge = false;
+        tc_style ns = rgb_style(std::move(node_color), &has_node);
+        tc_style es = rgb_style(std::move(edge_color), &has_edge);
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_set_style(alive(), has_node ? &ns : nullptr,
+                                        has_edge ? &es : nullptr, &err),
+                     err, "graph set_style");
+    }
+
+    [[nodiscard]] std::uint64_t node_count() const { return tc_graph_node_count(alive()); }
+    [[nodiscard]] std::uint64_t edge_count() const { return tc_graph_edge_count(alive()); }
+
+    std::string ansi(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+                     const std::string& depth) const {
+        tc_plot_opts opts = plot_opts_of(width, height, depth);
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_render_ansi(alive(), &opts, nullptr, 0, &need, &err), err,
+                     "graph render");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_graph_render_ansi(alive(), &opts, buf.data(), buf.size(), &got, &err),
+                     err, "graph render");
+        return std::string(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    void print(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height,
+               const std::string& depth) const {
+        tc_plot_opts opts = plot_opts_of(width, height, depth);
+        tc_error_handle err = nullptr;
+        check_status(tc_graph_print(alive(), &opts, &err), err, "graph print");
+    }
+
+    py::bytes to_png(std::optional<std::uint32_t> width, std::optional<std::uint32_t> height) const {
+        tc_plot_opts opts = plot_opts_of(width, height, std::string{"truecolor"});
+        return py::bytes(buffer_of([&](char* buf, uint64_t cap, uint64_t* got) {
+            tc_error_handle err = nullptr;
+            return tc_graph_to_png(alive(), &opts, buf, cap, got, &err);
+        }, "graph to_png"));
+    }
+
+    py::bytes to_protocol(const std::string& kind, std::optional<std::uint32_t> width,
+                          std::optional<std::uint32_t> height, std::uint32_t cell_width,
+                          std::uint32_t cell_height, bool rle) const {
+        tc_plot_opts opts = plot_opts_of(width, height, std::string{"truecolor"});
+        tc_protocol_opts po = protocol_opts(cell_width, cell_height, rle);
+        return py::bytes(buffer_of([&](char* buf, uint64_t cap, uint64_t* got) {
+            tc_error_handle err = nullptr;
+            return tc_graph_to_protocol(alive(), protocol_kind(kind), &opts, &po, buf, cap, got,
+                                        &err);
+        }, "graph to_protocol"));
+    }
+
+private:
+    explicit PyGraph(tc_graph_handle handle) : handle_(handle) {}
+
+    [[nodiscard]] tc_graph_handle alive() const {
+        if (handle_ == nullptr) throw std::runtime_error("termchart: graph is already closed");
+        return handle_;
+    }
+
+    static tc_plot_opts plot_opts_of(std::optional<std::uint32_t> width,
+                                     std::optional<std::uint32_t> height,
+                                     const std::string& depth) {
+        tc_plot_opts opts{};
+        opts.width = width.value_or(0);
+        opts.height = height.value_or(0);
+        opts.depth = depth_of(depth);
+        return opts;
+    }
+
+    template <typename Fn>
+    static std::string buffer_of(Fn&& fn, const char* what) {
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(fn(nullptr, 0, &need), err, what);
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(fn(buf.data(), buf.size(), &got), err, what);
+        return std::string(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    tc_graph_handle handle_ = nullptr;
+};
+
+// ── 文档：块序列 → html / markdown / plain ─────────────────────────────────
+
+class PyDoc {
+public:
+    PyDoc() {
+        tc_error_handle err = nullptr;
+        handle_ = tc_doc_create(&err);
+        if (handle_ == nullptr) {
+            throw std::runtime_error("termchart: document create failed: " + take_error(err));
+        }
+    }
+
+    PyDoc(const PyDoc&) = delete;
+    PyDoc& operator=(const PyDoc&) = delete;
+    ~PyDoc() {
+        if (handle_ != nullptr) tc_doc_free(handle_);
+    }
+
+    void add_heading(const std::string& text, std::uint32_t level) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_add_heading(alive(), text.c_str(), level, &err), err,
+                     "doc add_heading");
+    }
+    void add_paragraph(const std::string& text) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_add_paragraph(alive(), text.c_str(), &err), err, "doc add_paragraph");
+    }
+    void add_code(const std::string& text, const std::string& language) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_add_code(alive(), text.c_str(),
+                                     language.empty() ? nullptr : language.c_str(), &err),
+                     err, "doc add_code");
+    }
+
+    void add_table(py::object header, py::object rows) const {
+        // 单元指针只在调用期间有效：把字符串留在 vector 里，再取指针。
+        std::vector<std::string> header_strings;
+        std::vector<const char*> header_ptrs;
+        if (!header.is_none()) {
+            header_strings = strings_of(header);
+            header_ptrs = c_strings(header_strings);
+        }
+
+        std::vector<std::vector<std::string>> cell_strings;
+        std::vector<std::vector<const char*>> cell_ptrs;
+        std::vector<const char* const*> row_ptrs;
+        if (!rows.is_none()) {
+            for (auto row : py::iter(rows)) {
+                cell_strings.push_back(strings_of(row));
+                cell_ptrs.push_back(c_strings(cell_strings.back()));
+            }
+            row_ptrs.reserve(cell_ptrs.size());
+            for (const auto& r : cell_ptrs) row_ptrs.push_back(r.data());
+        }
+
+        const std::uint64_t n_cols =
+            header.is_none() ? (cell_strings.empty() ? 0 : cell_strings.front().size())
+                             : header_strings.size();
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_add_table(alive(), header.is_none() ? nullptr : header_ptrs.data(),
+                                      n_cols, row_ptrs.empty() ? nullptr : row_ptrs.data(),
+                                      static_cast<std::uint64_t>(row_ptrs.size()), &err),
+                     err, "doc add_table");
+    }
+
+    void add_chart(PyChart& chart, std::uint32_t width, std::uint32_t height) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_add_chart(alive(), chart.raw(), width, height, &err), err,
+                     "doc add_chart");
+    }
+
+    std::string export_text(const std::string& format, const std::string& title,
+                            const std::string& css_class) const {
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_export(alive(), format.c_str(), title.empty() ? nullptr : title.c_str(),
+                                   css_class.empty() ? nullptr : css_class.c_str(), nullptr, 0,
+                                   &need, &err),
+                     err, "doc export");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_doc_export(alive(), format.c_str(), title.empty() ? nullptr : title.c_str(),
+                                   css_class.empty() ? nullptr : css_class.c_str(), buf.data(),
+                                   buf.size(), &got, &err),
+                     err, "doc export");
+        return std::string(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    void save(const std::string& path, const std::string& format, const std::string& title,
+              const std::string& css_class) const {
+        tc_error_handle err = nullptr;
+        check_status(tc_doc_save(alive(), path.c_str(), format.c_str(),
+                                 title.empty() ? nullptr : title.c_str(),
+                                 css_class.empty() ? nullptr : css_class.c_str(), &err),
+                     err, "doc save");
+    }
+
+private:
+    [[nodiscard]] tc_doc_handle alive() const {
+        if (handle_ == nullptr) throw std::runtime_error("termchart: document is already closed");
+        return handle_;
+    }
+
+    tc_doc_handle handle_ = nullptr;
 };
 
 }  // namespace

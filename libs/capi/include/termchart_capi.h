@@ -454,11 +454,11 @@ typedef enum tc_graph_prop {
     TC_GRAPH_PROP_MIN_HEIGHT = 7,   /* TC_VAL_DOUBLE */
     TC_GRAPH_PROP_H_GAP = 8,        /* TC_VAL_DOUBLE：同层水平间距（>0 生效） */
     TC_GRAPH_PROP_V_GAP = 9,        /* TC_VAL_DOUBLE：层间垂直间距（>0 生效） */
-    TC_GRAPH_PROP_MARK_CYCLES = 10  /* TC_VAL_BOOL：把成环的边标红（仅 dependency） */
+    TC_GRAPH_PROP_MARK_CYCLES = 10  /* TC_VAL_BOOL：环上的边改成双向箭头（仅 dependency） */
 } tc_graph_prop;
 
 /* 建一张空图。kind 不在登记表里 → 返回 NULL 并写 err（不做"猜一个相近的"）。
- * format 见 tc_graph_from_text。 */
+ * kind 传 NULL / "" 等价于 "flowchart"（C++ 示例与文档的默认图种）。 */
 tc_graph_handle tc_graph_create(const char* kind, tc_error_handle* err);
 
 /* 文本方言 → 图。format：
@@ -466,7 +466,8 @@ tc_graph_handle tc_graph_create(const char* kind, tc_error_handle* err);
  *   "d2" / "plantuml" / 以及 dsl 注册表里其余名字；
  *   传 NULL 或 "" = 依次尝试注册表里的方言，第一个解析成功者胜出。
  * kind 传 NULL = "flowchart"（与 C++ 示例一致）。解析失败返回 NULL + err（含
- * 行号与期望 token）。 */
+ * 失败方言名与 ErrorCode；契约与 C++ 注册表的 Result 完全一致，不在这里另造一套
+ * 更"详尽"的诊断）。 */
 tc_graph_handle tc_graph_from_text(const char* text, const char* format, const char* kind,
                                    tc_error_handle* err);
 void tc_graph_free(tc_graph_handle graph);
@@ -533,13 +534,15 @@ tc_status tc_doc_add_chart(tc_doc_handle doc, tc_chart_handle chart, uint32_t wi
                            uint32_t height, tc_error_handle* err);
 
 /* 一次性导出。format："html" / "markdown" / "plain"（其余 → TC_ERR_INVALID_ARG）。
- * title 只对 html 生效（文档标题 / 浏览器标签）；css_href 可为 NULL（不挂样式表）。
+ * title / css_class 语义与 backend::structured::StructuredOptions 逐字段相同
+ * （title = 文档标题，css_class = body 的 class），不为 NULL 才覆盖默认值。
  * 两段式缓冲。 */
 tc_status tc_doc_export(tc_doc_handle doc, const char* format, const char* title,
-                        const char* css_href, char* buf, uint64_t cap, uint64_t* out_len,
+                        const char* css_class, char* buf, uint64_t cap, uint64_t* out_len,
                         tc_error_handle* err);
+/* 导出并写文件（扩展名不参与推断，format 语义同 tc_doc_export）。 */
 tc_status tc_doc_save(tc_doc_handle doc, const char* path, const char* format,
-                      tc_error_handle* err);
+                      const char* title, const char* css_class, tc_error_handle* err);
 
 /* 释放 render 返回的 C 侧字符串。 */
 void tc_free_string(char* s);

@@ -117,6 +117,33 @@
 #include "termchart/scene/scene.hpp"
 #include "termchart/version.hpp"
 
+// 关系图 / 文档 / 终端协议：C 面直接消费与 C++ 同一批入口，不另建绘制逻辑。
+#include "termchart/backend/structured/html_backend.hpp"
+#include "termchart/backend/structured/markdown_backend.hpp"
+#include "termchart/document/block.hpp"
+#include "termchart/document/document.hpp"
+#include "termchart/dsl/ast.hpp"
+#include "termchart/dsl/dsl_registry.hpp"
+#include "termchart/graph/diagrams/dag.hpp"
+#include "termchart/graph/diagrams/dependency.hpp"
+#include "termchart/graph/diagrams/er_diagram.hpp"
+#include "termchart/graph/diagrams/flowchart.hpp"
+#include "termchart/graph/diagrams/knowledge_graph.hpp"
+#include "termchart/graph/diagrams/mindmap.hpp"
+#include "termchart/graph/diagrams/orgchart.hpp"
+#include "termchart/graph/diagrams/social_network.hpp"
+#include "termchart/graph/diagrams/state_machine.hpp"
+#include "termchart/graph/diagrams/uml_activity.hpp"
+#include "termchart/graph/diagrams/uml_class.hpp"
+#include "termchart/graph/diagrams/uml_usecase.hpp"
+#include "termchart/graph/graph.hpp"
+#include "termchart/protocol/detect.hpp"
+#include "termchart/protocol/fallback.hpp"
+#include "termchart/protocol/halfblock_image.hpp"
+#include "termchart/protocol/iterm2_inline.hpp"
+#include "termchart/protocol/kitty_graphics.hpp"
+#include "termchart/protocol/sixel.hpp"
+
 using namespace termchart;
 
 namespace {
@@ -1763,5 +1790,839 @@ void tc_error_message(tc_error_handle err, char* buf, uint64_t cap) {
     buf[n] = '\0';
 }
 void tc_error_free(tc_error_handle err) { delete reinterpret_cast<std::string*>(err); }
+
+}  // extern "C"
+
+// ── 终端协议 / 关系图 / 文档：辅助实现 ──────────────────────────────────────
+
+namespace {
+
+// 两段式缓冲的唯一写出点（cap=0 只问长度；cap 不够只报错不改数据）。
+inline tc_status emit_bytes(const std::string& s, char* buf, std::uint64_t cap,
+                            std::uint64_t* out_len, tc_error_handle* err) {
+    if (out_len != nullptr) *out_len = static_cast<std::uint64_t>(s.size());
+    if (buf == nullptr || cap == 0) return TC_OK;
+    if (cap < s.size()) {
+        return fail(err, "output buffer too small", TC_ERR_BUFFER_TOO_SMALL);
+    }
+    if (!s.empty()) std::memcpy(buf, s.data(), s.size());
+    return TC_OK;
+}
+
+inline protocol::ProtocolKind protocol_kind_of(tc_protocol_kind kind, bool* ok) noexcept {
+    switch (kind) {
+        case TC_PROTO_AUTO: {
+            // AUTO 是唯一会看环境的分支：与 C++ 完全同一条降级链。
+            const protocol::ProtocolCaps caps = protocol::detect_protocol_caps();
+            *ok = true;
+            return protocol::pick_protocol(caps);
+        }
+        case TC_PROTO_SIXEL:
+            *ok = true;
+            return protocol::ProtocolKind::Sixel;
+        case TC_PROTO_KITTY:
+            *ok = true;
+            return protocol::ProtocolKind::Kitty;
+        case TC_PROTO_ITERM2:
+            *ok = true;
+            return protocol::ProtocolKind::Iterm2;
+        case TC_PROTO_HALFBLOCK:
+            *ok = true;
+            return protocol::ProtocolKind::HalfBlock;
+        default:
+            *ok = false;
+            return protocol::ProtocolKind::None;
+    }
+}
+
+// 位图 → 协议字节流。四个编码器都是 protocol/ 里的同一份实现，这里只做选择。
+tc_status encode_protocol(const image::Bitmap& bmp, tc_protocol_kind kind,
+                          const tc_protocol_opts* po, std::string& out,
+                          tc_error_handle* err) {
+    if (bmp.empty()) return fail(err, "empty bitmap", TC_ERR_INVALID_ARG);
+
+    protocol::ProtocolOptions o{};
+    if (po != nullptr) {
+        if (po->cell_width) o.cell_width_px = po->cell_width;
+        if (po->cell_height) o.cell_height_px = po->cell_height;
+        o.rle = po->rle != 0;
+    }
+
+    bool ok = false;
+    const protocol::ProtocolKind pk = protocol_kind_of(kind, &ok);
+    if (!ok) return fail(err, "unknown protocol kind", TC_ERR_INVALID_ARG);
+    if (pk == protocol::ProtocolKind::None) {
+        return fail(err, "no terminal image protocol available (sixel/kitty/iterm2/truecolor)",
+                    TC_ERR_UNSUPPORTED);
+    }
+
+    switch (pk) {
+        case protocol::ProtocolKind::Sixel: {
+            protocol::SixelProtocol p;
+            out = p.encode(bmp, o);
+            break;
+        }
+        case protocol::ProtocolKind::Kitty: {
+            protocol::KittyProtocol p;
+            out = p.encode(bmp, o);
+            break;
+        }
+        case protocol::ProtocolKind::Iterm2: {
+            protocol::Iterm2Inline p;
+            out = p.encode(bmp, o);
+            break;
+        }
+        case protocol::ProtocolKind::HalfBlock: {
+            protocol::HalfBlockProtocol p;
+            out = p.encode(bmp, o);
+            break;
+        }
+        case protocol::ProtocolKind::None:
+            break;
+    }
+    if (out.empty()) {
+        return fail(err, std::string("protocol encode failed (") + protocol::protocol_name(pk) + ")",
+                    TC_ERR_RENDER);
+    }
+    return TC_OK;
+}
+
+// ── 关系图 ──────────────────────────────────────────────────────────────────
+
+// 12 个图种共用一张句柄：kind 决定布局 + 渲染器，其余全是可选覆盖。
+struct GraphData {
+    graph::Graph graph;
+    std::string kind;
+
+    std::optional<graph::ShapeKind> shape;
+    std::optional<graph::RouteStyle> route;
+    std::optional<bool> edge_labels;
+    std::optional<bool> arrows;
+    std::optional<bool> node_border;
+    std::optional<bool> mark_cycles;
+    std::optional<double> min_width;
+    std::optional<double> min_height;
+    std::optional<double> h_gap;
+    std::optional<double> v_gap;
+
+    Style node_style{};
+    Style edge_style{};
+};
+
+// 能力表：哪条属性对哪个图种有意义。表里为 false 的组合一律 TC_ERR_UNSUPPORTED，
+// 不静默丢弃——图种选项结构体里根本没有那个字段，硬塞只能靠"猜一个相近的"。
+struct GraphKindDef {
+    const char* name;
+    bool shape;
+    bool route;
+    bool edge_labels;
+    bool arrows;
+    bool node_border;
+    bool layout;   // min_width / min_height / h_gap / v_gap
+    bool cycles;   // dependency 的环标记
+};
+
+constexpr GraphKindDef kGraphKinds[] = {
+    // name              shape  route  labels arrows border layout cycles
+    {"flowchart",        true,  true,  false, false, false, true,  false},
+    {"state_machine",    true,  true,  false, false, false, true,  false},
+    {"mindmap",          true,  false, false, false, true,  true,  false},
+    {"orgchart",         true,  false, false, false, true,  true,  false},
+    {"dag",              true,  false, true,  true,  false, true,  false},
+    {"dependency",       true,  false, true,  true,  false, true,  true},
+    {"er_diagram",       false, true,  false, false, false, true,  false},
+    {"knowledge_graph",  false, true,  true,  true,  true,  true,  false},
+    {"social_network",   false, false, false, true,  true,  true,  false},
+    {"uml_activity",     false, true,  false, false, false, true,  false},
+    {"uml_class",        false, true,  false, false, false, true,  false},
+    {"uml_usecase",      false, false, false, false, false, true,  false},
+};
+
+inline const GraphKindDef* find_graph_kind(std::string_view name) noexcept {
+    for (const GraphKindDef& d : kGraphKinds) {
+        if (name == d.name) return &d;
+    }
+    return nullptr;
+}
+
+inline GraphData* as_graph(tc_graph_handle h) noexcept {
+    return reinterpret_cast<GraphData*>(h);
+}
+
+inline void tune_layout(const GraphData& d, graph::LayoutOptions& lo) {
+    if (d.min_width) lo.min_width = *d.min_width;
+    if (d.min_height) lo.min_height = *d.min_height;
+    if (d.h_gap) lo.h_gap = *d.h_gap;
+    if (d.v_gap) lo.v_gap = *d.v_gap;
+}
+
+// 树布局的"兄弟间距"叫 row_gap，语义就是垂直间距。
+inline void tune_tree(const GraphData& d, graph::TreeOptions& to) {
+    tune_layout(d, to.layout);
+    if (d.v_gap) to.row_gap = *d.v_gap;
+}
+
+// 就地布局 + 绘制。每个分支只做"选项结构体搬运"，没有任何绘制逻辑。
+Rect draw_graph(GraphData& d, canvas::Canvas& cv) {
+    const std::string& k = d.kind;
+
+    if (k == "flowchart") {
+        graph::FlowchartOptions o;
+        tune_layout(d, o.layout);
+        if (d.shape) o.shape = *d.shape;
+        if (d.route) o.route_style = *d.route;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_flowchart(d.graph, cv, o);
+    }
+    if (k == "state_machine") {
+        graph::StateMachineOptions o;
+        tune_layout(d, o.layout);
+        if (d.shape) o.shape = *d.shape;
+        if (d.route) o.route_style = *d.route;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_state_machine(d.graph, cv, o);
+    }
+    if (k == "mindmap") {
+        graph::MindmapOptions o;
+        tune_tree(d, o.tree);
+        if (d.shape) o.shape = *d.shape;
+        if (d.node_border) o.node_border = *d.node_border;
+        o.topic_style = d.node_style;
+        o.branch_style = d.edge_style;
+        return graph::render_mindmap(d.graph, cv, o);
+    }
+    if (k == "orgchart") {
+        graph::OrgChartOptions o;
+        tune_tree(d, o.tree);
+        if (d.shape) o.shape = *d.shape;
+        if (d.node_border) o.node_border = *d.node_border;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_orgchart(d.graph, cv, o);
+    }
+    if (k == "dag" || k == "dependency") {
+        graph::DagOptions o;
+        tune_layout(d, o.layout);
+        if (d.shape) o.shape = *d.shape;
+        if (d.arrows) o.arrows = *d.arrows;
+        if (d.edge_labels) o.edge_labels = *d.edge_labels;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        if (k == "dag") return graph::render_dag(d.graph, cv, o);
+
+        graph::DependencyOptions dep;
+        dep.dag = o;
+        if (d.mark_cycles) dep.mark_cycles = *d.mark_cycles;
+        return graph::render_dependency(d.graph, cv, dep);
+    }
+    if (k == "er_diagram") {
+        graph::ErDiagramOptions o;
+        tune_layout(d, o.layout);
+        if (d.route) o.route_style = *d.route;
+        o.entity_style = d.node_style;
+        o.name_style = d.node_style;
+        o.field_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_er_diagram(d.graph, cv, o);
+    }
+    if (k == "knowledge_graph") {
+        graph::KnowledgeGraphOptions o;
+        tune_layout(d, o.force.layout);
+        if (d.route) o.route_style = *d.route;
+        if (d.node_border) o.node_border = *d.node_border;
+        if (d.arrows) o.arrows = *d.arrows;
+        if (d.edge_labels) o.edge_labels = *d.edge_labels;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_knowledge_graph(d.graph, cv, o);
+    }
+    if (k == "social_network") {
+        graph::SocialNetworkOptions o;
+        tune_layout(d, o.layout);
+        if (d.node_border) o.node_border = *d.node_border;
+        if (d.arrows) o.arrows = *d.arrows;
+        o.node_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_social_network(d.graph, cv, o);
+    }
+    if (k == "uml_activity") {
+        graph::UmlActivityOptions o;
+        tune_layout(d, o.layout);
+        if (d.route) o.route_style = *d.route;
+        o.node_style = d.node_style;
+        o.decision_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_uml_activity(d.graph, cv, o);
+    }
+    if (k == "uml_class") {
+        graph::UmlClassOptions o;
+        tune_layout(d, o.layout);
+        if (d.route) o.route_style = *d.route;
+        o.border_style = d.node_style;
+        o.name_style = d.node_style;
+        o.member_style = d.node_style;
+        o.edge_style = d.edge_style;
+        return graph::render_uml_class(d.graph, cv, o);
+    }
+    // uml_usecase（create 已校验 kind，这里是最后一条登记项）
+    graph::UmlUsecaseOptions o;
+    tune_layout(d, o.layout);
+    if (d.h_gap) o.h_gap = *d.h_gap;  // 参与者列与用例列之间那一段
+    o.actor_style = d.node_style;
+    o.usecase_style = d.node_style;
+    o.edge_style = d.edge_style;
+    return graph::render_uml_usecase(d.graph, cv, o);
+}
+
+inline std::uint32_t clamp_dim(double v) noexcept {
+    const double c = std::ceil(v);
+    if (!(c >= 1.0)) return 1;  // 0 / 负 / NaN
+    if (c > 200.0) return 200;
+    return static_cast<std::uint32_t>(c);
+}
+
+// 自适应尺寸走"先探测包围盒、再按目标尺寸重画一遍"：布局与画布尺寸无关，
+// 因此两遍得到的位置完全一致，第二遍只是把输出落在正确的画布上。
+tc_status render_graph_cells(GraphData& d, const tc_plot_opts* o, CellBuffer& out,
+                             tc_error_handle* err) {
+    if (d.graph.node_count() == 0) return fail(err, "empty graph", TC_ERR_INVALID_ARG);
+
+    std::uint32_t cols = (o && o->width) ? o->width : 0;
+    std::uint32_t rows = (o && o->height) ? o->height : 0;
+    if (cols > 0xFFFF || rows > 0xFFFF) {
+        return fail(err, "width/height out of range", TC_ERR_INVALID_ARG);
+    }
+    if (cols == 0 || rows == 0) {
+        canvas::Canvas probe(200, 100);  // 上限即头文件承诺的 200×100
+        const Rect r = draw_graph(d, probe);
+        if (cols == 0) cols = clamp_dim(r.x + r.w + 1.0);
+        if (rows == 0) rows = clamp_dim(r.y + r.h + 1.0);
+    }
+
+    canvas::Canvas cv(cols, rows);
+    draw_graph(d, cv);
+    out = cv.to_buffer();
+    return TC_OK;
+}
+
+inline tc_status render_graph_bytes(GraphData& d, const tc_plot_opts* opts, std::string& out,
+                                    tc_error_handle* err) {
+    CellBuffer cells;
+    const tc_status st = render_graph_cells(d, opts, cells, err);
+    if (st != TC_OK) return st;
+    const ColorDepth depth = (opts && opts->depth != TC_DEPTH_NONE) ? to_depth(opts->depth)
+                                                                    : ColorDepth::TrueColor;
+    render::Renderer renderer(depth);
+    out = renderer.render_full(cells);
+    return TC_OK;
+}
+
+// 图的"像素化"与图表同一条路：CellBuffer → 位图，供 PNG / 协议共用。
+image::Bitmap graph_bitmap(GraphData& d, const tc_plot_opts* opts, tc_error_handle* err,
+                           tc_status* status) {
+    CellBuffer cells;
+    *status = render_graph_cells(d, opts, cells, err);
+    if (*status != TC_OK) return image::Bitmap{};
+    gui::CellBitmapOptions copts{};
+    return gui::render_cells_to_bitmap(cells, copts);
+}
+
+inline std::string graph_kind_or_default(const char* kind) {
+    return (kind && kind[0] != '\0') ? std::string(kind) : std::string("flowchart");
+}
+
+}  // namespace
+
+extern "C" {
+
+// ── 终端协议 ────────────────────────────────────────────────────────────────
+
+tc_status tc_image_to_protocol(tc_image_handle image, tc_protocol_kind kind,
+                               const tc_protocol_opts* opts, char* buf, std::uint64_t cap,
+                               std::uint64_t* out_len, tc_error_handle* err) {
+    if (image == nullptr) return fail(err, "null image", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    std::string bytes;
+    const tc_status st = encode_protocol(*as_bitmap(image), kind, opts, bytes, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(bytes, buf, cap, out_len, err);
+}
+
+tc_status tc_protocol_detect(char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                             tc_error_handle* err) {
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    const std::string name(protocol::protocol_name(protocol::pick_protocol(
+        protocol::detect_protocol_caps())));
+    return emit_bytes(name, buf, cap, out_len, err);
+}
+
+tc_status tc_chart_to_protocol(tc_chart_handle chart, tc_protocol_kind kind,
+                               const tc_plot_opts* opts, const tc_protocol_opts* proto_opts,
+                               char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                               tc_error_handle* err) {
+    if (chart == nullptr) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (!has_data(*c)) return fail(err, "empty chart data", TC_ERR_INVALID_ARG);
+
+    CellBuffer cells;
+    if (!build_plot_with_labels(*c, opts, cells)) {
+        return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
+    }
+    gui::CellBitmapOptions copts{};
+    const image::Bitmap bmp = gui::render_cells_to_bitmap(cells, copts);
+    std::string bytes;
+    const tc_status st = encode_protocol(bmp, kind, proto_opts, bytes, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(bytes, buf, cap, out_len, err);
+}
+
+// ── 关系图 ──────────────────────────────────────────────────────────────────
+
+tc_graph_handle tc_graph_create(const char* kind, tc_error_handle* err) {
+    const std::string name = graph_kind_or_default(kind);
+    if (find_graph_kind(name) == nullptr) {
+        set_err(err, "unknown graph kind: " + name);
+        return nullptr;
+    }
+    GraphData* d = new (std::nothrow) GraphData();
+    if (d == nullptr) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    d->kind = name;
+    return reinterpret_cast<tc_graph_handle>(d);
+}
+
+tc_graph_handle tc_graph_from_text(const char* text, const char* format, const char* kind,
+                                   tc_error_handle* err) {
+    if (text == nullptr) {
+        set_err(err, "null text");
+        return nullptr;
+    }
+    const std::string name = graph_kind_or_default(kind);
+    if (find_graph_kind(name) == nullptr) {
+        set_err(err, "unknown graph kind: " + name);
+        return nullptr;
+    }
+
+    dsl::register_builtin_dsls();  // 幂等；首次解析前也可能没登记
+    const dsl::DslRegistry& reg = dsl::DslRegistry::instance();
+    const std::string_view src(text);
+
+    std::optional<dsl::AstGraph> ast;
+    if (format != nullptr && format[0] != '\0') {
+        auto parsed = reg.parse(format, src);
+        if (!parsed.has_value()) {
+            set_err(err, std::string("parse failed (") + format + ", " + describe(parsed.error()) + ")");
+            return nullptr;
+        }
+        ast = std::move(parsed.value());
+    } else {
+        // 没指定方言：依次尝试注册表里的名字，第一个解析成功者胜出。
+        for (std::string_view n : reg.names()) {
+            auto parsed = reg.parse(n, src);
+            if (parsed.has_value()) {
+                ast = std::move(parsed.value());
+                break;
+            }
+        }
+        if (!ast) {
+            set_err(err, "parse failed (no registered dialect accepted the text)");
+            return nullptr;
+        }
+    }
+
+    auto g = dsl::to_graph(*ast);
+    if (!g.has_value()) {
+        set_err(err, std::string("ast_to_graph failed (") + describe(g.error()) + ")");
+        return nullptr;
+    }
+
+    GraphData* d = new (std::nothrow) GraphData();
+    if (d == nullptr) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    d->kind = name;
+    d->graph = std::move(g.value());
+    return reinterpret_cast<tc_graph_handle>(d);
+}
+
+void tc_graph_free(tc_graph_handle graph) { delete as_graph(graph); }
+
+uint64_t tc_graph_add_node(tc_graph_handle graph, const char* label) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return 0;
+    graph::Node& n = d->graph.add_node(label == nullptr ? std::string{} : std::string(label));
+    return static_cast<uint64_t>(n.id());
+}
+
+tc_status tc_graph_add_edge(tc_graph_handle graph, uint64_t from, uint64_t to, const char* label,
+                            tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    graph::Edge* e = d->graph.add_edge(static_cast<graph::NodeId>(from),
+                                       static_cast<graph::NodeId>(to),
+                                       label == nullptr ? std::string{} : std::string(label));
+    if (e == nullptr) return fail(err, "edge endpoint does not exist", TC_ERR_INVALID_ARG);
+    return TC_OK;
+}
+
+tc_status tc_graph_set_node_attr(tc_graph_handle graph, uint64_t node, const char* key,
+                                 const char* value, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (key == nullptr || key[0] == '\0') return fail(err, "null attribute key", TC_ERR_INVALID_ARG);
+    graph::Node* n = d->graph.find(static_cast<graph::NodeId>(node));
+    if (n == nullptr) return fail(err, "node does not exist", TC_ERR_INVALID_ARG);
+    n->attributes().set(key, value == nullptr ? std::string{} : std::string(value));
+    return TC_OK;
+}
+
+tc_status tc_graph_set_edge_attr(tc_graph_handle graph, uint64_t from, uint64_t to,
+                                 const char* key, const char* value, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (key == nullptr || key[0] == '\0') return fail(err, "null attribute key", TC_ERR_INVALID_ARG);
+    graph::Edge* e = d->graph.find_edge(static_cast<graph::NodeId>(from),
+                                        static_cast<graph::NodeId>(to));
+    if (e == nullptr) return fail(err, "edge does not exist", TC_ERR_INVALID_ARG);
+    e->attributes().set(key, value == nullptr ? std::string{} : std::string(value));
+    return TC_OK;
+}
+
+tc_status tc_graph_set_prop(tc_graph_handle graph, tc_graph_prop prop, const tc_value* value,
+                            tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (value == nullptr) return fail(err, "null property value", TC_ERR_INVALID_ARG);
+    const GraphKindDef* def = find_graph_kind(d->kind);
+    if (def == nullptr) return fail(err, "unknown graph kind: " + d->kind, TC_ERR_INVALID_HANDLE);
+
+    bool b = false;
+    double v = 0.0;
+    switch (prop) {
+        case TC_GRAPH_PROP_SHAPE: {
+            if (!def->shape) return fail(err, d->kind + " does not support shape", TC_ERR_UNSUPPORTED);
+            if (value->kind != TC_VAL_INT || value->i < 0 || value->i > 7) {
+                return fail(err, "shape must be TC_VAL_INT in [0,7]", TC_ERR_INVALID_ARG);
+            }
+            d->shape = static_cast<graph::ShapeKind>(value->i);
+            return TC_OK;
+        }
+        case TC_GRAPH_PROP_ROUTE: {
+            if (!def->route) return fail(err, d->kind + " does not support route", TC_ERR_UNSUPPORTED);
+            if (value->kind != TC_VAL_INT || value->i < 0 || value->i > 1) {
+                return fail(err, "route must be TC_VAL_INT in [0,1]", TC_ERR_INVALID_ARG);
+            }
+            d->route = static_cast<graph::RouteStyle>(value->i);
+            return TC_OK;
+        }
+        case TC_GRAPH_PROP_EDGE_LABELS:
+            if (!def->edge_labels) {
+                return fail(err, d->kind + " does not support edge labels", TC_ERR_UNSUPPORTED);
+            }
+            if (!bool_of(*value, b)) return fail(err, "edge_labels must be bool", TC_ERR_INVALID_ARG);
+            d->edge_labels = b;
+            return TC_OK;
+        case TC_GRAPH_PROP_ARROWS:
+            if (!def->arrows) return fail(err, d->kind + " does not support arrows", TC_ERR_UNSUPPORTED);
+            if (!bool_of(*value, b)) return fail(err, "arrows must be bool", TC_ERR_INVALID_ARG);
+            d->arrows = b;
+            return TC_OK;
+        case TC_GRAPH_PROP_NODE_BORDER:
+            if (!def->node_border) {
+                return fail(err, d->kind + " does not support node border", TC_ERR_UNSUPPORTED);
+            }
+            if (!bool_of(*value, b)) return fail(err, "node_border must be bool", TC_ERR_INVALID_ARG);
+            d->node_border = b;
+            return TC_OK;
+        case TC_GRAPH_PROP_MARK_CYCLES:
+            if (!def->cycles) return fail(err, d->kind + " does not support mark_cycles", TC_ERR_UNSUPPORTED);
+            if (!bool_of(*value, b)) return fail(err, "mark_cycles must be bool", TC_ERR_INVALID_ARG);
+            d->mark_cycles = b;
+            return TC_OK;
+        case TC_GRAPH_PROP_MIN_WIDTH:
+        case TC_GRAPH_PROP_MIN_HEIGHT:
+        case TC_GRAPH_PROP_H_GAP:
+        case TC_GRAPH_PROP_V_GAP: {
+            if (!def->layout) return fail(err, d->kind + " does not support layout tuning", TC_ERR_UNSUPPORTED);
+            if (value->kind == TC_VAL_DOUBLE) {
+                v = value->d;
+            } else if (value->kind == TC_VAL_INT) {
+                v = static_cast<double>(value->i);
+            } else if (is_clear(*value)) {
+                v = 0.0;  // 清除 = 回到图种默认
+            } else {
+                return fail(err, "layout property must be double", TC_ERR_INVALID_ARG);
+            }
+            std::optional<double>* slot = nullptr;
+            switch (prop) {
+                case TC_GRAPH_PROP_MIN_WIDTH: slot = &d->min_width; break;
+                case TC_GRAPH_PROP_MIN_HEIGHT: slot = &d->min_height; break;
+                case TC_GRAPH_PROP_H_GAP: slot = &d->h_gap; break;
+                default: slot = &d->v_gap; break;
+            }
+            if (!(v > 0.0)) slot->reset();
+            else *slot = v;
+            return TC_OK;
+        }
+        default:
+            return fail(err, "unknown graph property", TC_ERR_INVALID_ARG);
+    }
+}
+
+tc_status tc_graph_set_style(tc_graph_handle graph, const tc_style* node_style,
+                             const tc_style* edge_style, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (node_style != nullptr) d->node_style = to_style(node_style);
+    if (edge_style != nullptr) d->edge_style = to_style(edge_style);
+    return TC_OK;
+}
+
+uint64_t tc_graph_node_count(tc_graph_handle graph) {
+    GraphData* d = as_graph(graph);
+    return d == nullptr ? 0 : static_cast<uint64_t>(d->graph.node_count());
+}
+
+uint64_t tc_graph_edge_count(tc_graph_handle graph) {
+    GraphData* d = as_graph(graph);
+    return d == nullptr ? 0 : static_cast<uint64_t>(d->graph.edge_count());
+}
+
+tc_status tc_graph_render_ansi(tc_graph_handle graph, const tc_plot_opts* opts, char* buf,
+                               std::uint64_t cap, std::uint64_t* out_len, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    std::string bytes;
+    const tc_status st = render_graph_bytes(*d, opts, bytes, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(bytes, buf, cap, out_len, err);
+}
+
+tc_status tc_graph_print(tc_graph_handle graph, const tc_plot_opts* opts, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    std::string bytes;
+    const tc_status st = render_graph_bytes(*d, opts, bytes, err);
+    if (st != TC_OK) return st;
+    const Status s = api::write_stdout(bytes);
+    if (!is_ok(s)) {
+        return fail(err, std::string("write_stdout failed (") + describe(s) + ")", TC_ERR_IO);
+    }
+    return TC_OK;
+}
+
+tc_status tc_graph_to_png(tc_graph_handle graph, const tc_plot_opts* opts, char* buf,
+                          std::uint64_t cap, std::uint64_t* out_len, tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    tc_status st = TC_OK;
+    const image::Bitmap bmp = graph_bitmap(*d, opts, err, &st);
+    if (st != TC_OK) return st;
+    const std::string png = image::encode(bmp, image::ImageFormat::Png);
+    if (png.empty()) return fail(err, "png encode failed", TC_ERR_RENDER);
+    return emit_bytes(png, buf, cap, out_len, err);
+}
+
+tc_status tc_graph_to_protocol(tc_graph_handle graph, tc_protocol_kind kind,
+                               const tc_plot_opts* opts, const tc_protocol_opts* proto_opts,
+                               char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                               tc_error_handle* err) {
+    GraphData* d = as_graph(graph);
+    if (d == nullptr) return fail(err, "null graph", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    tc_status st = TC_OK;
+    const image::Bitmap bmp = graph_bitmap(*d, opts, err, &st);
+    if (st != TC_OK) return st;
+    std::string bytes;
+    st = encode_protocol(bmp, kind, proto_opts, bytes, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(bytes, buf, cap, out_len, err);
+}
+
+}  // extern "C"
+
+// ── 文档：块序列 → 一次性导出 ───────────────────────────────────────────────
+
+namespace {
+
+struct DocData {
+    document::Document doc;
+};
+
+inline DocData* as_doc(tc_doc_handle h) noexcept {
+    return reinterpret_cast<DocData*>(h);
+}
+
+// 段落是 Span 序列；C 面只给纯文本，所以每条就是一个无样式 Span。
+inline std::vector<document::Span> spans_of(const char* text) {
+    std::vector<document::Span> spans;
+    spans.emplace_back(text == nullptr ? std::string{} : std::string(text));
+    return spans;
+}
+
+// 三种 format 全部走同一份实现：plain = Document 自带序列化，html / markdown = structured 后端。
+tc_status document_text(const document::Document& doc, const char* format, const char* title,
+                        const char* css_class, std::string& out, tc_error_handle* err) {
+    const std::string fmt = format == nullptr ? std::string{} : lower_ascii(format);
+    backend::structured::StructuredOptions so;
+    if (title != nullptr) so.title = title;
+    if (css_class != nullptr) so.css_class = css_class;
+
+    if (fmt == "plain" || fmt == "text") {
+        out = doc.to_plain_text();
+    } else if (fmt == "html") {
+        backend::structured::HtmlBackend b;
+        b.set_options(so);
+        out = backend::structured::render_structured(b, doc);
+    } else if (fmt == "markdown" || fmt == "md") {
+        backend::structured::MarkdownBackend b;
+        b.set_options(so);
+        out = backend::structured::render_structured(b, doc);
+    } else {
+        return fail(err, "unknown document format (expected html/markdown/plain)",
+                    TC_ERR_INVALID_ARG);
+    }
+    if (out.empty()) return fail(err, "document export produced no output", TC_ERR_RENDER);
+    return TC_OK;
+}
+
+}  // namespace
+
+extern "C" {
+
+tc_doc_handle tc_doc_create(tc_error_handle* err) {
+    DocData* d = new (std::nothrow) DocData();
+    if (d == nullptr) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    return reinterpret_cast<tc_doc_handle>(d);
+}
+
+void tc_doc_free(tc_doc_handle doc) { delete as_doc(doc); }
+
+tc_status tc_doc_add_heading(tc_doc_handle doc, const char* text, std::uint32_t level,
+                             tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    // Block::heading 的 level 语义是 1..6，越界由这里收口而不是让后端猜。
+    std::uint32_t lv = level;
+    if (lv < 1) lv = 1;
+    if (lv > 6) lv = 6;
+    d->doc.add_block(document::Block::heading(
+        text == nullptr ? std::string{} : std::string(text), static_cast<int>(lv)));
+    return TC_OK;
+}
+
+tc_status tc_doc_add_paragraph(tc_doc_handle doc, const char* text, tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    d->doc.add_block(document::Block::paragraph(spans_of(text)));
+    return TC_OK;
+}
+
+tc_status tc_doc_add_code(tc_doc_handle doc, const char* text, const char* language,
+                          tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    d->doc.add_block(document::Block::code(text == nullptr ? std::string{} : std::string(text),
+                                          language == nullptr ? std::string{} : std::string(language)));
+    return TC_OK;
+}
+
+tc_status tc_doc_add_table(tc_doc_handle doc, const char* const* header, std::uint64_t n_cols,
+                           const char* const* const* rows, std::uint64_t row_count,
+                           tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    if (n_cols == 0) return fail(err, "table needs at least one column", TC_ERR_INVALID_ARG);
+
+    document::TableModel model;
+    if (header != nullptr) {
+        std::vector<std::string> cols;
+        cols.reserve(static_cast<std::size_t>(n_cols));
+        for (std::uint64_t i = 0; i < n_cols; ++i) {
+            const char* cell = header[i];
+            cols.emplace_back(cell == nullptr ? std::string{} : std::string(cell));
+        }
+        model.set_header(std::move(cols));
+    }
+    if (rows != nullptr) {
+        for (std::uint64_t r = 0; r < row_count; ++r) {
+            const char* const* row = rows[r];
+            std::vector<std::string> cells;
+            cells.reserve(static_cast<std::size_t>(n_cols));
+            for (std::uint64_t c = 0; c < n_cols; ++c) {
+                const char* cell = (row == nullptr) ? nullptr : row[c];
+                cells.emplace_back(cell == nullptr ? std::string{} : std::string(cell));
+            }
+            model.add_row(std::move(cells));
+        }
+    }
+    d->doc.add_block(document::Block::table(std::move(model)));
+    return TC_OK;
+}
+
+tc_status tc_doc_add_chart(tc_doc_handle doc, tc_chart_handle chart, std::uint32_t width,
+                          std::uint32_t height, tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    if (chart == nullptr) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (!has_data(*c)) return fail(err, "empty chart data", TC_ERR_INVALID_ARG);
+
+    const std::uint32_t w = width != 0 ? width : 80;
+    const std::uint32_t h = height != 0 ? height : 24;
+
+    // 与 tc_chart_to_svg 完全同一条通路：同一份几何、同一份轴标签补绘。
+    chart::Chart& ch = apply_display(*c, nullptr);
+    auto sc = api::chart_to_scene(ch, w, h);
+    if (!sc.has_value()) {
+        return fail(err, std::string("chart_to_scene failed (") + describe(sc.error()) + ")",
+                    TC_ERR_UNSUPPORTED);
+    }
+    scene::Scene scene = std::move(sc.value());
+    decorate_scene_labels(scene, *c);
+    d->doc.add_block(document::Block::chart(std::move(scene)));
+    return TC_OK;
+}
+
+tc_status tc_doc_export(tc_doc_handle doc, const char* format, const char* title,
+                        const char* css_class, char* buf, std::uint64_t cap, std::uint64_t* out_len,
+                        tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    std::string text;
+    const tc_status st = document_text(d->doc, format, title, css_class, text, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(text, buf, cap, out_len, err);
+}
+
+tc_status tc_doc_save(tc_doc_handle doc, const char* path, const char* format, const char* title,
+                      const char* css_class, tc_error_handle* err) {
+    DocData* d = as_doc(doc);
+    if (d == nullptr) return fail(err, "null document", TC_ERR_INVALID_HANDLE);
+    if (path == nullptr || path[0] == '\0') return fail(err, "null path", TC_ERR_INVALID_ARG);
+    std::string text;
+    const tc_status st = document_text(d->doc, format, title, css_class, text, err);
+    if (st != TC_OK) return st;
+    std::FILE* fp = util::fopen_utf8(path, "wb");
+    if (fp == nullptr) return fail(err, "cannot open " + std::string(path), TC_ERR_IO);
+    const std::size_t written = std::fwrite(text.data(), 1, text.size(), fp);
+    std::fclose(fp);
+    if (written != text.size()) {
+        return fail(err, "short write to " + std::string(path), TC_ERR_IO);
+    }
+    return TC_OK;
+}
 
 }  // extern "C"
