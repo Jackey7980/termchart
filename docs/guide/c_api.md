@@ -3,7 +3,7 @@
 `termchart_capi` 是 termchart 的**稳定 C ABI 适配层**：用不透明句柄 + POD 结构体 + `tc_value`
 通用值载体，把 C++ 高层出图 API（`api::quick` 那一「一行出图」层）暴露给 C，再让语言绑定
 （Python 已落地，Rust/Java 规划中）包壳。它不抛 C++ 异常过边界、不跨 ABI 传 `std::string`、
-大对象导出走两段式缓冲——详见 [FFI / 语言桥方案](design/ffi_plan.md) §1。
+大对象导出走两段式缓冲——详见 [FFI / 语言桥方案](../design/ffi_plan.md) §1。
 
 设计约束决定了一条铁律：**C 头骨架与函数签名只增不改，新增配置项 = 加枚举值 + 一个 switch**，
 已编译的调用方与语言绑定不受影响。
