@@ -13,6 +13,44 @@ int bits_for(int value) {
     return n ? n : 1;
 }
 
+// dav1d_get_uniform 的逆：把 [0, max-1] 内的 value 写成 "l-1 位 + 可能的 1 位"。
+// 编码端必须与解码端的区间划分逐位对齐，否则帧头后续字段整体错位。
+void write_uniform(BitWriter& w, unsigned max, unsigned value) {
+    unsigned l = 1;
+    while ((1u << l) <= max) ++l;  // l = ulog2(max) + 1
+    const unsigned m = (1u << l) - max;
+    if (value < m) {
+        w.u(value, static_cast<int>(l - 1));
+        return;
+    }
+    w.u((value + m) >> 1, static_cast<int>(l - 1));
+    w.u((value + m) & 1u, 1);
+}
+
+// dav1d_get_bits_subexp 的逆（ref = 0 的情形）：把带符号整数 d 编码成
+// "P(sym) 分层前缀 + uniform 尾"的 2^(bits+1) 区间值。AV1 的 GMV 各分量都用它。
+void write_subexp(BitWriter& w, int d, int bits) {
+    const unsigned n = 2u << bits;
+    // 解码端返回 inv_recenter(1<<bits, v) - (1<<bits)：偶数 v 正向、奇数 v 反向。
+    const unsigned v = d >= 0 ? static_cast<unsigned>(2 * d)
+                              : static_cast<unsigned>(-2 * d - 1);
+    unsigned acc = 0;
+    for (int i = 0;; ++i) {
+        const unsigned b = i ? static_cast<unsigned>(3 + i - 1) : 3u;
+        if (n < acc + 3u * (1u << b)) {
+            write_uniform(w, n - acc + 1, v - acc);
+            return;
+        }
+        if (v < acc + (1u << b)) {
+            w.u(0, 1);
+            w.u(v - acc, static_cast<int>(b));
+            return;
+        }
+        w.u(1, 1);
+        acc += 1u << b;
+    }
+}
+
 }  // namespace
 
 std::string write_sequence_header(const SequenceHeaderConfig& cfg) {
@@ -118,13 +156,19 @@ std::string write_sequence_header_inter(const SequenceHeaderConfig& cfg) {
     w.u(0, 1);   // use_128x128_superblock
     w.u(1, 1);   // enable_filter_intra
     w.u(1, 1);   // enable_intra_edge_filter
-    w.u(0, 1);   // enable_interintra_compound
-    w.u(0, 1);   // enable_masked_compound
+    w.u(cfg.interintra ? 1 : 0, 1);   // enable_interintra_compound
+    w.u(cfg.masked_compound ? 1 : 0, 1);   // enable_masked_compound
     w.u(1, 1);   // enable_warped_motion
     w.u(0, 1);   // enable_dual_filter
-    w.u(0, 1);   // enable_order_hint（无需 POC 缩放）
+    w.u(cfg.order_hint ? 1 : 0, 1);   // enable_order_hint
+    if (cfg.order_hint) {
+        w.u(cfg.jnt_comp ? 1 : 0, 1);  // enable_jnt_comp
+        w.u(0, 1);                     // ref_frame_mvs
+    }
     w.u(1, 1);   // allow_screen_content_tools = ADAPTIVE
     w.u(1, 1);   // force_integer_mv = ADAPTIVE
+    if (cfg.order_hint)
+        w.u(static_cast<unsigned>(cfg.order_hint_bits - 1), 3);
     w.u(0, 1);   // enable_superres
     w.u(0, 1);   // enable_cdef
     w.u(0, 1);   // enable_restoration
@@ -148,27 +192,40 @@ std::string write_frame_header_inter(const FrameHeaderConfig& cfg) {
         w.u(1, 1);   // disable_cdf_update
         w.u(0, 1);   // allow_screen_content_tools
         w.u(0, 1);   // frame_size_override
+        if (cfg.order_hint)
+            w.u(static_cast<unsigned>(cfg.frame_offset), cfg.order_hint_bits);
         w.u(0, 1);   // have_render_size（read_frame_size 的必备字段）
         // allow_screen_content_tools = 0 ⇒ 不读 allow_intrabc
     } else {
         w.u(1, 2);   // frame_type = INTER_FRAME
         w.u(1, 1);   // show_frame
-        w.u(1, 1);   // error_resilient_mode：跳过 primary_ref/ref_mvs/warp 位
+        w.u(cfg.error_resilient ? 1 : 0, 1);   // error_resilient_mode
         w.u(1, 1);   // disable_cdf_update
         w.u(1, 1);   // allow_screen_content_tools
         w.u(0, 1);   // force_integer_mv = 0（允许亚像素）
         w.u(0, 1);   // frame_size_override = 0
-        // enable_order_hint = 0 ⇒ 无 frame_offset / short signaling
-        // error_resilient_mode ⇒ 无 primary_ref_frame
+        if (cfg.order_hint)
+            w.u(static_cast<unsigned>(cfg.frame_offset), cfg.order_hint_bits);
+        if (!cfg.error_resilient)
+            w.u(static_cast<unsigned>(cfg.primary_ref_frame & 7), 3);
         w.u(1, 8);   // refresh_frame_flags：刷新参考槽 0
+        if (cfg.order_hint && cfg.error_resilient) {
+            // 仅 error_resilient_mode=1 才写 8 个 ref_order_hint。
+            for (int i = 0; i < 8; ++i) w.u(0, cfg.order_hint_bits);
+        }
+        if (cfg.order_hint)
+            w.u(0, 1);   // frame_ref_short_signaling = 0
         for (int i = 0; i < 7; ++i) w.u(0, 3);  // ref_frame_idx[0..6] 全指向槽 0
         // frame_size_override = 0 / superres = 0 ⇒ read_frame_size 只读 1 bit
         w.u(0, 1);   // have_render_size
         w.u(1, 1);   // high_precision_mv
         w.u(0, 1);   // subpel_filter_mode 非 switchable
-        w.u(0, 2);   // FILTER_8TAP_REGULAR
-        w.u(0, 1);   // switchable_motion_mode
-        // order_hint = 0 ⇒ skip_mode 不可用；error_resilient ⇒ 无 warp_motion 位
+        w.u(static_cast<unsigned>(cfg.interp_filter & 3), 2);
+        // is_motion_mode_switchable：打开后每个有可重叠邻居的帧间块多读一个
+        // motion_mode 符号。error_resilient_mode=1 不写 warp 位，解码端只读
+        // 单符号 obmc 布尔，因此这里不需要额外的 warp 参数。
+        w.u(cfg.switchable_motion_mode ? 1 : 0, 1);
+        // order_hint = 0 ⇒ skip_mode 不可用
     }
     // disable_cdf_update = 1 ⇒ 无 refresh_frame_context
     w.u(1, 1);   // uniform_tile_spacing_flag（单 tile）
@@ -176,21 +233,65 @@ std::string write_frame_header_inter(const FrameHeaderConfig& cfg) {
     w.u(0, 1);   // delta_q_y_dc
     w.u(0, 1);   // delta_q_u_dc
     w.u(0, 1);   // delta_q_u_ac
-    w.u(0, 1);   // using_qmatrix
+    w.u(cfg.using_qmatrix ? 1 : 0, 1);
+    if (cfg.using_qmatrix) {
+        w.u(static_cast<unsigned>(cfg.qm_y & 15), 4);
+        w.u(static_cast<unsigned>(cfg.qm_u & 15), 4);
+    }
     w.u(0, 1);   // segmentation_enabled
     w.u(0, 1);   // delta_q_present
-    w.u(0, 6);   // loop_filter_level[0]
-    w.u(0, 6);   // loop_filter_level[1]（均为 0 ⇒ 不写 uv 两级）
-    w.u(0, 3);   // loop_filter_sharpness
-    w.u(1, 1);   // loop_filter_delta_enabled
-    w.u(0, 1);   // loop_filter_delta_update
+    w.u(static_cast<unsigned>(cfg.loop_filter_level_y & 63), 6);
+    w.u(static_cast<unsigned>(cfg.loop_filter_level_y & 63), 6);
+    // 非单色流中只要亮度/色度级别非零，就还要写 level_u / level_v 两级。
+    if (cfg.loop_filter_level_y || cfg.loop_filter_level_uv) {
+        w.u(static_cast<unsigned>(cfg.loop_filter_level_uv & 63), 6);
+        w.u(static_cast<unsigned>(cfg.loop_filter_level_uv & 63), 6);
+    }
+    w.u(static_cast<unsigned>(cfg.loop_filter_sharpness & 7), 3);
+    // 打开去块时关掉 mode/ref 增量，使每块的实际级别就等于帧头 level；
+    // 否则 INTRA/参考槽的默认 delta 会让像素级预期难以对齐。
+    const bool lf_delta_enabled =
+        !(cfg.loop_filter_level_y || cfg.loop_filter_level_uv);
+    w.u(lf_delta_enabled ? 1 : 0, 1);
+    if (lf_delta_enabled) w.u(0, 1);  // loop_filter_delta_update
     // enable_cdef / enable_restoration = 0 ⇒ 不写对应参数
     w.u(0, 1);   // tx_mode_select = 0（TX_MODE_LARGEST）
-    if (cfg.frame_type != 0) w.u(0, 1);  // switchable_comp_refs = 0（单向参考）
+    // switchable_comp_refs=0 ⇒ 每个帧间块都不读 is_compound，只能单向参考。
+    if (cfg.frame_type != 0) w.u(cfg.compound_refs ? 1 : 0, 1);
+    // warp_motion 位于 ext-skip 之后、reduced_tx_set 之前（不是紧跟 motion_mode 开关）。
+    if (!cfg.error_resilient && cfg.frame_type != 0)
+        w.u(cfg.warp_motion ? 1 : 0, 1);
     w.u(1, 1);   // reduced_tx_set
     if (cfg.frame_type != 0) {
-        // 7 个参考槽的全局运动全部为 IDENTITY；逐块 MV 走 NEWMV 残差语法。
-        for (int i = 0; i < 7; ++i) w.u(0, 1);
+        // 7 个参考槽的全局运动：槽 0（LAST，本流水线所有块都指向它）承载可配置的
+        // 全局平移，其余槽保持 IDENTITY。wmtype 编码为 1/2/3 位：
+        // 0 ⇒ IDENTITY、11 ⇒ ROT_ZOOM、101 ⇒ TRANSLATION、100 ⇒ AFFINE。
+        for (int i = 0; i < 7; ++i) {
+            const int type = i == 0 ? cfg.global_mv_type : 0;
+            if (type == 0) {
+                w.u(0, 1);  // IDENTITY
+                continue;
+            }
+            w.u(1, 1);  // is_global
+            if (type == 1) {
+                w.u(0b01, 2);  // is_rot_zoom=0, is_translation=1
+                // high_precision_mv=1：TRANSLATION 的参数单位 1/8 像素（9 位）。
+                write_subexp(w, cfg.global_mv_y, 9);
+                write_subexp(w, cfg.global_mv_x, 9);
+                continue;
+            }
+            // ROTZOOM (2) / AFFINE (3)：alpha,beta[,gamma,delta],y,x 全是 12 位 subexp。
+            w.u(type == 2 ? 1 : 0, 1);
+            if (type == 3) w.u(0, 1);  // is_translation=0
+            write_subexp(w, cfg.gm_alpha, 12);
+            write_subexp(w, cfg.gm_beta, 12);
+            if (type == 3) {
+                write_subexp(w, cfg.gm_gamma, 12);
+                write_subexp(w, cfg.gm_delta, 12);
+            }
+            write_subexp(w, cfg.gm_trans_y, 12);
+            write_subexp(w, cfg.gm_trans_x, 12);
+        }
     }
     return w.finish();
 }

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "termchart/image/bitmap.hpp"
 
@@ -20,6 +21,34 @@ struct Av1MinimalYuv {
 // 目前只接受 8x8 的 RGB/RGBA Bitmap；其它尺寸返回空串（fail-loud 由调用方处理）。
 // expected 非空时写入与编码器同一条反量化 / 反变换路径算出的期望像素。
 std::string encode_av1_minimal_ivf(const Bitmap& frame, Av1MinimalYuv* expected = nullptr);
+
+// 真实图像输入的帧内编码选项。lambda_div 越大越偏画质；rdo_mode / rdo_partition
+// 关掉可固定模式与划分，作为 RDO 效果的回归基线。
+struct Av1FrameEncodeOptions {
+    int base_q_idx = 100;
+    int lambda_div = 4;
+    bool rdo_mode = true;
+    bool rdo_partition = true;
+    // 当前公开的整帧入口默认只做预测选择：残差熵在多块纹理帧上
+    // 尚未逐像素闭合，不作为一致性承诺。
+    bool prediction_only = true;
+};
+
+// 解码端应得到的 YUV420 像素（已裁到源帧尺寸）。
+struct Av1FrameYuv {
+    std::vector<std::uint8_t> y;
+    std::vector<std::uint8_t> u;
+    std::vector<std::uint8_t> v;
+};
+
+// 真实 Bitmap → 4:2:0 → RDO 帧内编码 → 单帧 IVF。
+// 当前按完整 64x64 超级块铺帧，宽高必须是 64 的倍数且至少一维为 64；
+// 其它尺寸返回空串。expected 非空时写入编码器重建像素，供解码器逐像素对拍。
+// prediction_only=true（默认）只做预测选择，已与 libdav1d 逐像素对拍闭合；
+// false 开启残差写码，目前仍属实验路径。
+std::string encode_av1_ivf(const Bitmap& frame,
+                           const Av1FrameEncodeOptions& options = {},
+                           Av1FrameYuv* expected = nullptr);
 
 }  // namespace termchart::image
 

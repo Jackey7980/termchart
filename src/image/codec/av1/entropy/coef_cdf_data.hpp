@@ -107,12 +107,31 @@ inline constexpr std::uint16_t kDcSignLuma[3] = {
 inline constexpr std::uint16_t kTxBypassLuma8x8[1] = {
     811,
 };
+// 规范 Default_Txb_Skip_Cdf[qctx=2][TX_8X8][ctx]，已转成 write_bool 的
+// 「symbol=1（all_zero）概率」口径；ctx 由上方/左方 4x4 块的 res_ctx 推出。
+inline constexpr std::uint16_t kTxSkipLuma8x8[10] = {
+    811, 29538, 21615, 14645, 12625, 6232, 782, 29718, 18165, 7613,
+};
+// 亮度 skip 上下文：行取上方两个 4x4 的 level 和，列取左方两个，均截到 4。
+inline constexpr std::uint8_t kSkipCtxLuma[5][5] = {
+    {1, 2, 2, 2, 3},
+    {2, 4, 4, 4, 5},
+    {2, 4, 4, 4, 5},
+    {2, 4, 4, 4, 5},
+    {3, 5, 5, 5, 6},
+};
 inline constexpr std::uint16_t kTxBypassChroma4x4[1] = {
     28649,
 };
 // reduced_tx_set=1 ? txtp_intra2，4 符号均匀 CDF；DCT_DCT 的索引为 1。
 inline constexpr std::uint16_t kTxTypeIntra8x8Smooth[4] = {
     26214, 19661, 13107, 6554,
+};
+// 帧间 8x8 在 reduced_txp_set 下走 txtp_inter3[t_dim->min=1] 这条 2 符号路径
+// （符号 1 ? DCT_DCT，0 ? IDTX）。默认 CDF 给符号 0 的概率是 4167/32768，
+// 本仓 write_bool 的第二个参数是「符号 1 的概率」，故取 32768-4167。
+inline constexpr std::uint16_t kTxTypeInter8x8[1] = {
+    28601,
 };
 // base_q_idx=100 对应 libaom dc_qlookup_QTX/ac_qlookup_QTX 的 8-bit 值。
 inline constexpr std::uint16_t kDequant8[2] = {

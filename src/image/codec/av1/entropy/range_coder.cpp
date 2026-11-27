@@ -48,6 +48,9 @@ void RangeEncoder::write_cdf(const std::uint16_t* cdf, int n, int symbol) {
     if (symbol >= n) symbol = n - 1;
 
     const unsigned r = rng_;
+    // 解码端 remaining = n_symbols - val，而 n_symbols 是「符号数 - 1」，
+    // 所以传进来含表尾的符号数 n 必须先退 1；不退化会让每档多留 4 个
+    // 区间单位，段底相对整段位移，码点落在边界附近时解成相邻符号。
     const unsigned N = static_cast<unsigned>(n - 1);
     const unsigned r8 = r >> 8;
     // 与 dav1d 的解码循环完全对齐：第 i 档上界 u、下界 v，
@@ -71,6 +74,16 @@ std::string RangeEncoder::finish() {
     // 与 libaom od_ec_enc_done 完全一致：s = 10 + cnt 是还需要写出的位数，
     // e 的第 14 位置 1 作为终止位，剩余位全 0，正好满足 decodeframe.c 里
     // check_trailing_bits_after_symbol_coder 的「1 后全 0」校验。
+    //
+    // 取整必须按 2^15 粒度（掩码 0x7FFF）而不是 2^14：若按 0x3FFF 取整，
+    // low 的 bit14 恰好为 1 时 |0x4000 不产生抬升，e 会落到 low 之下最多
+    // 16383，码点掉出当前区间，解码端就会解成相邻符号（NEWMV 的 1 个 q3
+    // 偏差即由此而来）。2^15 粒度保证 e >= low，且终止位 14 不被污染。
+    // 收尾取整：rng >= 0x8000 保证 low 之上总有完整的 0x4000 对齐半区，
+    // 取 low + 0x3FFF、清掉低 14 位、再置 bit14 作终止位，得到
+    // e ∈ [low, low + 0x7FFF] ⊂ [low, low + rng)，且 e 低于 bit14 的位全 0。
+    // s = 10 + cnt 是剩余要写出的位数（含 1 位终止位），与解码端 refill 的
+    // cnt 起点 -15 配对。
     int c = cnt_;
     int s = 10 + c;
     const std::uint64_t m = 0x3FFF;

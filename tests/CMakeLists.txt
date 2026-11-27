@@ -120,6 +120,10 @@ add_executable(termchart_tests
     unit/image/test_av1_range_coder.cpp
     unit/image/test_av1_cdf.cpp
     unit/image/test_av1_intra_edge.cpp
+    unit/image/test_av1_transform.cpp
+    unit/image/test_av1_deblock.cpp
+    unit/image/test_av1_stage78.cpp
+    unit/image/test_av1_encoder.cpp
     unit/math3d/test_math3d.cpp
     unit/math4d/test_math4d.cpp
     unit/chart3d/test_chart3d.cpp

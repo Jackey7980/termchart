@@ -435,8 +435,9 @@ TEST_CASE("av1: 帧间 8 抽头插值与整像素拷贝") {
     for (int y = 0; y < 8; ++y)
         for (int x = 1; x < 8; ++x)
             CHECK(dst[y * 8 + x] == ref[y * 8 + x - 1]);
-    CHECK(av1::interp_filter_taps(av1::InterpFilter::Regular, 4)[3] == 76);
-    CHECK(av1::interp_filter_taps(av1::InterpFilter::Bilinear, 4)[3] == 64);
+    // 相位以 1/16 样点为单位：8 = 半样点。
+    CHECK(av1::interp_filter_taps(av1::InterpFilter::Regular, 8)[3] == 76);
+    CHECK(av1::interp_filter_taps(av1::InterpFilter::Bilinear, 8)[3] == 64);
     std::uint8_t a[4] = {10, 20, 30, 40}, b[4] = {20, 30, 40, 50}, out[4] = {};
     av1::inter_compound_average(a, b, out, 4);
     CHECK(out[0] == 15);
@@ -451,6 +452,63 @@ TEST_CASE("av1: 帧间 8 抽头插值与整像素拷贝") {
     const std::int32_t identity[6] = {0, 0, 65536, 0, 0, 65536};
     av1::warp_affine_predict(ref, 8, 8, 8, dst, 8, 0, 0, 8, 8, identity);
     for (int i = 0; i < 64; ++i) CHECK(dst[i] == ref[i]);
+}
+
+TEST_CASE("av1: 帧间亚像素取整模型（16 倍中间精度）") {
+    // 平坦参考：任何相位都应原样还原（插值滤波器增益为 1）。
+    std::uint8_t flat[64], dst[64];
+    for (auto& p : flat) p = 128;
+    for (int fy = 0; fy < 8; ++fy)
+        for (int fx = 0; fx < 8; ++fx) {
+            av1::inter_predict_block(flat, 8, 8, 8, dst, 8, 8, 8, fx, fy);
+            for (int i = 0; i < 64; ++i) CHECK(dst[i] == 128);
+        }
+    // 只有水平方向亚像素时，中间量保留 4 位小数：
+    // 结果必须等于 (Σ+4)>>3 之后再 (+8)>>4 的两级取整（与参考实现一致）。
+    std::uint8_t ref[64];
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            ref[y * 8 + x] = static_cast<std::uint8_t>(x * 20 + y * 7);
+    for (int f = 1; f < 8; ++f) {
+        av1::inter_predict_block(ref, 8, 8, 8, dst, 8, 8, 8, f, 0);
+        const std::int16_t* taps =
+            av1::interp_filter_taps(av1::InterpFilter::Regular, f * 2);
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 8; ++x) {
+                int sum = 0;
+                for (int t = 0; t < 8; ++t) {
+                    int sx = x - 3 + t;
+                    sx = sx < 0 ? 0 : (sx > 7 ? 7 : sx);
+                    sum += ref[y * 8 + sx] * taps[t];
+                }
+                const int mid = (sum + 4) >> 3;  // 4 位小数的中间量
+                CHECK(dst[y * 8 + x] == ((mid + 8) >> 4));
+            }
+    }
+    // 4:2:0 色度：整数偏移取亮度 MV >> 4，1/16 相位取低 4 位。
+    // mv=19 ⇒ 偏移 1 个色度样点 + 相位 3（亮度 19/8 像素 = 色度 9.5/8 样点）。
+    std::uint8_t cu[16], cv[16], out_u[16], out_v[16];
+    for (int i = 0; i < 16; ++i) {
+        cu[i] = static_cast<std::uint8_t>(i * 5 + 10);
+        cv[i] = static_cast<std::uint8_t>(255 - i * 5);
+    }
+    av1::inter_predict_chroma(cu, cv, 4, 4, 4, out_u, out_v, 4, 4, 4, 19, 0);
+    const std::int16_t* taps3 =
+        av1::interp_filter_taps(av1::InterpFilter::Regular, 3);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            for (const std::uint8_t* plane : {cu, cv}) {
+                int sum = 0;
+                for (int t = 0; t < 8; ++t) {
+                    int sx = x + 1 - 3 + t;
+                    sx = sx < 0 ? 0 : (sx > 3 ? 3 : sx);
+                    sum += plane[y * 4 + sx] * taps3[t];
+                }
+                const int expect = ((((sum + 4) >> 3)) + 8) >> 4;
+                const std::uint8_t got = (plane == cu ? out_u : out_v)[y * 4 + x];
+                CHECK(got == expect);
+            }
+        }
 }
 
 TEST_CASE("av1: 两帧 INTER 参考帧重建（零 MV）") {

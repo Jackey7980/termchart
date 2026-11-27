@@ -2,6 +2,9 @@
 #ifndef T_AV1_DEFAULT_CDF_HPP
 #define T_AV1_DEFAULT_CDF_HPP
 #include <cstdint>
+// 表成员的对齐占位宏：参考实现用它加 __attribute__((aligned(n))) 供 SIMD 批量
+// 更新 CDF；本仓只做标量更新，故直接把属性吃掉（第二参数仅作对齐意图标注）。
+// 注意它是通用名字，文件末尾必须 #undef，否则会泄漏到包含本头的 TU。
 #define ALIGN(x,y) x
 #define TERMCHART_AV1_MAX_SEGMENTS 8
 #define TERMCHART_AV1_N_SWITCHABLE_FILTERS 3
@@ -1016,4 +1019,7 @@ const CdfDefaultContext kDefaultCdf = {
 };
 
 }
+
+#undef ALIGN
+
 #endif

@@ -39,6 +39,10 @@ public:
 
     unsigned range() const noexcept { return rng_; }
 
+    // 调试用状态快照（不改语义）：low 的原始值与有效位计数。
+    std::uint64_t trace_low() const noexcept { return low_; }
+    int trace_cnt() const noexcept { return cnt_; }
+
 private:
     void normalize(std::uint64_t low, unsigned rng);
 
