@@ -38,6 +38,36 @@
     });
   }
 
+  const navToggle = document.getElementById("nav-toggle");
+  const sidebar = document.getElementById("sidebar");
+  const scrim = document.getElementById("nav-scrim");
+  const mobile = window.matchMedia("(max-width: 800px)");
+  const setNav = (open) => {
+    document.body.classList.toggle("nav-open", open);
+    document.body.style.overflow = open && mobile.matches ? "hidden" : "";
+    navToggle?.setAttribute("aria-expanded", String(open));
+    if (open && mobile.matches) {
+      if (filter) {
+        filter.value = "";
+        filter.dispatchEvent(new Event("input"));
+      }
+      document.querySelectorAll(".nav-group").forEach((group) => {
+        group.open = !!group.querySelector("a.active");
+      });
+    }
+  };
+  navToggle?.addEventListener("click", () => setNav(!document.body.classList.contains("nav-open")));
+  scrim?.addEventListener("click", () => setNav(false));
+  sidebar?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-nav]")) setNav(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setNav(false);
+  });
+  window.addEventListener("resize", () => {
+    if (!mobile.matches) setNav(false);
+  });
+
   document.addEventListener("click", (event) => {
     const button = event.target.closest(".copy-btn");
     if (!button) return;
