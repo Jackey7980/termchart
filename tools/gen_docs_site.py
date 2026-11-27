@@ -345,11 +345,15 @@ def page_html(title: str, body: str, toc: list[tuple[int, str, str]], page: str,
     prefix = relative_prefix(page)
     base_tag = f'<base href="{html.escape(base, quote=True)}">' if base else ""
     toc_html = ""
+    mobile_toc_html = ""
     if toc:
-        toc_html = '<aside class="toc"><div class="toc-title">本页目录</div><ul>' + "".join(
+        toc_items = "".join(
             f'<li class="toc-{level}"><a href="#{html.escape(anchor, quote=True)}">{html.escape(text)}</a></li>'
             for level, anchor, text in toc
-        ) + "</ul></aside>"
+        )
+        toc_html = f'<aside class="toc"><div class="toc-title">本页目录</div><ul>{toc_items}</ul></aside>'
+        mobile_toc_html = ('<details class="mobile-toc"><summary>本页目录 · 快速跳转</summary>'
+                           f'<ul>{toc_items}</ul></details>')
     index = ordered.index(page) if page in ordered else -1
     pager = []
     if index > 0:
@@ -372,15 +376,18 @@ def page_html(title: str, body: str, toc: list[tuple[int, str, str]], page: str,
 </head>
 <body>
 <header class="topbar">
+  <button id="nav-toggle" type="button" class="icon-btn nav-toggle" aria-label="打开文档导航" aria-expanded="false" aria-controls="sidebar">☰</button>
   <a class="brand" href="{prefix}index.html"><span class="brand-mark">▤</span> termchart <span class="brand-sub">文档</span></a>
   <div class="top-actions">
     <a href="https://github.com/Jackey7980/termchart" rel="noopener">GitHub ↗</a>
     <button id="theme-toggle" type="button" class="icon-btn" aria-label="切换主题">☾</button>
   </div>
 </header>
+<div class="nav-scrim" id="nav-scrim"></div>
 <div class="layout">
-  <div class="sidebar">{nav_html(pages, page, prefix)}</div>
+  <div class="sidebar" id="sidebar">{nav_html(pages, page, prefix)}</div>
   <main class="content">
+    {mobile_toc_html}
     <article class="markdown-body">{body}</article>
     {pager_html}
     <footer class="footer">由 <code>tools/gen_docs_site.py</code> 从 docs/ 生成 · <a href="https://github.com/Jackey7980/termchart">termchart</a></footer>
