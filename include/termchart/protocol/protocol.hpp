@@ -13,7 +13,7 @@
 #include <string>
 
 #include "termchart/export.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace termchart::protocol {
 

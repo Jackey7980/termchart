@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
-#include "termchart/image/webp_decode.hpp"
-#include "termchart/image/webp_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
+#include "termchart/media/image/webp_decode.hpp"
+#include "termchart/media/image/webp_encode.hpp"
 
 using namespace termchart;
 using namespace termchart::image;

@@ -12,12 +12,12 @@
 #include <string>
 #include <vector>
 
-#include "src/image/codec/hevc/cabac_context.hpp"
-#include "src/image/codec/hevc/intra_prediction.hpp"
-#include "src/image/codec/hevc/residual_coding.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
-#include "termchart/image/hevc_encode.hpp"
+#include "src/media/encoder/hevc/cabac_context.hpp"
+#include "src/media/encoder/hevc/intra_prediction.hpp"
+#include "src/media/encoder/hevc/residual_coding.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
 
 namespace {
 using namespace termchart::image;

@@ -39,9 +39,9 @@
 #include "termchart/core/point.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/decoder.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/decoder.hpp"
+#include "termchart/media/image/encode.hpp"
 #include "termchart/util/file.hpp"
 #include "termchart/version.hpp"
 
@@ -451,6 +451,26 @@ py::array_t<std::uint8_t> bitmap_to_numpy(const termchart::image::Bitmap& bmp);
 
 // ── 通用图表对象（全部图种，走 tc_chart_* 模型）──────────────────────────
 
+// ── 终端协议：与 C++ protocol:: 完全同一批编码器 ────────────────────────────
+
+tc_protocol_kind protocol_kind(const std::string& name) {
+    if (name.empty() || name == "auto") return TC_PROTO_AUTO;
+    if (name == "sixel") return TC_PROTO_SIXEL;
+    if (name == "kitty") return TC_PROTO_KITTY;
+    if (name == "iterm2") return TC_PROTO_ITERM2;
+    if (name == "halfblock") return TC_PROTO_HALFBLOCK;
+    throw std::runtime_error("termchart: unknown protocol '" + name +
+                             "' (auto / sixel / kitty / iterm2 / halfblock)");
+}
+
+tc_protocol_opts protocol_opts(std::uint32_t cell_width, std::uint32_t cell_height, bool rle) {
+    tc_protocol_opts po{};
+    po.cell_width = cell_width;
+    po.cell_height = cell_height;
+    po.rle = rle ? 1 : 0;
+    return po;
+}
+
 class PyChart {
 public:
     explicit PyChart(const std::string& kind) : kind_(kind) {
@@ -732,6 +752,26 @@ public:
                        std::optional<std::string> title, std::optional<bool> show_legend) {
         tc_plot_opts opts = plot_opts(width, height, title, show_legend, std::string{"truecolor"});
         return take_buffer(&tc_chart_to_png, opts, "to_png");
+    }
+
+    // 直接编码成终端协议字节流：栅格化与 PNG 完全同一条路（不另建渲染路径）。
+    py::bytes to_protocol(const std::string& kind, std::optional<std::uint32_t> width,
+                          std::optional<std::uint32_t> height,
+                          std::optional<std::string> title, std::optional<bool> show_legend,
+                          std::uint32_t cell_width, std::uint32_t cell_height, bool rle) {
+        tc_plot_opts opts = plot_opts(width, height, title, show_legend, std::string{"truecolor"});
+        const tc_protocol_kind pk = protocol_kind(kind);
+        const tc_protocol_opts po = protocol_opts(cell_width, cell_height, rle);
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_chart_to_protocol(alive(), pk, &opts, &po, nullptr, 0, &need, &err), err,
+                     "to_protocol");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_chart_to_protocol(alive(), pk, &opts, &po, buf.data(), buf.size(), &got,
+                                          &err),
+                     err, "to_protocol");
+        return py::bytes(buf.data(), static_cast<std::size_t>(got));
     }
 
     // 像素数组：复用 PNG 导出 → 零依赖 PNG 解码，避免与 SVG/PNG 走出两套栅格化。
@@ -1141,6 +1181,23 @@ public:
             err, "image save");
     }
 
+    // 位图直接编码成终端协议字节流（sixel / kitty / iterm2 / 半块），
+    // 与 C++ protocol:: 的四个编码器逐字节相同。
+    py::bytes to_protocol(const std::string& kind, std::uint32_t cell_width,
+                          std::uint32_t cell_height, bool rle) const {
+        const tc_protocol_kind pk = protocol_kind(kind);
+        const tc_protocol_opts po = protocol_opts(cell_width, cell_height, rle);
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_image_to_protocol(alive(), pk, &po, nullptr, 0, &need, &err), err,
+                     "image to_protocol");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_image_to_protocol(alive(), pk, &po, buf.data(), buf.size(), &got, &err),
+                     err, "image to_protocol");
+        return py::bytes(buf.data(), static_cast<std::size_t>(got));
+    }
+
 private:
     [[nodiscard]] tc_image_handle alive() const {
         if (handle_ == nullptr) {
@@ -1175,34 +1232,6 @@ private:
         return need;
     }
 
-    std::uint64_t encode_size(const std::string& format, std::uint8_t quality) const {
-        std::uint64_t need = 0;
-        tc_error_handle err = nullptr;
-        const tc_status probe =
-            tc_image_encode(alive(), format.c_str(), quality, nullptr, 0, &need, &err);
-        if (probe != TC_ERR_BUFFER_TOO_SMALL) {
-            throw std::runtime_error("termchart: image encode failed: " + take_error(err));
-        }
-        return need;
-    }
-
-    // 位图直接编码成终端协议字节流（sixel / kitty / iterm2 / 半块），
-    // 与 C++ protocol:: 的四个编码器逐字节相同。
-    py::bytes to_protocol(const std::string& kind, std::uint32_t cell_width,
-                          std::uint32_t cell_height, bool rle) const {
-        const tc_protocol_kind pk = protocol_kind(kind);
-        const tc_protocol_opts po = protocol_opts(cell_width, cell_height, rle);
-        uint64_t need = 0;
-        tc_error_handle err = nullptr;
-        check_status(tc_image_to_protocol(alive(), pk, &po, nullptr, 0, &need, &err), err,
-                     "image to_protocol");
-        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
-        uint64_t got = 0;
-        check_status(tc_image_to_protocol(alive(), pk, &po, buf.data(), buf.size(), &got, &err),
-                     err, "image to_protocol");
-        return py::bytes(buf.data(), static_cast<std::size_t>(got));
-    }
-
     tc_image_handle handle_ = nullptr;
 };
 
@@ -1224,8 +1253,31 @@ tc_graph_prop graph_prop_id(const std::string& prop) {
                              "min_width / min_height / h_gap / v_gap / mark_cycles)");
 }
 
-// 把 Python 值包成 tc_value：数值走 INT/DOUBLE，布尔走 BOOL，None = 清除。
-tc_value graph_value(py::object value) {
+// shape / route 允许用名字（与 ctypes 绑定同一套拼写），值对齐
+// graph::ShapeKind / graph::RouteStyle。
+int graph_shape_of(const std::string& name) {
+    static const std::vector<std::pair<const char*, int>> table = {
+        {"box", 0},      {"rounded", 1}, {"diamond", 2}, {"ellipse", 3},
+        {"stadium", 4},  {"hexagon", 5}, {"cylinder", 6}, {"icon", 7},
+    };
+    for (const auto& [key, code] : table) {
+        if (name == key) return code;
+    }
+    throw std::runtime_error("termchart: unknown shape '" + name +
+                             "' (box / rounded / diamond / ellipse / stadium / hexagon / "
+                             "cylinder / icon)");
+}
+
+int graph_route_of(const std::string& name) {
+    if (name == "straight") return 0;
+    if (name == "orthogonal") return 1;
+    throw std::runtime_error("termchart: unknown route '" + name +
+                             "' (straight / orthogonal)");
+}
+
+// 把 Python 值包成 tc_value：数值走 INT/DOUBLE，布尔走 BOOL，None = 清除；
+// shape / route 额外接受字符串名。
+tc_value graph_value(const std::string& prop, py::object value) {
     tc_value v{};
     if (value.is_none()) {
         v.kind = TC_VAL_NONE;
@@ -1246,10 +1298,23 @@ tc_value graph_value(py::object value) {
         v.d = py::cast<double>(value);
         return v;
     }
-    v.kind = TC_VAL_STRING;
-    v.s = nullptr;  // 字符串属性不走 graph 通道（属性袋走 set_node_attr）
+    if (py::isinstance<py::str>(value)) {
+        const std::string name = py::cast<std::string>(value);
+        if (prop == "shape") {
+            v.kind = TC_VAL_INT;
+            v.i = graph_shape_of(name);
+            return v;
+        }
+        if (prop == "route") {
+            v.kind = TC_VAL_INT;
+            v.i = graph_route_of(name);
+            return v;
+        }
+        throw std::runtime_error("termchart: graph property '" + prop +
+                                 "' does not accept string values");
+    }
     throw std::runtime_error(
-        "termchart: graph property accepts int / float / bool / None only");
+        "termchart: graph property accepts int / float / bool / string / None only");
 }
 
 tc_style rgb_style(py::object rgb, bool* ok) {
@@ -1335,7 +1400,7 @@ public:
     }
 
     void set_prop(const std::string& prop, py::object value) const {
-        tc_value v = graph_value(std::move(value));
+        tc_value v = graph_value(prop, std::move(value));
         tc_error_handle err = nullptr;
         check_status(tc_graph_set_prop(alive(), graph_prop_id(prop), &v, &err), err,
                      ("set_prop(" + prop + ")").c_str());
@@ -1475,8 +1540,8 @@ public:
         std::vector<std::vector<const char*>> cell_ptrs;
         std::vector<const char* const*> row_ptrs;
         if (!rows.is_none()) {
-            for (auto row : py::iter(rows)) {
-                cell_strings.push_back(strings_of(row));
+            for (py::handle row : py::iter(rows)) {
+                cell_strings.push_back(strings_of(py::reinterpret_borrow<py::object>(row)));
                 cell_ptrs.push_back(c_strings(cell_strings.back()));
             }
             row_ptrs.reserve(cell_ptrs.size());
@@ -1612,6 +1677,10 @@ PYBIND11_MODULE(termchart, m) {
             return py::bytes(const_cast<PyChart&>(chart).to_png(width, height, title, show_legend));
         }, py::arg("width") = py::none(), py::arg("height") = py::none(),
            py::arg("title") = py::none(), py::arg("show_legend") = py::none())
+        .def("to_protocol", &PyChart::to_protocol, py::arg("kind") = std::string{"auto"},
+             py::arg("width") = py::none(), py::arg("height") = py::none(),
+             py::arg("title") = py::none(), py::arg("show_legend") = py::none(),
+             py::arg("cell_width") = 10u, py::arg("cell_height") = 20u, py::arg("rle") = true)
         .def("pixels", &PyChart::pixels, py::arg("width") = py::none(),
              py::arg("height") = py::none(), py::arg("title") = py::none(),
              py::arg("show_legend") = py::none())
@@ -1721,12 +1790,86 @@ PYBIND11_MODULE(termchart, m) {
              py::arg("quality") = 85)
         .def("save", &PyBitmap::save, py::arg("path"), py::arg("format") = std::string{},
              py::arg("quality") = 85)
+        .def("to_protocol", &PyBitmap::to_protocol, py::arg("kind") = std::string{"auto"},
+             py::arg("cell_width") = 10u, py::arg("cell_height") = 20u, py::arg("rle") = true,
+             "Encode the bitmap as a terminal inline-image byte stream\n"
+             "(sixel / kitty / iterm2 / halfblock); 'auto' uses the same detection\n"
+             "chain as the C++ library.")
         .def("__repr__", [](const PyBitmap& b) {
             return "<termchart.image.Bitmap " + std::to_string(b.width()) + "x" +
                    std::to_string(b.height()) + " ch=" + std::to_string(b.channels()) + ">";
         });
     img.def("load", &PyBitmap::load, py::arg("path"), "Decode an image file.");
     img.def("decode", &PyBitmap::decode, py::arg("data"), "Decode image bytes.");
+
+    // ── 关系图 ──────────────────────────────────────────────────────────────
+    m.def("detect_protocol", []() {
+        uint64_t need = 0;
+        tc_error_handle err = nullptr;
+        check_status(tc_protocol_detect(nullptr, 0, &need, &err), err, "detect_protocol");
+        std::vector<char> buf(static_cast<std::size_t>(need) + 1, '\0');
+        uint64_t got = 0;
+        check_status(tc_protocol_detect(buf.data(), buf.size(), &got, &err), err,
+                     "detect_protocol");
+        return std::string(buf.data(), static_cast<std::size_t>(got));
+    }, "Best terminal image protocol for this environment (sixel/kitty/iterm2/halfblock/none).");
+
+    py::class_<PyGraph>(m, "Graph")
+        .def(py::init<const std::string&>(), py::arg("kind") = std::string{"flowchart"})
+        .def_static("from_text", &PyGraph::from_text, py::arg("text"),
+                    py::arg("format") = std::string{}, py::arg("kind") = std::string{"flowchart"})
+        .def("add_node", &PyGraph::add_node, py::arg("label") = std::string{})
+        .def("add_edge", &PyGraph::add_edge, py::arg("from"), py::arg("to"),
+             py::arg("label") = std::string{})
+        .def("set_node_attr", &PyGraph::set_node_attr, py::arg("node"), py::arg("key"),
+             py::arg("value"))
+        .def("set_edge_attr", &PyGraph::set_edge_attr, py::arg("from"), py::arg("to"),
+             py::arg("key"), py::arg("value"))
+        .def("set_prop", &PyGraph::set_prop, py::arg("prop"), py::arg("value"))
+        .def("set_style", &PyGraph::set_style, py::arg("node_color") = py::none(),
+             py::arg("edge_color") = py::none())
+        .def_property_readonly("node_count", &PyGraph::node_count)
+        .def_property_readonly("edge_count", &PyGraph::edge_count)
+        .def("ansi", &PyGraph::ansi, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("depth") = std::string{"truecolor"})
+        .def("print", &PyGraph::print, py::arg("width") = py::none(),
+             py::arg("height") = py::none(), py::arg("depth") = std::string{"truecolor"})
+        .def("to_png", [](const PyGraph& g, std::optional<std::uint32_t> width,
+                          std::optional<std::uint32_t> height) {
+            return py::bytes(const_cast<PyGraph&>(g).to_png(width, height));
+        }, py::arg("width") = py::none(), py::arg("height") = py::none())
+        .def("to_protocol", [](const PyGraph& g, const std::string& kind,
+                               std::optional<std::uint32_t> width,
+                               std::optional<std::uint32_t> height, std::uint32_t cell_width,
+                               std::uint32_t cell_height, bool rle) {
+            return py::bytes(const_cast<PyGraph&>(g).to_protocol(kind, width, height, cell_width,
+                                                                 cell_height, rle));
+        }, py::arg("kind") = std::string{"auto"}, py::arg("width") = py::none(),
+           py::arg("height") = py::none(), py::arg("cell_width") = 10u,
+           py::arg("cell_height") = 20u, py::arg("rle") = true)
+        .def("__repr__", [](const PyGraph& g) {
+            return "<termchart.Graph nodes=" + std::to_string(g.node_count()) +
+                   " edges=" + std::to_string(g.edge_count()) + ">";
+        });
+
+    m.def("graph_from_text", &PyGraph::from_text, py::arg("text"),
+          py::arg("format") = std::string{}, py::arg("kind") = std::string{"flowchart"},
+          "Parse mermaid/dot text into a Graph.");
+
+    // ── 文档 ────────────────────────────────────────────────────────────────
+    py::class_<PyDoc>(m, "Document")
+        .def(py::init<>())
+        .def("add_heading", &PyDoc::add_heading, py::arg("text"), py::arg("level") = 1u)
+        .def("add_paragraph", &PyDoc::add_paragraph, py::arg("text"))
+        .def("add_code", &PyDoc::add_code, py::arg("text"), py::arg("language") = std::string{})
+        .def("add_table", &PyDoc::add_table, py::arg("header") = py::none(),
+             py::arg("rows") = py::none())
+        .def("add_chart", &PyDoc::add_chart, py::arg("chart"), py::arg("width") = 80u,
+             py::arg("height") = 24u)
+        .def("export", &PyDoc::export_text, py::arg("format") = std::string{"html"},
+             py::arg("title") = std::string{}, py::arg("css_class") = std::string{})
+        .def("save", &PyDoc::save, py::arg("path"), py::arg("format") = std::string{"html"},
+             py::arg("title") = std::string{}, py::arg("css_class") = std::string{});
 
 #ifdef TERMCHART_HAVE_QT
     m.def("show_qt", [](py::object x, py::object y, const std::string& title, std::uint32_t width,

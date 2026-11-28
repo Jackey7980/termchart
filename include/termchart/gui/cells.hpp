@@ -22,7 +22,7 @@
 
 #include "termchart/core/rgb.hpp"
 #include "termchart/export.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace termchart {
 

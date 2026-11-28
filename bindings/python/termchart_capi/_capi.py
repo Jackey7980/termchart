@@ -35,8 +35,99 @@ TC_PROP_SHADE_NEGATIVE = 5
 TC_PROP_X_TICKS = 6
 TC_PROP_X_LABEL = 7
 TC_PROP_Y_LABEL = 8
+TC_CELL_EMPTY = 0
+TC_CELL_NUMERIC = 1
+TC_CELL_TEXT = 2
+TC_CELL_INVALID = 3
+TC_CELL_FLAG_NONE = 0
+TC_CELL_FLAG_HAS_COMMA = 1
+TC_CELL_FLAG_ACCOUNTING_NEGATIVE = 2
+TC_CELL_FLAG_PERCENT = 4
+TC_CELL_FLAG_FULL_WIDTH = 8
+TC_CELL_FLAG_CURRENCY = 16
+TC_CELL_FLAG_MISSING = 32
+TC_CELL_FLAG_RAGGED = 64
+TC_CELL_FLAG_UNPARSED = 128
 TC_QUICK_LINE = 0
 TC_QUICK_SCATTER = 1
+TC_PROTO_AUTO = 0
+TC_PROTO_SIXEL = 1
+TC_PROTO_KITTY = 2
+TC_PROTO_ITERM2 = 3
+TC_PROTO_HALFBLOCK = 4
+TC_SHAPE_BOX = 0
+TC_SHAPE_ROUNDED = 1
+TC_SHAPE_DIAMOND = 2
+TC_SHAPE_ELLIPSE = 3
+TC_SHAPE_STADIUM = 4
+TC_SHAPE_HEXAGON = 5
+TC_SHAPE_CYLINDER = 6
+TC_SHAPE_ICON = 7
+TC_ROUTE_STRAIGHT = 0
+TC_ROUTE_ORTHOGONAL = 1
+TC_GRAPH_PROP_SHAPE = 1
+TC_GRAPH_PROP_ROUTE = 2
+TC_GRAPH_PROP_EDGE_LABELS = 3
+TC_GRAPH_PROP_ARROWS = 4
+TC_GRAPH_PROP_NODE_BORDER = 5
+TC_GRAPH_PROP_MIN_WIDTH = 6
+TC_GRAPH_PROP_MIN_HEIGHT = 7
+TC_GRAPH_PROP_H_GAP = 8
+TC_GRAPH_PROP_V_GAP = 9
+TC_GRAPH_PROP_MARK_CYCLES = 10
+TC_OUT_ANSI = 0
+TC_OUT_TEXT = 1
+TC_OUT_HTML_PRE = 2
+TC_OUT_JSON = 3
+TC_OUT_PNG = 4
+TC_OUT_SVG = 5
+TC_OUT_PROTOCOL = 6
+TC_OUT_PDF = 7
+TC_OUT_EPS = 8
+TC_OUT_LATEX = 9
+TC_EVENT_KEY = 0
+TC_EVENT_MOUSE = 1
+TC_EVENT_RESIZE = 2
+TC_EVENT_FOCUS = 3
+TC_EVENT_PASTE = 4
+TC_EVENT_UNKNOWN = 5
+TC_KEY_UNKNOWN = 0
+TC_KEY_CHAR = 1
+TC_KEY_ENTER = 2
+TC_KEY_TAB = 3
+TC_KEY_BACKSPACE = 4
+TC_KEY_ESCAPE = 5
+TC_KEY_UP = 6
+TC_KEY_DOWN = 7
+TC_KEY_LEFT = 8
+TC_KEY_RIGHT = 9
+TC_KEY_HOME = 10
+TC_KEY_END = 11
+TC_KEY_PAGE_UP = 12
+TC_KEY_PAGE_DOWN = 13
+TC_KEY_INSERT = 14
+TC_KEY_DELETE = 15
+TC_KEY_F1 = 16
+TC_KEY_F2 = 17
+TC_KEY_F3 = 18
+TC_KEY_F4 = 19
+TC_KEY_F5 = 20
+TC_KEY_F6 = 21
+TC_KEY_F7 = 22
+TC_KEY_F8 = 23
+TC_KEY_F9 = 24
+TC_KEY_F10 = 25
+TC_KEY_F11 = 26
+TC_KEY_F12 = 27
+TC_MOUSE_NONE = 0
+TC_MOUSE_LEFT = 1
+TC_MOUSE_MIDDLE = 2
+TC_MOUSE_RIGHT = 3
+TC_MOUSE_MOVE = 0
+TC_MOUSE_PRESS = 1
+TC_MOUSE_RELEASE = 2
+TC_MOUSE_SCROLL_UP = 3
+TC_MOUSE_SCROLL_DOWN = 4
 
 # ── 结构体（POD）──────────────────────────────────────────
 class PlotOpts(ctypes.Structure):
@@ -56,6 +147,30 @@ class Value(ctypes.Structure):
 
 class Series(ctypes.Structure):
     _fields_ = [("name", ctypes.c_char_p), ("color", Color), ("x", ctypes.POINTER(ctypes.c_double)), ("y", ctypes.POINTER(ctypes.c_double)), ("n", ctypes.c_uint64)]
+
+class DataCsvOpts(ctypes.Structure):
+    _fields_ = [("delimiter", ctypes.c_uint8), ("has_header", ctypes.c_uint8), ("comment", ctypes.c_uint8)]
+
+class ProtocolOpts(ctypes.Structure):
+    _fields_ = [("cell_width", ctypes.c_uint32), ("cell_height", ctypes.c_uint32), ("rle", ctypes.c_uint8), ("reserved", ctypes.c_uint8)]
+
+class TermOpts(ctypes.Structure):
+    _fields_ = [("raw_mode", ctypes.c_uint8), ("alt_screen", ctypes.c_uint8), ("hide_cursor", ctypes.c_uint8), ("mouse", ctypes.c_uint8), ("reserved", ctypes.c_void_p)]
+
+class TermSize(ctypes.Structure):
+    _fields_ = [("cols", ctypes.c_uint16), ("rows", ctypes.c_uint16)]
+
+class TermCaps(ctypes.Structure):
+    _fields_ = [("unicode", ctypes.c_uint8), ("color_depth", ctypes.c_uint8), ("mouse", ctypes.c_uint8), ("alt_screen", ctypes.c_uint8), ("title_setting", ctypes.c_uint8), ("reserved", ctypes.c_void_p)]
+
+class OutputOpts(ctypes.Structure):
+    _fields_ = [("format", ctypes.c_uint8), ("color_depth", ctypes.c_uint8), ("protocol", ctypes.c_uint8), ("reserved", ctypes.c_uint8), ("width", ctypes.c_uint32), ("height", ctypes.c_uint32), ("cell_width", ctypes.c_uint32), ("cell_height", ctypes.c_uint32)]
+
+class Event(ctypes.Structure):
+    _fields_ = [("kind", ctypes.c_uint8), ("key", ctypes.c_uint8), ("button", ctypes.c_uint8), ("action", ctypes.c_uint8), ("mods", ctypes.c_uint8), ("focused", ctypes.c_uint8), ("reserved", ctypes.c_void_p), ("codepoint", ctypes.c_uint32), ("x", ctypes.c_int32), ("y", ctypes.c_int32), ("cols", ctypes.c_int32), ("rows", ctypes.c_int32), ("text", ctypes.c_char_p), ("text_len", ctypes.c_uint64)]
+
+class Span(ctypes.Structure):
+    _fields_ = [("text", ctypes.c_char_p), ("style", Style)]
 
 # ── 加载共享库 ─────────────────────────────────────────────
 _LIB = None
@@ -91,7 +206,7 @@ def _load(path=None):
 
 
 def _bind(lib):
-    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_scalar, tc_chart_set_tree, tc_chart_set_text, tc_chart_set_regions, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_quick_xy, tc_quick_bar, tc_image_create, tc_image_decode, tc_image_load, tc_image_free, tc_image_width, tc_image_height, tc_image_channels, tc_image_pixels, tc_image_scaled, tc_image_with_alpha, tc_image_without_alpha, tc_image_fill, tc_image_fill_rect, tc_image_blit_over, tc_image_encode, tc_image_save, tc_free_string, tc_error_message, tc_error_free
+    global tc_version_string, tc_api_opts_default, tc_style_default, tc_init, tc_core_initialized, tc_render_line, tc_print_line, tc_hello, tc_chart_create, tc_chart_kinds, tc_chart_free, tc_chart_add_points, tc_chart_add_bar, tc_chart_set_values, tc_chart_render_ansi, tc_chart_print, tc_chart_add_series, tc_chart_set_matrix, tc_chart_set_scalar, tc_chart_set_tree, tc_chart_set_text, tc_chart_set_regions, tc_chart_set_prop, tc_chart_to_svg, tc_chart_to_png, tc_write_stdout, tc_write_stderr, tc_flush_stdout, tc_auto_plot, tc_data_parse_csv, tc_data_free, tc_data_row_count, tc_data_col_count, tc_data_header, tc_data_cell_raw, tc_data_cell_number, tc_data_cell_info, tc_auto_plot_text, tc_quick_xy, tc_quick_bar, tc_image_create, tc_image_decode, tc_image_load, tc_image_free, tc_image_width, tc_image_height, tc_image_channels, tc_image_pixels, tc_image_scaled, tc_image_with_alpha, tc_image_without_alpha, tc_image_fill, tc_image_fill_rect, tc_image_blit_over, tc_image_encode, tc_image_save, tc_image_to_protocol, tc_protocol_detect, tc_chart_to_protocol, tc_graph_create, tc_graph_from_text, tc_graph_free, tc_graph_add_node, tc_graph_add_edge, tc_graph_set_node_attr, tc_graph_set_edge_attr, tc_graph_set_prop, tc_graph_set_style, tc_graph_node_count, tc_graph_edge_count, tc_graph_render_ansi, tc_graph_print, tc_graph_to_png, tc_graph_to_protocol, tc_doc_create, tc_doc_free, tc_doc_add_heading, tc_doc_add_paragraph, tc_doc_add_code, tc_doc_add_table, tc_doc_add_chart, tc_doc_export, tc_doc_save, tc_term_opts_default, tc_term_create, tc_term_free, tc_term_size_query, tc_term_size_from_env, tc_term_caps_detect, tc_term_stdout_is_tty, tc_term_stdin_is_tty, tc_term_clipboard_set, tc_term_clipboard_set_primary, tc_term_hyperlink, tc_term_hyperlink_close, tc_term_mouse, tc_canvas_create, tc_canvas_free, tc_canvas_resize, tc_canvas_width, tc_canvas_height, tc_canvas_clear, tc_canvas_put, tc_canvas_text, tc_canvas_line, tc_canvas_fill_rect, tc_output_opts_default, tc_canvas_render, tc_renderer_create, tc_renderer_free, tc_renderer_reset, tc_renderer_frame, tc_input_create, tc_input_free, tc_input_reset, tc_input_feed, tc_regions_create, tc_regions_free, tc_regions_clear, tc_regions_count, tc_regions_add_rect, tc_regions_add_circle, tc_regions_add_polygon, tc_regions_hit, tc_chart_export, tc_chart_to_image, tc_seq_from_text, tc_seq_free, tc_seq_participant_count, tc_seq_message_count, tc_seq_render, tc_image_encode_frames, tc_doc_add_rich_paragraph, tc_scene3d_create, tc_scene3d_free, tc_scene3d_set_points, tc_scene3d_set_grid, tc_scene3d_set_edges, tc_scene3d_set_view, tc_scene3d_set_range, tc_scene3d_set_rotation4d, tc_scene3d_render, tc_free_string, tc_error_message, tc_error_free
     f = lib.tc_version_string
     f.restype = ctypes.c_char_p
     f.argtypes = []
@@ -237,6 +352,51 @@ def _bind(lib):
     f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
     tc_auto_plot = f
 
+    f = lib.tc_data_parse_csv
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p]
+    tc_data_parse_csv = f
+
+    f = lib.tc_data_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_data_free = f
+
+    f = lib.tc_data_row_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_data_row_count = f
+
+    f = lib.tc_data_col_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_data_col_count = f
+
+    f = lib.tc_data_header
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_data_header = f
+
+    f = lib.tc_data_cell_raw
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_data_cell_raw = f
+
+    f = lib.tc_data_cell_number
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_double), ctypes.c_void_p]
+    tc_data_cell_number = f
+
+    f = lib.tc_data_cell_info
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    tc_data_cell_info = f
+
+    f = lib.tc_auto_plot_text
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_auto_plot_text = f
+
     f = lib.tc_quick_xy
     f.restype = ctypes.c_int
     f.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.c_uint64, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
@@ -327,6 +487,436 @@ def _bind(lib):
     f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_void_p]
     tc_image_save = f
 
+    f = lib.tc_image_to_protocol
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_image_to_protocol = f
+
+    f = lib.tc_protocol_detect
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_protocol_detect = f
+
+    f = lib.tc_chart_to_protocol
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_chart_to_protocol = f
+
+    f = lib.tc_graph_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_graph_create = f
+
+    f = lib.tc_graph_from_text
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_graph_from_text = f
+
+    f = lib.tc_graph_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_graph_free = f
+
+    f = lib.tc_graph_add_node
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    tc_graph_add_node = f
+
+    f = lib.tc_graph_add_edge
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_void_p]
+    tc_graph_add_edge = f
+
+    f = lib.tc_graph_set_node_attr
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_graph_set_node_attr = f
+
+    f = lib.tc_graph_set_edge_attr
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_graph_set_edge_attr = f
+
+    f = lib.tc_graph_set_prop
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_set_prop = f
+
+    f = lib.tc_graph_set_style
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_set_style = f
+
+    f = lib.tc_graph_node_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_graph_node_count = f
+
+    f = lib.tc_graph_edge_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_graph_edge_count = f
+
+    f = lib.tc_graph_render_ansi
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_render_ansi = f
+
+    f = lib.tc_graph_print
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_print = f
+
+    f = lib.tc_graph_to_png
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_to_png = f
+
+    f = lib.tc_graph_to_protocol
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_graph_to_protocol = f
+
+    f = lib.tc_doc_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p]
+    tc_doc_create = f
+
+    f = lib.tc_doc_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_doc_free = f
+
+    f = lib.tc_doc_add_heading
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_void_p]
+    tc_doc_add_heading = f
+
+    f = lib.tc_doc_add_paragraph
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_doc_add_paragraph = f
+
+    f = lib.tc_doc_add_code
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_doc_add_code = f
+
+    f = lib.tc_doc_add_table
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(ctypes.c_char_p)), ctypes.c_uint64, ctypes.c_void_p]
+    tc_doc_add_table = f
+
+    f = lib.tc_doc_add_chart
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_doc_add_chart = f
+
+    f = lib.tc_doc_export
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_doc_export = f
+
+    f = lib.tc_doc_save
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_doc_save = f
+
+    f = lib.tc_term_opts_default
+    f.restype = TermOpts
+    f.argtypes = []
+    tc_term_opts_default = f
+
+    f = lib.tc_term_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    tc_term_create = f
+
+    f = lib.tc_term_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_term_free = f
+
+    f = lib.tc_term_size_query
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    tc_term_size_query = f
+
+    f = lib.tc_term_size_from_env
+    f.restype = TermSize
+    f.argtypes = []
+    tc_term_size_from_env = f
+
+    f = lib.tc_term_caps_detect
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint8]
+    tc_term_caps_detect = f
+
+    f = lib.tc_term_stdout_is_tty
+    f.restype = ctypes.c_uint8
+    f.argtypes = []
+    tc_term_stdout_is_tty = f
+
+    f = lib.tc_term_stdin_is_tty
+    f.restype = ctypes.c_uint8
+    f.argtypes = []
+    tc_term_stdin_is_tty = f
+
+    f = lib.tc_term_clipboard_set
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_term_clipboard_set = f
+
+    f = lib.tc_term_clipboard_set_primary
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_term_clipboard_set_primary = f
+
+    f = lib.tc_term_hyperlink
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+    tc_term_hyperlink = f
+
+    f = lib.tc_term_hyperlink_close
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p]
+    tc_term_hyperlink_close = f
+
+    f = lib.tc_term_mouse
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_uint8, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_void_p]
+    tc_term_mouse = f
+
+    f = lib.tc_canvas_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_canvas_create = f
+
+    f = lib.tc_canvas_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_canvas_free = f
+
+    f = lib.tc_canvas_resize
+    f.restype = ctypes.c_int32
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+    tc_canvas_resize = f
+
+    f = lib.tc_canvas_width
+    f.restype = ctypes.c_uint32
+    f.argtypes = [ctypes.c_void_p]
+    tc_canvas_width = f
+
+    f = lib.tc_canvas_height
+    f.restype = ctypes.c_uint32
+    f.argtypes = [ctypes.c_void_p]
+    tc_canvas_height = f
+
+    f = lib.tc_canvas_clear
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_canvas_clear = f
+
+    f = lib.tc_canvas_put
+    f.restype = ctypes.c_uint8
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_canvas_put = f
+
+    f = lib.tc_canvas_text
+    f.restype = ctypes.c_uint8
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_char_p, ctypes.c_void_p]
+    tc_canvas_text = f
+
+    f = lib.tc_canvas_line
+    f.restype = ctypes.c_uint8
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_canvas_line = f
+
+    f = lib.tc_canvas_fill_rect
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_canvas_fill_rect = f
+
+    f = lib.tc_output_opts_default
+    f.restype = OutputOpts
+    f.argtypes = []
+    tc_output_opts_default = f
+
+    f = lib.tc_canvas_render
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_canvas_render = f
+
+    f = lib.tc_renderer_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_uint8, ctypes.c_void_p]
+    tc_renderer_create = f
+
+    f = lib.tc_renderer_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_renderer_free = f
+
+    f = lib.tc_renderer_reset
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_renderer_reset = f
+
+    f = lib.tc_renderer_frame
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_renderer_frame = f
+
+    f = lib.tc_input_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p]
+    tc_input_create = f
+
+    f = lib.tc_input_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_input_free = f
+
+    f = lib.tc_input_reset
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_input_reset = f
+
+    f = lib.tc_input_feed
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_input_feed = f
+
+    f = lib.tc_regions_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p]
+    tc_regions_create = f
+
+    f = lib.tc_regions_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_regions_free = f
+
+    f = lib.tc_regions_clear
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_regions_clear = f
+
+    f = lib.tc_regions_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_regions_count = f
+
+    f = lib.tc_regions_add_rect
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+    tc_regions_add_rect = f
+
+    f = lib.tc_regions_add_circle
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_double, ctypes.c_uint32]
+    tc_regions_add_circle = f
+
+    f = lib.tc_regions_add_polygon
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_void_p]
+    tc_regions_add_polygon = f
+
+    f = lib.tc_regions_hit
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
+    tc_regions_hit = f
+
+    f = lib.tc_chart_export
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_chart_export = f
+
+    f = lib.tc_chart_to_image
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    tc_chart_to_image = f
+
+    f = lib.tc_seq_from_text
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_seq_from_text = f
+
+    f = lib.tc_seq_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_seq_free = f
+
+    f = lib.tc_seq_participant_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_seq_participant_count = f
+
+    f = lib.tc_seq_message_count
+    f.restype = ctypes.c_uint64
+    f.argtypes = [ctypes.c_void_p]
+    tc_seq_message_count = f
+
+    f = lib.tc_seq_render
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_seq_render = f
+
+    f = lib.tc_image_encode_frames
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_image_encode_frames = f
+
+    f = lib.tc_doc_add_rich_paragraph
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
+    tc_doc_add_rich_paragraph = f
+
+    f = lib.tc_scene3d_create
+    f.restype = ctypes.c_void_p
+    f.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    tc_scene3d_create = f
+
+    f = lib.tc_scene3d_free
+    f.restype = None
+    f.argtypes = [ctypes.c_void_p]
+    tc_scene3d_free = f
+
+    f = lib.tc_scene3d_set_points
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double), ctypes.c_uint64, ctypes.c_void_p]
+    tc_scene3d_set_points = f
+
+    f = lib.tc_scene3d_set_grid
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    tc_scene3d_set_grid = f
+
+    f = lib.tc_scene3d_set_edges
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p]
+    tc_scene3d_set_edges = f
+
+    f = lib.tc_scene3d_set_view
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+    tc_scene3d_set_view = f
+
+    f = lib.tc_scene3d_set_range
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_uint8, ctypes.c_double, ctypes.c_double, ctypes.c_void_p]
+    tc_scene3d_set_range = f
+
+    f = lib.tc_scene3d_set_rotation4d
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double]
+    tc_scene3d_set_rotation4d = f
+
+    f = lib.tc_scene3d_render
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p]
+    tc_scene3d_render = f
+
     f = lib.tc_free_string
     f.restype = None
     f.argtypes = [ctypes.c_char_p]
@@ -372,6 +962,15 @@ tc_write_stdout = None
 tc_write_stderr = None
 tc_flush_stdout = None
 tc_auto_plot = None
+tc_data_parse_csv = None
+tc_data_free = None
+tc_data_row_count = None
+tc_data_col_count = None
+tc_data_header = None
+tc_data_cell_raw = None
+tc_data_cell_number = None
+tc_data_cell_info = None
+tc_auto_plot_text = None
 tc_quick_xy = None
 tc_quick_bar = None
 tc_image_create = None
@@ -390,6 +989,92 @@ tc_image_fill_rect = None
 tc_image_blit_over = None
 tc_image_encode = None
 tc_image_save = None
+tc_image_to_protocol = None
+tc_protocol_detect = None
+tc_chart_to_protocol = None
+tc_graph_create = None
+tc_graph_from_text = None
+tc_graph_free = None
+tc_graph_add_node = None
+tc_graph_add_edge = None
+tc_graph_set_node_attr = None
+tc_graph_set_edge_attr = None
+tc_graph_set_prop = None
+tc_graph_set_style = None
+tc_graph_node_count = None
+tc_graph_edge_count = None
+tc_graph_render_ansi = None
+tc_graph_print = None
+tc_graph_to_png = None
+tc_graph_to_protocol = None
+tc_doc_create = None
+tc_doc_free = None
+tc_doc_add_heading = None
+tc_doc_add_paragraph = None
+tc_doc_add_code = None
+tc_doc_add_table = None
+tc_doc_add_chart = None
+tc_doc_export = None
+tc_doc_save = None
+tc_term_opts_default = None
+tc_term_create = None
+tc_term_free = None
+tc_term_size_query = None
+tc_term_size_from_env = None
+tc_term_caps_detect = None
+tc_term_stdout_is_tty = None
+tc_term_stdin_is_tty = None
+tc_term_clipboard_set = None
+tc_term_clipboard_set_primary = None
+tc_term_hyperlink = None
+tc_term_hyperlink_close = None
+tc_term_mouse = None
+tc_canvas_create = None
+tc_canvas_free = None
+tc_canvas_resize = None
+tc_canvas_width = None
+tc_canvas_height = None
+tc_canvas_clear = None
+tc_canvas_put = None
+tc_canvas_text = None
+tc_canvas_line = None
+tc_canvas_fill_rect = None
+tc_output_opts_default = None
+tc_canvas_render = None
+tc_renderer_create = None
+tc_renderer_free = None
+tc_renderer_reset = None
+tc_renderer_frame = None
+tc_input_create = None
+tc_input_free = None
+tc_input_reset = None
+tc_input_feed = None
+tc_regions_create = None
+tc_regions_free = None
+tc_regions_clear = None
+tc_regions_count = None
+tc_regions_add_rect = None
+tc_regions_add_circle = None
+tc_regions_add_polygon = None
+tc_regions_hit = None
+tc_chart_export = None
+tc_chart_to_image = None
+tc_seq_from_text = None
+tc_seq_free = None
+tc_seq_participant_count = None
+tc_seq_message_count = None
+tc_seq_render = None
+tc_image_encode_frames = None
+tc_doc_add_rich_paragraph = None
+tc_scene3d_create = None
+tc_scene3d_free = None
+tc_scene3d_set_points = None
+tc_scene3d_set_grid = None
+tc_scene3d_set_edges = None
+tc_scene3d_set_view = None
+tc_scene3d_set_range = None
+tc_scene3d_set_rotation4d = None
+tc_scene3d_render = None
 tc_free_string = None
 tc_error_message = None
 tc_error_free = None

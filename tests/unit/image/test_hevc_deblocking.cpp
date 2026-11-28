@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "src/image/codec/hevc/deblocking.hpp"
+#include "src/media/encoder/hevc/deblocking.hpp"
 
 namespace {
 

@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "termchart/core/error.hpp"
-#include "termchart/image/decoder.hpp"
+#include "termchart/media/image/decoder.hpp"
 
 namespace {
 

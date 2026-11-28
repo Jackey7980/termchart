@@ -1,7 +1,7 @@
 // test_raster_ascii.cpp —— 密度字符光栅器（1×1）
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/ascii.hpp"
 
 namespace {

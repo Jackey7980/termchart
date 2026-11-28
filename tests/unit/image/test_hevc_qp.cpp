@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/hevc_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
 
 namespace {
 

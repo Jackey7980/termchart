@@ -105,7 +105,7 @@ if(TERMCHART_HAVE_UTF8PROC)
 endif()
 
 # vendored stb_image（可选）：JPEG/GIF/WebP 解码。头在 third_party/stb；实现 TU
-# src/image/stb_image_impl.cpp 用 STB_IMAGE_IMPLEMENTATION 单独编一份，受
+# src/media/image/stb_image_impl.cpp 用 STB_IMAGE_IMPLEMENTATION 单独编一份，受
 # TERMCHART_HAVE_STB_IMAGE 守卫（关闭时该 TU 为空，零代价、不引入符号）。
 if(TERMCHART_HAVE_STB_IMAGE)
     target_include_directories(termchart SYSTEM PRIVATE

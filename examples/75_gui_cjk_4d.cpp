@@ -31,7 +31,7 @@
 #include "termchart/core/style.hpp"
 #include "termchart/gui/font.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart/math3d/vec3.hpp"
 #include "termchart/math4d/camera4.hpp"
 #include "termchart/math4d/mat5.hpp"

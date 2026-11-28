@@ -16,9 +16,9 @@
 #include <string>
 #include <vector>
 
-#include "src/image/codec/hevc/cabac_arith.hpp"
-#include "src/image/codec/hevc/cabac_arith_dec.hpp"
-#include "src/image/codec/hevc/cabac_context.hpp"
+#include "src/media/encoder/hevc/cabac_arith.hpp"
+#include "src/media/encoder/hevc/cabac_arith_dec.hpp"
+#include "src/media/encoder/hevc/cabac_context.hpp"
 
 namespace {
 

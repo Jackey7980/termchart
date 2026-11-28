@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/registry.hpp"
 #include "termchart/raster/sextant.hpp"
 

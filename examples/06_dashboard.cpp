@@ -26,7 +26,7 @@
 #include "termchart/core/rgb.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/color/colormap.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/label.hpp"
@@ -40,7 +40,7 @@
 #include <cstdlib>
 #include <fstream>
 #include "termchart/gui/cells.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace {
 

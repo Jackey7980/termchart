@@ -13,7 +13,7 @@
 #include <string>
 
 #include "termchart/gui/font.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart_gui/backend_tk/tk_canvas.hpp"
 #include "termchart_gui/backend_tk/tk_window.hpp"
 #include "termchart_gui/fwd.hpp"

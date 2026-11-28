@@ -8,11 +8,11 @@
 
 #include "termchart/api/export_image.hpp"
 #include "termchart/core/expected.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
-#include "termchart/image/h264_encode.hpp"
-#include "termchart/image/hevc_encode.hpp"
-#include "termchart/image/mp4.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
+#include "termchart/media/image/h264_encode.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
+#include "termchart/media/image/mp4.hpp"
 
 using namespace termchart;
 using namespace termchart::image;
@@ -312,11 +312,11 @@ TEST_CASE("mp4: api::save_image 多帧导出 HEVC 视频") {
     CHECK(has_box(out, "mdat"));
 }
 
-// 未实现的码流必须显式失败，不能静默降级成 H.264。
-// 回归：旧实现里 video_codec=AV1 会落进 H.264 分支，产出的是一个货真价实的 H.264 MP4，
+// MP4 封装只接受 H.264 / H.265；AV1 已落地但走 IVF 容器，不能用 MP4 静默降级成
+// H.264。回归：旧实现里 video_codec=AV1 会落进 H.264 分支，产出货真价实的 H.264 MP4，
 // 调用方却以为拿到了 AV1 文件——静默降级比报错更危险（要等播放器放不出来才发现）。
-TEST_CASE("mp4: AV1 等未实现码流显式失败，不静默降级成 H.264") {
-    CHECK_FALSE(is_video_codec_supported(VideoCodec::AV1));
+TEST_CASE("mp4: AV1 请求显式失败，不静默降级成 H.264") {
+    CHECK(is_video_codec_supported(VideoCodec::AV1));  // 编码能力已具备，但在 IVF 路径
     CHECK(is_video_codec_supported(VideoCodec::H264));
     CHECK(is_video_codec_supported(VideoCodec::H265));
 
@@ -330,9 +330,11 @@ TEST_CASE("mp4: AV1 等未实现码流显式失败，不静默降级成 H.264") 
     CHECK(encode(frames, ImageFormat::Mp4, av1).empty());
 
     // 高层门面：返回可区分的 Unsupported（不是 InvalidArgument，更不是 Ok），且不落盘
-    const Status st = api::save_image(frames, "tc_api_av1.mp4", ImageFormat::Mp4, av1);
+    const char* out_path = "tc_api_av1.mp4";
+    std::remove(out_path);  // 清掉上一次失败运行遗留的文件，避免误判"未落盘"
+    const Status st = api::save_image(frames, out_path, ImageFormat::Mp4, av1);
     CHECK(st == ErrorCode::Unsupported);
-    std::FILE* fp = std::fopen("tc_api_av1.mp4", "rb");
+    std::FILE* fp = std::fopen(out_path, "rb");
     CHECK(fp == nullptr);
     if (fp != nullptr) std::fclose(fp);
 }

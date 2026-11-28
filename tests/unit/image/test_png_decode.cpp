@@ -14,10 +14,10 @@
 
 #include "test_png_samples.inc"
 #include "termchart/core/error.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/decoder.hpp"
-#include "termchart/image/png.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/decoder.hpp"
+#include "termchart/media/image/png.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace {
 

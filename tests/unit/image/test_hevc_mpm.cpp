@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-#include "src/image/codec/hevc/intra_prediction.hpp"
+#include "src/media/encoder/hevc/intra_prediction.hpp"
 
 namespace {
 

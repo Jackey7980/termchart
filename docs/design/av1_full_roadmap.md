@@ -27,7 +27,7 @@
 
 - 规划：10 种划分类型（`NONE/HORZ/VERT/SPLIT/T_TOP_SPLIT/T_BOTTOM_SPLIT/T_LEFT_SPLIT/T_RIGHT_SPLIT/H4/V4`）与跨边界邻居上下文。
 - 已完成：
-  - 新增 `src/image/codec/av1/bitstream/partition_tree.{hpp,cpp}`：128x128 超级块（16x16 mi）十叉树，支持全部 10 种划分及矩形子块几何；
+  - 新增 `src/media/encoder/av1/bitstream/partition_tree.{hpp,cpp}`：128x128 超级块（16x16 mi）十叉树，支持全部 10 种划分及矩形子块几何；
   - `PartitionContext` 按 libaom `partition_context_lookup` 维护上/左 16mi 邻居上下文，`index = (left*2+above) + bsl*4`；
   - 边界块按规范用二符号合并 CDF（`horz_alike`/`vert_alike`），无行无列时强制 `SPLIT`；
   - 编解码端共用同一棵树的构造规则，新增 2 个单测：多级混合划分往返（10 种类型全覆盖）+ 边界合并 CDF 往返，邻居上下文逐字节一致。
@@ -37,7 +37,7 @@
 
 - 规划：8 基础方向 + 45 细角度 + 3 Smooth + Paeth + CFL + filter_intra + intra_edge。
 - 已完成：
-  - `src/image/codec/av1/predict/intra_predict.{hpp,cpp}` 覆盖 61 个亮度模式（8 方向基模式 × 7 档 angle_delta + DC/3 Smooth/Paeth），含上/左边界填充、滤波强度、角点滤波与细角度半像素上采样；
+  - `src/media/encoder/av1/predict/intra_predict.{hpp,cpp}` 覆盖 61 个亮度模式（8 方向基模式 × 7 档 angle_delta + DC/3 Smooth/Paeth），含上/左边界填充、滤波强度、角点滤波与细角度半像素上采样；
   - `predict_filter_intra` 落地规范 7.11.2.3 的 5 组 8 抽头滤波器，块语法按 `skip → y → angle_delta → uv_mode → cfl_alpha → filter_intra` 编码；
   - `predict_cfl_chroma` 落地 4:2:0 CFL（4x4 亮度子块 q3 平均、去均值、alpha 联合符号/幅值语法），色度基础预测沿用 DC；
   - 新增 `tools/av1_intra_probe.cpp` 与门禁扩展：`python tools/verify_av1_minimal.py` 现同时跑 61 组方向/非方向模式、5 档 filter intra 与 32 组 CFL 组合，全部经 ffmpeg/libdav1d 逐像素对拍 PASS。
@@ -65,7 +65,7 @@
 - 规划：DCT/ADST/Identity（至 64x64）与量化矩阵。
 - 已完成：DCT8 反变换 + 反量化最小闭环；`eob=0` 与非零残差往返通过；8x16 双块非平坦残差 61 组（模式 × 角度）经 ffmpeg/libdav1d 逐像素对拍全 PASS（2026-11-22 起门禁），阶段六的「跨解码器残差不一致」阻塞已消除。
 - 历史修复：帧头 `base_q_idx` 曾让 dav1d 读成 200（dequant 389/639），预移位补偿后 qidx=100、dequant=93/112；`av1_idct8` 定点阶段与 dequant 同步校正；tile group 保留目标解码器需要的 `0x40 + tile_size` 前缀。
-- 全量变换核（2026-11-25）：`src/image/codec/av1/transform/transform_2d.{hpp,cpp}` 用规范正交基实现 DCT（2/4/8/16/32/64）、ADST/FlipADST（4/8/16）、IDENTITY（4..64）的正/逆二维变换与任意矩形组合；三种系数扫描序（ZIGZAG/HORZ/VERT）覆盖全部 `TX_SIZES_ALL`。单测 `tests/unit/image/test_av1_transform.cpp`：DCT8 基与既有 bit-exact 残差链同构、全尺寸 IDENTITY 往返、DCT/ADST 混合往返、扫描序全排列。
+- 全量变换核（2026-11-25）：`src/media/encoder/av1/transform/transform_2d.{hpp,cpp}` 用规范正交基实现 DCT（2/4/8/16/32/64）、ADST/FlipADST（4/8/16）、IDENTITY（4..64）的正/逆二维变换与任意矩形组合；三种系数扫描序（ZIGZAG/HORZ/VERT）覆盖全部 `TX_SIZES_ALL`。单测 `tests/unit/image/test_av1_transform.cpp`：DCT8 基与既有 bit-exact 残差链同构、全尺寸 IDENTITY 往返、DCT/ADST 混合往返、扫描序全排列。
 - 量化矩阵（2026-11-25）：15 组规范的 4x4/8x8 亮度/色度权重表落到 `transform/qmatrix_data.hpp`；帧头 `using_qmatrix` + `qm_y/qm_u` 两个 4-bit 选择子已接线，反量化改为 `(dq * qm[rc] + 16) >> 5`。`av1_inter_probe` argv[24] 可选预设，门禁扫 0/3/7/11/14 五组 KEY+INTER 非零残差帧，ffmpeg/libdav1d 逐像素 PASS。
 - 边界：ADST/IDENTITY 的**码流 tx_type 选择子**（`tx_mode=SELECTABLE` 的变换树语法）尚未接入编码器，当前码流仍走 `TX_MODE_LARGEST` 的 DCT_DCT；变换核本身已可用并有往返单测。量化矩阵只覆盖 8x8 亮度残差路径（其余块尺寸的权重表已在库中，接线方式相同）。ME/RDO 属阶段八。
 
@@ -113,12 +113,12 @@
 - **B4 划分树已接线但决策仍粗**：`write_partition_tree` 现由 `encoder/intra_encoder.cpp` 的生产路径调用（16x16 NONE/SPLIT 决策）；16x16 探针仍手工写符号，且划分决策只用 8x8 子块代价之和与 16x16 纯预测代价比较，未接全局 RD 搜索。
 - **B5 tx_type 符号未写**：`tile_group.cpp` 里 tx_type 只出现在注释（:169），无写入调用；帧头 `tx_mode_select=0` 恒 `TX_MODE_LARGEST`（`headers.cpp:133/258`）。变换核与 `txtp_intra1/2`、`txtp_inter1/2/3` CDF 都已就位，缺的只是语法接线。
 - **B6 warp 参数靠外部给**：帧级 ROTZOOM/AFFINE 矩阵与逐块 warp 参数由探针入参，无 GMV 估计器。
-- **B7 无码控**：`base_q_idx` 是常量（`src/image/av1_encode.cpp:16` 与各探针），无 rate control / AQ；`segmentation_enabled=0`、`delta_q_present=0`（`headers.cpp:111/113`）。
+- **B7 无码控**：`base_q_idx` 是常量（`src/media/image/av1_encode.cpp:16` 与各探针），无 rate control / AQ；`segmentation_enabled=0`、`delta_q_present=0`（`headers.cpp:111/113`）。
 - **B8 lambda 未标定**：lambda 是调用方裸值，没有 qindex/量化步长 → lambda 的换算函数。
 
 ### C. 支撑能力（挡住"真分辨率编码"）
 
-- **C1 帧尺寸/超块/图像输入**：内部入口 `encode_av1_minimal_ivf` **只接受 8x8 且忽略像素内容**（仅校验尺寸，输出固定 SMOOTH 灰渐变，`src/image/av1_encode.cpp:10-38`）；`use_128x128_superblock=0`（`headers.cpp:68/156`）；探针帧只有 8x8 / 8x16 / 16x16。
+- **C1 帧尺寸/超块/图像输入**：内部入口 `encode_av1_minimal_ivf` **只接受 8x8 且忽略像素内容**（仅校验尺寸，输出固定 SMOOTH 灰渐变，`src/media/image/av1_encode.cpp:10-38`）；`use_128x128_superblock=0`（`headers.cpp:68/156`）；探针帧只有 8x8 / 8x16 / 16x16。
 - **C2 单 tile**：`uniform_tile_spacing_flag=1` 单 tile（`headers.cpp:100/231`），无多 tile 分支。
 - **C3 帧类型/多帧链**：探针只用 `frame_type=0/1`（KEY/INTER，见各 `av1_*_probe.cpp`）；`show_existing_frame=0`（`headers.cpp:187`）；无 ALTREF/INTRA_ONLY/SWITCH、无多帧参考重用。
 - **C4 位深/采样**：`high_bitdepth=0`、profile0 4:2:0（`headers.cpp:76-80`）；10-bit、4:4:4、4:2:2、monochrome 均不支持。

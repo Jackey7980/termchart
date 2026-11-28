@@ -17,8 +17,8 @@
 #include "termchart/color/colormap.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
 #include "termchart/scene/builder.hpp"
 #include "termchart/scene/scene.hpp"
 

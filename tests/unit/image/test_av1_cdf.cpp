@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <string>
 
-#include "src/image/codec/av1/entropy/cdf_manager.hpp"
-#include "src/image/codec/av1/entropy/default_cdf.hpp"
+#include "src/media/encoder/av1/entropy/cdf_manager.hpp"
+#include "src/media/encoder/av1/entropy/default_cdf.hpp"
 
 namespace av1 = termchart::image::codec::av1;
 

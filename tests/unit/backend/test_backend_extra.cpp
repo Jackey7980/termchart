@@ -10,7 +10,7 @@
 #include "termchart/core/buffer.hpp"
 #include "termchart/core/cell.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/png.hpp"
+#include "termchart/media/image/png.hpp"
 
 namespace {
 

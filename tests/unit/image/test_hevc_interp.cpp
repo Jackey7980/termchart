@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "src/image/codec/hevc/interp.hpp"
+#include "src/media/encoder/hevc/interp.hpp"
 
 namespace {
 

@@ -25,7 +25,7 @@
 #include "termchart/core/point.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/export.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 namespace termchart::gui {
 
 struct TextMetrics { double width = 0.0; double height = 0.0; };

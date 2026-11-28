@@ -27,7 +27,7 @@
 #include "termchart/chart/hit_region.hpp"
 #include "termchart/export.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/scene/scene.hpp"
 
 namespace termchart::gui {

@@ -33,7 +33,7 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/ttf_font.hpp"
+#include "termchart/media/image/ttf_font.hpp"
 #include "termchart/util/utf8.hpp"
 #include "termchart/util/wcwidth.hpp"
 

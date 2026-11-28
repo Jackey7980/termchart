@@ -37,8 +37,8 @@
 
 文件（均 `??` 未跟踪）：
 
-- `include/termchart/image/bmp.hpp`
-- `src/image/bmp.cpp`
+- `include/termchart/media/image/bmp.hpp`
+- `src/media/image/bmp.cpp`
 - `tests/unit/image/test_bmp.cpp`
 
 设计（详见 `bmp.hpp` 头注）：
@@ -49,7 +49,7 @@
 
 **收尾清单（按顺序，缺一步都不自洽）**：
 
-1. 接入分发器：在 `src/image/decoder.cpp` 顶部加 `#include "termchart/image/bmp.hpp"`，并在 `decode_image` 的 switch（当前 61–71 行）加 `case ImageFormat::Bmp: return decode_bmp(data, size);`。`sniff_image_format` 已能嗅探 `"BM"`（33 行），无需改。
+1. 接入分发器：在 `src/media/image/decoder.cpp` 顶部加 `#include "termchart/media/image/bmp.hpp"`，并在 `decode_image` 的 switch（当前 61–71 行）加 `case ImageFormat::Bmp: return decode_bmp(data, size);`。`sniff_image_format` 已能嗅探 `"BM"`（33 行），无需改。
 2. 登记测试：在 `tests/CMakeLists.txt` 第 77 行 `unit/image/test_ttf_font.cpp` 之后加一行 `unit/image/test_bmp.cpp`。
 3. 构建：`cmake --build --preset ninja --target termchart termchart_tests`。
 4. 跑测试：`./build/ninja/tests/termchart_tests.exe --test-case="image/bmp*"`（含错误路径），再全量。

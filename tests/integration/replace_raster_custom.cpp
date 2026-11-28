@@ -15,7 +15,7 @@
 #include "termchart/core/buffer.hpp"
 #include "termchart/core/cell.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/rasterizer.hpp"
 #include "termchart/raster/registry.hpp"
 

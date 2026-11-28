@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "src/image/codec/hevc/sao.hpp"
+#include "src/media/encoder/hevc/sao.hpp"
 
 namespace {
 

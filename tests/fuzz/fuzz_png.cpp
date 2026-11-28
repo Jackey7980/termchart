@@ -20,8 +20,8 @@
 // 共享语料里的 PNG 全都"残缺到一进门就早退"，往返路径根本走不到，所以这里必须
 // 借这批真样本。
 #include "../unit/image/test_png_samples.inc"
-#include "termchart/image/png.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace {
 

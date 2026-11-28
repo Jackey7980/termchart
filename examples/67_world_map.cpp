@@ -23,7 +23,7 @@
 #include "termchart/api/print.hpp"
 #include "termchart/chart/geo/geo_map.hpp"
 #include "termchart/core/buffer.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart/protocol/sixel.hpp"
 #include "termchart/render/renderer.hpp"
 #include "termchart/term/terminal.hpp"

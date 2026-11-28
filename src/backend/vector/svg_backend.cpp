@@ -15,7 +15,7 @@
 #include <string>
 
 #include "termchart/backend/vector/svg_entities.hpp"
-#include "termchart/image/ttf_font.hpp"
+#include "termchart/media/image/ttf_font.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
 #include "termchart/util/utf8.hpp"
 

@@ -17,7 +17,7 @@
 #include "termchart/core/buffer.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/export.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 
 namespace termchart::raster {
 

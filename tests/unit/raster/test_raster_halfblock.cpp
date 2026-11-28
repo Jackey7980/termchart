@@ -1,7 +1,7 @@
 // test_raster_halfblock.cpp —— 半块光栅器（1×2，上下双色）
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/halfblock.hpp"
 
 namespace {

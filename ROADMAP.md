@@ -513,7 +513,7 @@ slice_header → parameter_sets → nal_unit → ep_nal → bit_writer
 
 **C. 阶段二：P 帧与参考帧管理**
 
-- [x] C1（帧间预测已落地部分）：`inter_prediction` 的 **Merge（A1/B1/B0/A0/B2 顺序 + 成对去重）/ AMVP（mvp_lx_flag）/ 整数像素 MC / Z-scan 块可用性对齐 ffmpeg**，实现在 `src/image/codec/hevc/inter_coding.{hpp,cpp}`；编码端重建与 ffmpeg 解码逐帧 × Y/U/V 全矩阵 38/38 `neq=0`，CI `encoder-cert` 已接 `tools/verify_hevc_inter.py --quick` 门禁
+- [x] C1（帧间预测已落地部分）：`inter_prediction` 的 **Merge（A1/B1/B0/A0/B2 顺序 + 成对去重）/ AMVP（mvp_lx_flag）/ 整数像素 MC / Z-scan 块可用性对齐 ffmpeg**，实现在 `src/media/encoder/hevc/inter_coding.{hpp,cpp}`；编码端重建与 ffmpeg 解码逐帧 × Y/U/V 全矩阵 38/38 `neq=0`，CI `encoder-cert` 已接 `tools/verify_hevc_inter.py --quick` 门禁
 - [x] C1（亚像素插值，2026-11-16）：`interp.{hpp,cpp}` 实现 **1/4 像素亮度 8-tap + 色度 4-tap**（系数逐位对齐 FFmpeg hevcdsp），`mc_luma`/`mc_chroma` 按 `mv&3`/`mv&7` 分流、整数路径字节不变；`hevc_subpel_me` 开启后整数搜索 + 1/4 精搜。`verify_hevc_subpel.py` 全 12 组分数 MV `neq=0`
 - [x] C1（多参考帧，2026-11-16）：`hevc_multi_ref` 开关（默认 false），L0 = [POC-1, POC-2]，RPS 两负参考 + `ref_idx_l0` 语法 + DPB 两帧滚动 + merge/AMVP 带 ref_idx；`verify_hevc_multiref.py` 全 12 组 `neq=0`、ref=1 选中率 85.7%、cycle2 码率 −71.4%
 - [ ] C1（仍未做）：**双向预测（B 片）**——真正的 L1 前向参考需 GOP 帧重排（编码顺序≠显示顺序）+ POC 管理重构，独立大工程；当前为最多 2 参考的单向前帧 P 帧

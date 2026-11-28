@@ -1,7 +1,7 @@
 // test_bitmap.cpp —— Bitmap（RGBA 像素缓冲）不变量
 #include <doctest.h>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace {
 

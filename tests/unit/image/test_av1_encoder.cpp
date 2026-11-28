@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <string>
 
-#include "src/image/av1_encode.hpp"
-#include "src/image/codec/av1/encoder/intra_encoder.hpp"
+#include "src/media/image/av1_encode.hpp"
+#include "src/media/encoder/av1/encoder/intra_encoder.hpp"
 
 namespace image = termchart::image;
 

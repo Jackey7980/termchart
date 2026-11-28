@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart/protocol/iterm2_inline.hpp"
 
 namespace {

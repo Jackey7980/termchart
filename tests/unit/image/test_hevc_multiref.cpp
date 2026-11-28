@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-#include "src/image/codec/hevc/inter_coding.hpp"
+#include "src/media/encoder/hevc/inter_coding.hpp"
 
 namespace {
 

@@ -9,16 +9,16 @@
 #include <string>
 #include <string_view>
 
-#include "src/image/codec/av1/bitstream/ivf_muxer.hpp"
-#include "src/image/codec/av1/bitstream/obu_header.hpp"
-#include "src/image/codec/av1/bitstream/partition_tree.hpp"
-#include "src/image/codec/av1/bitstream/tile_group.hpp"
-#include "src/image/codec/av1/entropy/cdf_manager.hpp"
-#include "src/image/codec/av1/entropy/coef_cdf_data.hpp"
-#include "src/image/codec/av1/entropy/default_cdf.hpp"
-#include "src/image/codec/av1/entropy/range_coder.hpp"
-#include "src/image/codec/av1/predict/inter_predict.hpp"
-#include "src/image/codec/av1/predict/intra_predict.hpp"
+#include "src/media/encoder/av1/bitstream/ivf_muxer.hpp"
+#include "src/media/encoder/av1/bitstream/obu_header.hpp"
+#include "src/media/encoder/av1/bitstream/partition_tree.hpp"
+#include "src/media/encoder/av1/bitstream/tile_group.hpp"
+#include "src/media/encoder/av1/entropy/cdf_manager.hpp"
+#include "src/media/encoder/av1/entropy/coef_cdf_data.hpp"
+#include "src/media/encoder/av1/entropy/default_cdf.hpp"
+#include "src/media/encoder/av1/entropy/range_coder.hpp"
+#include "src/media/encoder/av1/predict/inter_predict.hpp"
+#include "src/media/encoder/av1/predict/intra_predict.hpp"
 
 namespace av1 = termchart::image::codec::av1;
 

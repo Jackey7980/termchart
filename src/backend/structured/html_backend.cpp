@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 
+#include "chart_svg.hpp"
 #include "termchart/color/quantize.hpp"
 #include "termchart/document/block.hpp"
 #include "termchart/document/span.hpp"
@@ -134,7 +135,9 @@ void HtmlBackend::render(const document::Document& doc) {
                 break;
             }
             case document::BlockKind::Chart:
-                out_ += "<div class=\"termchart-chart\">[chart]</div>\n";
+                out_ += "<div class=\"termchart-chart\">";
+                out_ += detail::chart_svg_or_placeholder(b.scene());
+                out_ += "</div>\n";
                 break;
         }
     }

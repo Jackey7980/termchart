@@ -28,7 +28,7 @@ set(TERMCHART_MODULE_LAYERS
     "math4d=3"
     "scene=4"
     "data=4"
-    "image=5"
+    "media=5"
     "raster=6"
     "term=7"
     "network=7"
@@ -67,6 +67,19 @@ set(TERMCHART_FORBIDDEN_EDGES
     "gui>canvas"          # GUI 平行栈不得碰终端呈现：字符格/CellBuffer 是终端专属（gui_stack.md）
     "gui>term"            # 同上：SGR/tty 是终端专属
     "gui>app"             # GUI 的事件循环自己写（native_loop），不借终端 loop
+    # media DAG：encoder 是纯内核，业务层（image/video）可 include 它，反向一律禁止。
+    # 含 "/" 的条目按路径前缀匹配（见 check_layers.py），模块级条目仍按一级目录。
+    "media/encoder>media/image"
+    "media/encoder>media/video"
+)
+
+# 路径级禁止边的类型依赖例外：encoder 接口需要 Bitmap / EncodeOptions 等共享值类型，
+# 这些是 kernel 与业务层共同的数据契约，不是业务实现，故单列白名单。
+set(TERMCHART_PATH_EXCEPTIONS
+    "media/encoder>media/image/bitmap"
+    "media/encoder>media/image/encode"
+    "media/encoder>media/image/convert"
+    "media/encoder>media/image/field"
 )
 
 # 设计意图（由上面两个集合机器执行，本段仅供人读）

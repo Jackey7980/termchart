@@ -9,9 +9,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "src/image/codec/hevc/cabac_context.hpp"
-#include "src/image/codec/hevc/intra_prediction.hpp"
-#include "src/image/codec/hevc/residual_coding.hpp"
+#include "src/media/encoder/hevc/cabac_context.hpp"
+#include "src/media/encoder/hevc/intra_prediction.hpp"
+#include "src/media/encoder/hevc/residual_coding.hpp"
 
 namespace {
 

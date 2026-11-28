@@ -6,7 +6,7 @@
 #include <string>
 
 #include "termchart/api/print.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/encode.hpp"
 #include "termchart/util/file.hpp"
 
 namespace termchart::api {
@@ -16,7 +16,10 @@ namespace {
 // 视频容器请求了尚未实现的码流（如 AV1）→ 显式 Unsupported。与"位图为空/格式未实现"
 // 区分开，避免调用方把"这个码流编不出来"误判成"你的图是空的"。
 bool is_unsupported_video_codec(image::ImageFormat format, const image::EncodeOptions& opts) {
-    return format == image::ImageFormat::Mp4 && !image::is_video_codec_supported(opts.video_codec);
+    // MP4 封装只接 H.264 / H.265；AV1 虽已实现，但走 IVF 容器，不能混进 MP4。
+return format == image::ImageFormat::Mp4 &&
+       opts.video_codec != image::VideoCodec::H264 &&
+       opts.video_codec != image::VideoCodec::H265;
 }
 
 }  // namespace

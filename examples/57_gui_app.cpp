@@ -10,7 +10,7 @@
 #include <fstream>
 #include <string>
 
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart_gui/gui.hpp"
 
 namespace {

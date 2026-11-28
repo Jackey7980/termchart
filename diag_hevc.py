@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 STREAM = "tc_hevc.265"
-SRC = "src/image/hevc_encode.cpp"
+SRC = "src/media/image/hevc_encode.cpp"
 RAW = "_verify_pcm.yuv"
 # 2026-11-07 重新钉基线：SPS 增加 conformance window 裁掉 CTB padding，
 # 并补 VUI 最小集（1:1 SAR）与参数化 general_level_idc。
@@ -59,20 +59,20 @@ def expected(x, y, phase):
 # A2 起语法元素分散到 codec/hevc/*.cpp，静态不变量扫描必须覆盖全部实现文件；
 # 判据本身不放宽，第 6 条的码流字节/sha 基线仍是最强门禁。
 CODE_FILES = [
-    "src/image/hevc_encode.cpp",
-    "src/image/codec/hevc/parameter_sets.cpp",
-    "src/image/codec/hevc/slice_header.cpp",
-    "src/image/codec/hevc/nal_unit.cpp",
-    "src/image/codec/hevc/cabac_context.cpp",
-    "src/image/codec/hevc/cabac_engine.cpp",
-    "src/image/codec/hevc/cabac_syntax.cpp",
-    "src/image/codec/hevc/ctb_tree.cpp",
+    "src/media/image/hevc_encode.cpp",
+    "src/media/encoder/hevc/parameter_sets.cpp",
+    "src/media/encoder/hevc/slice_header.cpp",
+    "src/media/encoder/hevc/nal_unit.cpp",
+    "src/media/encoder/hevc/cabac_context.cpp",
+    "src/media/encoder/hevc/cabac_engine.cpp",
+    "src/media/encoder/hevc/cabac_syntax.cpp",
+    "src/media/encoder/hevc/ctb_tree.cpp",
 ]
 src = "\n".join(open(p, encoding="utf-8").read()
                 for p in CODE_FILES if os.path.exists(p))
 
 # 1. slice header
-SH_FILE = "src/image/codec/hevc/slice_header.cpp"
+SH_FILE = "src/media/encoder/hevc/slice_header.cpp"
 sh = open(SH_FILE, encoding="utf-8").read() if os.path.exists(SH_FILE) else ""
 need = ["first_slice_segment_in_pic_flag", "no_output_of_prior_pics_flag",
         "slice_pic_parameter_set_id", "slice_type", "slice_qp_delta", "byte_alignment"]

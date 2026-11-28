@@ -11,7 +11,7 @@
 #include <cstring>
 #include <string>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "av1_encode.hpp"
 #include "codec/av1/bitstream/headers.hpp"
 #include "codec/av1/bitstream/ivf_muxer.hpp"

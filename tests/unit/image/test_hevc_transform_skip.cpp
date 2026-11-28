@@ -16,10 +16,10 @@
 #include <string>
 #include <vector>
 
-#include "src/image/codec/hevc/cabac_context.hpp"
-#include "src/image/codec/hevc/cabac_syntax.hpp"
-#include "src/image/codec/hevc/cu_coding.hpp"
-#include "src/image/codec/hevc/parameter_sets.hpp"
+#include "src/media/encoder/hevc/cabac_context.hpp"
+#include "src/media/encoder/hevc/cabac_syntax.hpp"
+#include "src/media/encoder/hevc/cu_coding.hpp"
+#include "src/media/encoder/hevc/parameter_sets.hpp"
 
 namespace {
 using namespace termchart::image::codec::hevc;

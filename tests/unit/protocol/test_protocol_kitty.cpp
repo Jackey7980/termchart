@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <string>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/protocol/kitty_graphics.hpp"
 
 namespace {

@@ -51,6 +51,18 @@ SRC_INTERNAL_CXX = (
     "wasm/termchart_wasm",
 )
 
+# 公开头与实现目前严格同路径（media/image/* ↔ src/media/image/*），
+# 保留前缀机制供未来个别模块错位时登记，无需改 main() 的双向配对逻辑。
+HEADER_TO_SRC_PREFIX = {}
+
+
+def header_src_path(header: str) -> str:
+    """公开头相对路径 → 实现 cpp 相对 src 根的路径。"""
+    for public, impl in HEADER_TO_SRC_PREFIX.items():
+        if header.startswith(public):
+            return impl + header[len(public):]
+    return header
+
 
 def read_header_only() -> set[str]:
     """读 cmake/header_only.txt。清单里带不带 .hpp 后缀都接受，统一去后缀。"""
@@ -88,15 +100,18 @@ def main() -> int:
 
     header_set = set(headers)
     cpp_set = set(cpps)
+    # 反向表：实现路径 → 它服务的公开头（含 media/image 重映射）。
+    impl_to_header = {header_src_path(h): h for h in headers}
 
     for h in headers:
-        if h in header_only and h in cpp_set:
-            violations.append(f"header-only 文件不应有 src 实现：src/{h}.cpp")
-        if h not in header_only and h not in cpp_set and not is_exempt_header(h):
-            violations.append(f"缺失同名实现：src/{h}.cpp")
+        impl = header_src_path(h)
+        if h in header_only and impl in cpp_set:
+            violations.append(f"header-only 文件不应有 src 实现：src/{impl}.cpp")
+        if h not in header_only and impl not in cpp_set and not is_exempt_header(h):
+            violations.append(f"缺失同名实现：src/{impl}.cpp")
 
     for c in cpps:
-        if c in header_set:
+        if c in header_set or c in impl_to_header:
             continue
         if c in SRC_INTERNAL_CXX:
             continue

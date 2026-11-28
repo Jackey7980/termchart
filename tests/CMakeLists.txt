@@ -7,6 +7,12 @@
 add_executable(termchart_tests
     main.cpp
 
+    # ── C ABI ──
+    unit/capi/test_capi_ext.cpp
+
+    # ── media ──
+    unit/media/test_media_registry.cpp
+
     # ── core ──
     unit/core/test_core.cpp
     unit/core/test_grapheme.cpp
@@ -282,7 +288,7 @@ add_executable(termchart_tests
     integration/replace_raster_custom.cpp
 )
 
-target_link_libraries(termchart_tests PRIVATE termchart termchart_gui)
+target_link_libraries(termchart_tests PRIVATE termchart termchart_gui termchart_capi_static)
 
 # 测试要覆盖 Trace 级日志：编译期开关默认只到 Info（见 util/logging.hpp）。
 # TERMCHART_GOLDEN_DEFAULT_DIR：快照目录的编译期默认值，让用例与 cwd 无关。
@@ -296,6 +302,7 @@ target_include_directories(termchart_tests
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/..
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/capi/include
 )
 
 # vendored 第三方头按 SYSTEM 引入：它的告警不该混进我们的构建输出（否则"零警告"

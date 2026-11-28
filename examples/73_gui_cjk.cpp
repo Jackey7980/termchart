@@ -25,7 +25,7 @@
 #include "termchart/core/style.hpp"
 #include "termchart/gui/font.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart/scene/builder.hpp"
 #include "termchart/scene/scene.hpp"
 

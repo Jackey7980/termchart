@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "src/image/codec/av1/entropy/range_coder.hpp"
+#include "src/media/encoder/av1/entropy/range_coder.hpp"
 
 namespace av1 = termchart::image::codec::av1;
 

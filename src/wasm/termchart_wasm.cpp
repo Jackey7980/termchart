@@ -13,7 +13,7 @@
 
 #include <emscripten/emscripten.h>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 using namespace termchart;
 

@@ -7,8 +7,8 @@
 
 #include "termchart/api/export_image.hpp"
 #include "termchart/core/error.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
 
 using namespace termchart;
 using namespace termchart::image;

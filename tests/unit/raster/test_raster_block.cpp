@@ -1,7 +1,7 @@
 // test_raster_block.cpp —— 八级竖条光栅器（1×1）
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/block.hpp"
 
 namespace {

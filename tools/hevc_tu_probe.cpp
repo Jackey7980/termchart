@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/hevc_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
 
 using namespace termchart::image;
 
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
             if ((xx & 1) == 0 && (yy & 1) == 0) {
                 const size_t ci = (size_t)(yy / 2) * (W / 2) + (xx / 2);
                 const size_t base = (size_t)W * H;
-                // 与 src/image/hevc_encode.cpp::to_yuv 完全同一套 BT.601 系数
+                // 与 src/media/image/hevc_encode.cpp::to_yuv 完全同一套 BT.601 系数
                 yuv[base + ci] = cl(((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128);
                 yuv[base + (size_t)W * H / 4 + ci] =
                     cl(((112 * R - 94 * G - 18 * B + 128) >> 8) + 128);

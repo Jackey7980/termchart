@@ -20,7 +20,7 @@
 #include <QTimer>
 #include <cstring>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace termchart_gui_qt {
 namespace {

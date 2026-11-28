@@ -13,7 +13,7 @@
 #include "termchart/core/buffer.hpp"
 #include "termchart/core/rect.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"
 #include "termchart/layout/label.hpp"

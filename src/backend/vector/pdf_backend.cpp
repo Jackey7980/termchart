@@ -32,7 +32,7 @@
 
 #include "termchart/color/quantize.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/ttf_font.hpp"
+#include "termchart/media/image/ttf_font.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
 #include "termchart/util/utf8.hpp"
 

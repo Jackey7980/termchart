@@ -52,6 +52,31 @@ def module_of(rel: str) -> str | None:
     return rel.split("/", 1)[0] if "/" in rel else None
 
 
+def is_path_rule(item: str) -> bool:
+    """含 '/' 的边是路径前缀规则，否则是一级模块名规则。"""
+    return "/" in item
+
+
+def _prefix_match(value: str, prefix: str) -> bool:
+    return value == prefix or value.startswith(prefix + "/")
+
+
+def path_edge_hit(src_rel: str, dst_rel: str, forbidden: set[tuple[str, str]],
+                  exceptions: set[tuple[str, str]]) -> tuple[str, str] | None:
+    """路径级禁止边：左/右均按路径前缀匹配，命中且不在例外表里即违规。"""
+    for left, right in forbidden:
+        if not (is_path_rule(left) or is_path_rule(right)):
+            continue
+        if not (_prefix_match(src_rel, left) and _prefix_match(dst_rel, right)):
+            continue
+        # 例外同样按具体 src/dst 前缀匹配（如 encoder/i_encoder → image/bitmap）。
+        if any(_prefix_match(src_rel, el) and _prefix_match(dst_rel, er)
+               for el, er in exceptions):
+            continue
+        return left, right
+    return None
+
+
 def layer_of(rel: str, layers: dict[str, int]) -> int:
     """相对 include/termchart/ 的去扩展名路径 → 层号，永远返回 int。
     顶层工具头 → 0；detail/ 横切目录 → -1（低于 core，任何层可 include）；
@@ -70,10 +95,14 @@ def main() -> int:
     layers = parse_layers(text)
     narrow = parse_edge_set(text, "TERMCHART_NARROW_EDGES")
     forbidden = parse_edge_set(text, "TERMCHART_FORBIDDEN_EDGES")
+    path_exceptions = parse_edge_set(text, "TERMCHART_PATH_EXCEPTIONS")
 
     # 被收窄的模块对：{ (src_mod, dst_mod) }，命中则该对转白名单制
     narrowed_pairs = {(l.split("/")[0], r.split("/")[0]) for l, r in narrow}
     narrow_allowed = set(narrow)
+    # 路径级条目单独处理，不参与一级模块名匹配，避免 (media,media) 误伤。
+    module_forbidden = {(l, r) for l, r in forbidden
+                        if not (is_path_rule(l) or is_path_rule(r))}
 
     violations: list[str] = []
 
@@ -96,8 +125,12 @@ def main() -> int:
 
             where = f"{header.relative_to(ROOT)}:{line_no}"
 
-            # 1. 禁止边
-            if (src_mod, dst_mod) in forbidden:
+            # 1. 禁止边：路径级优先（media 内核不得反向包含业务层），其次模块级
+            path_hit = path_edge_hit(rel, dst_rel, forbidden, path_exceptions)
+            if path_hit is not None:
+                violations.append(f"{where}: 路径禁止边 {path_hit[0]}>{path_hit[1]}")
+                continue
+            if (src_mod, dst_mod) in module_forbidden:
                 violations.append(f"{where}: 禁止边 {src_mod}>{dst_mod}")
                 continue
 

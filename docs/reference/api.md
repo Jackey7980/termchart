@@ -1,7 +1,7 @@
 <!-- 由 tools/gen_api_docs.py 生成，禁手改。更新方式：重跑该脚本。 -->
 # API 参考
 
-扫描 `include/termchart/**` 的 **410 个公开头文件**生成，按模块（层号源：
+扫描 `include/termchart/**` 的 **424 个公开头文件**生成，按模块（层号源：
 `cmake/TermchartModules.cmake`）分节。每个头列出顶部注释与声明——
 class / struct / enum class / 命名空间级函数（含头内 inline 定义，签名原样搬运）。
 本文件不含手写说明；各声明语义见对应头文件。
@@ -10,19 +10,19 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 | 模块 | 层 | 头文件数 |
 | --- | --- | --- |
-| （顶层头） | — | 6 |
+| （顶层头） | — | 5 |
 | detail | L-1 | 9 |
 | core | L0 | 13 |
 | math | L1 | 7 |
-| util | L1 | 18 |
-| color | L2 | 7 |
+| util | L1 | 19 |
+| color | L2 | 12 |
 | io | L2 | 4 |
 | math3d | L3 | 3 |
 | math4d | L3 | 3 |
 | scale | L3 | 11 |
 | data | L4 | 9 |
 | scene | L4 | 6 |
-| image | L5 | 16 |
+| media | L5 | 24 |
 | raster | L6 | 9 |
 | network | L7 | 5 |
 | term | L7 | 13 |
@@ -35,28 +35,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 | chart4d | L12 | 2 |
 | graph | L13 | 46 |
 | render | L14 | 5 |
-| interaction | L15 | 19 |
+| interaction | L15 | 20 |
 | backend | L16 | 16 |
-| dsl | L17 | 15 |
+| dsl | L17 | 14 |
 | widget | L18 | 18 |
 | plugin | L19 | 4 |
 | app | L20 | 7 |
 | api | L21 | 6 |
 | autoviz | L21 | 10 |
-| gui | L22 | 3 |
+| gui | L22 | 4 |
 
 ## （顶层头）
-
-### `deprecate.hpp`
-
-> deprecate.hpp —— 弃用标记宏
->
-> 弃用流程（docs/contrib/deprecation.md）：
-> 第一步加 TERMCHART_DEPRECATED("将于 vX.Y 移除，改用 xxx")，至少一个 minor 周期保留；
-> 第二步在下个 major 删除。测试用 -Werror=deprecated-declarations 时，
-> 内部调用点必须显式加 TERMCHART_DEPRECATED_IGNORE_BEGIN/END。
-
-- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `export.hpp`
 
@@ -64,6 +53,13 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 >
 > 所有需要跨库边界（或被应用程序直接链接）的符号都标注 TERMCHART_API。
 > 静态库构建时为空，避免污染。
+>
+> 使用纪律（2026-11-13 由 `TERMCHART_BUILD_SHARED=ON` 实测确立）：
+> * 只标【定义在 src/*.cpp】的声明。头文件里的内联定义（含 `inline` 自由函数、
+> 类内 `{ return ...; }` 访问器）**绝不标** —— MinGW 下 `dllimport` + 函数体
+> 会直接报 "definition is marked dllimport"；且 inline 函数在每个 TU 各生成
+> 一份，导出本就无意义。
+> * 静态构建下本宏为空，标错不会暴露，必须用 shared 构建做回归（CI 已有该 job）。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
@@ -534,6 +530,19 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class Easing : std::uint8_t`
 
+### `util/file.hpp`
+
+> file.hpp —— 以 UTF-8 路径打开文件
+>
+> 为什么需要这一层：Windows 上 `std::fopen(path, ...)` 的窄字符版本按**当前 ANSI
+> 代码页**解释路径，而库内路径一律是 UTF-8。用户名含中文时（`C:\Users\琳琳\...`）
+> 直接 fopen 必然失败——调用方明明传了正确路径，却拿到 IoError。
+>
+> 收口策略：所有「按调用方给的路径读写」都走 fopen_utf8，平台差异只落在
+> src/util/file_win32.cpp / file_posix.cpp，公开头不出现任何 #ifdef。
+
+- `TERMCHART_API std::FILE* fopen_utf8(const std::string& path, const char* mode)`
+
 ### `util/format.hpp`
 
 > format.hpp —— 轻量整数 / 浮点格式化
@@ -841,6 +850,61 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct Rgba`
 
+### `color/theme.hpp`
+
+> theme.hpp —— 主题聚合 + 按名取用（header-only）
+>
+> Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
+> （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
+> 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
+>
+> 与色板同处 color/（L2）：图表（chart=L12）也要按名取主题，住在 widget/（L18）
+> 的话图表引用不到。
+
+- `struct Theme`
+
+### `color/theme_dark.hpp`
+
+> theme_dark.hpp —— 深色主题：值语义色板常量表（header-only，不可变）
+>
+> 无全局状态、无注册表：要用就按值取用这张 constexpr 表。色值取向是
+> 深底浅字的终端默认观感（背景接近纯黑、强调色取终端常见的蓝）。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `color/theme_light.hpp`
+
+> theme_light.hpp —— 浅色主题：值语义色板常量表（header-only，不可变）
+>
+> 与 theme_dark 同构，槽位一致；背景亮、文字暗。浅底下的"高亮底色"
+> 用淡蓝而不是加深前景，保证与 background 的对比方向一致。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `color/theme_mono.hpp`
+
+> theme_mono.hpp —— 单色主题：值语义色板常量表（header-only，不可变）
+>
+> 只用灰阶（r==g==b），给无真彩/无 16 色降级路径与黑白终端用。
+> success/danger 与前景同白：亮度编码不了语义，语义差异由组件自己的
+> 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。图表侧的四个槽同理取灰阶。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `color/theme_palette.hpp`
+
+> theme_palette.hpp —— 全局调色板（值语义，header-only，不可变）
+>
+> **为什么住在 color/（L2）而不是 widget/**：这份色板要同时驱动 **图表**
+> （chart=L12）与 **控件**（widget=L18）。原先它住在 widget/（L18），而分层规则是
+> "文件只能 include 层号 ≤ 自己模块的文件"——chart(12) 根本引用不到 widget(18) 的
+> 东西，于是"全局主题"实际分裂成两套互不相通的配色：控件走 ThemePalette，图表走
+> 另一套 DefaultColor。下沉到 color/(L2) 后两侧都能引用，**一份色板驱动全局**。
+>
+> 无全局状态、无注册表：色板本身是纯值聚合，用法按值取用（也可整体替换）。
+
+- `struct ThemePalette`
+
 ## io（L2）
 
 ### `io/csv.hpp`
@@ -886,9 +950,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 > io/json.hpp —— JSON 解析（L2）
 >
-> 本文件于 2026-10-21 从 dsl/json.hpp 下沉收编（"数据入口归 io"）：解析核心与
-> 方言无关，dsl 及其余上层模块直接复用；dsl/json.hpp 现为 using 别名 shim，
-> 既有 dsl::JsonValue / dsl::parse_json 调用点零改动。
+> 解析核心与方言无关，dsl 及其余上层模块直接复用本文件（"数据入口归 io"）。
 >
 > 支持范围（**明确列出，避免"以为支持"**）：
 > ✅ 完整 JSON 值：null / true / false / 数字 / 字符串 / 数组 / 对象，任意嵌套；
@@ -1414,9 +1476,40 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `TERMCHART_API void accept(const Command& command, CommandVisitor& visitor)`
 - `TERMCHART_API void accept_all(const Scene& scene, CommandVisitor& visitor)`
 
-## image（L5）
+## media（L5）
 
-### `image/bitmap.hpp`
+### `media/encoder/gpa/bit_ops.hpp`
+
+> bit_ops.hpp —— 无状态、零格式依赖的基础整数原语。
+>
+> 只接受基础整数类型，返回基础整数类型；不持有 Context / State / CDF，
+> 不接收 AV1Block / HEVCBlock 之类的编码器专属结构。AV1 与 HEVC 的像素限幅
+> 语义在此统一为同一份实现，语法层仍各自保留调用点，避免改动码流基线。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `media/encoder/gpa/metrics.hpp`
+
+> metrics.hpp —— 无状态失真度量原语（累加器类型由调用方决定）。
+>
+> AV1 与 HEVC 的内核循环在此统一，精度/溢出口径仍由调用方选 AccumType：
+> AV1 走 uint64_t，HEVC 的 4K 块走 long long。侧 stride 必须可分别指定——
+> 源图与重建缓冲的行距本来就不同，单 stride 模板套不进真实调用点。
+> 语义只含 diff 与累加，不夹带任何 band / RD 统计。
+
+- （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `media/encoder/i_encoder.hpp`
+
+> i_encoder.hpp —— 编码器统一接口：只负责「裸帧 → 码流」，不碰容器封装。
+>
+> 与 docs/design/registry.md 的统一模式一致：Creator + function-local static
+> instance()。gpa/ 下的纯数学核保持静态调用，不进注册表。
+
+- `class IEncoder`
+- `class EncoderRegistry`
+
+### `media/image/bitmap.hpp`
 
 > bitmap.hpp —— 彩色像素缓冲（宽 / 高 / 通道 / 像素数组 / 行对齐）
 >
@@ -1427,7 +1520,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class Bitmap`
 
-### `image/bmp.hpp`
+### `media/image/bmp.hpp`
 
 > bmp.hpp —— BMP 解码（自主实现，零依赖；输出 RGBA）
 >
@@ -1446,7 +1539,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/convert.hpp`
+### `media/image/convert.hpp`
 
 > convert.hpp —— 位图与标量场的互转（GUI 与终端共用）
 >
@@ -1464,7 +1557,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/decoder.hpp`
+### `media/image/decoder.hpp`
 
 > decoder.hpp —— 图像解码入口（按魔数识别格式后分发）
 >
@@ -1479,7 +1572,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class DetectedFormat : std::uint8_t`
 
-### `image/encode.hpp`
+### `media/image/encode.hpp`
 
 > encode.hpp —— 统一位图编码分发器（自包含编码器入口）
 >
@@ -1494,9 +1587,10 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `enum class ImageFormat`
 - `enum class VideoCodec`
+- `enum class VideoEncodeMode`
 - `struct EncodeOptions`
 
-### `image/field.hpp`
+### `media/image/field.hpp`
 
 > field.hpp —— 光栅器消费的标量强度场（FloatField）
 >
@@ -1507,7 +1601,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class FloatField`
 
-### `image/gif_encode.hpp`
+### `media/image/gif_encode.hpp`
 
 > gif_encode.hpp —— 最小 GIF89a 编码器（自包含 LZW，支持多帧动画）
 >
@@ -1518,7 +1612,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/h264_encode.hpp`
+### `media/image/h264_encode.hpp`
 
 > h264_encode.hpp —— 自写 H.264（baseline AVC）编码器
 >
@@ -1529,19 +1623,22 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/hevc_encode.hpp`
+### `media/image/hevc_encode.hpp`
 
 > hevc_encode.hpp —— 自写 HEVC（H.265, Main profile）编码器
 >
 > 零依赖：自己写 NAL/VPS/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx265/ffmpeg。
-> 当前实现与 h264_encode 同哲学的 **I_PCM 档**：每个 Coding Tree Unit 递归二分到 8x8
-> 叶，叶直接以 PCM 模式输出原始采样（无损、无变换/量化/熵编码），用最少的码流语法把
-> 整条 YUV→NAL→MP4 链路打通并能被 ffprobe 解码。帧间预测 + 真正压缩作为第二阶段叠加，
-> 复用同一 NAL/容器骨架。
+> 三个档位：
+> Pcm   —— I_PCM 无损档，字节级稳定，作为 diag_hevc.py 的黄金回归基线；
+> Intra —— 阶段一真帧内压缩：35 种亮度模式逐 CU 决策 + 4x4 变换量化 + 残差 CABAC，
+> 三套系数扫描随模式切换，已通过 FFmpeg 软/硬解逐像素门禁；
+> Inter —— 阶段二帧间档：P 片真实现，Merge/AMVP + 1/4 像素插值（8-tap/4-tap）
+> + 可选双参考 L0=[POC-1,POC-2]（hevc_multi_ref）。整数/亚像素/多参考
+> 三条路径均经 ffmpeg 真解码 recon==dec 门禁，默认开关保字节级基线。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/jpeg_encode.hpp`
+### `media/image/jpeg_encode.hpp`
 
 > jpeg_encode.hpp —— 最小 baseline JPEG 编码器（8 位，3 通道 YCbCr 4:4:4，无隔行/无算术编码）
 >
@@ -1555,17 +1652,18 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `TERMCHART_API std::string encode_jpeg(const Bitmap& bitmap, int quality = 85)`
 
-### `image/mp4.hpp`
+### `media/image/mp4.hpp`
 
 > mp4.hpp —— MP4（ISO-BMFF）视频封装封装入口
 >
 > 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。把一串视频帧（Bitmap）按
 > EncodeOptions::video_codec 选内部码流编码器，再封装成可被标准播放器/ffprobe 读取的
-> MP4。当前 video_codec=H264 走自写 H.264 编码器；H265/AV1 尚未实现时返回空串。
+> MP4。video_codec=H264 / H265 走自写编码器；AV1 尚未实现——此时**显式返回空串**
+> （绝不静默降级成 H.264），可用 is_video_codec_supported() 预检。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/png.hpp`
+### `media/image/png.hpp`
 
 > png.hpp —— PNG 解码（8/16 位、非隔行；输出 RGBA）
 >
@@ -1584,7 +1682,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/png_encode.hpp`
+### `media/image/png_encode.hpp`
 
 > png_encode.hpp —— 最小 PNG 编码器（8 位 RGB / RGBA，非隔行）
 >
@@ -1604,7 +1702,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `TERMCHART_API std::uint32_t adler32(const std::uint8_t* data, std::size_t len) noexcept`
 - `TERMCHART_API std::string encode_png(const Bitmap& bitmap)`
 
-### `image/ttf_font.hpp`
+### `media/image/ttf_font.hpp`
 
 > ttf_font.hpp —— 自主 TTF 解析（sfnt 目录 + cmap + glyf/loca + hmtx + 二次
 > 贝塞尔轮廓光栅化 + glyph cache），输出 8-bit 灰度位图
@@ -1629,11 +1727,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct GlyphOutline`
 - `class TtfFont`
 
-### `image/webp_decode.hpp`
+### `media/image/webp_decode.hpp`
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
-### `image/webp_encode.hpp`
+### `media/image/webp_encode.hpp`
 
 > webp_encode.hpp —— 自包含 VP8L lossless WebP 编码器（零依赖）
 >
@@ -1645,6 +1743,49 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > VP8X/ANIM 多帧动画、有损 VP8。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
+
+### `media/io/file_sink.hpp`
+
+> file_sink.hpp —— 本地文件输出流。仅此文件包含具体文件系统逻辑。
+
+- `class FileSink final : public IByteSink`
+
+### `media/io/i_byte_sink.hpp`
+
+> i_byte_sink.hpp —— 抽象输出流：编码器只认这个接口，不认具体文件系统。
+>
+> C ABI 的两段式缓冲用 memory_sink；落盘用 file_sink。接口刻意保持极小，
+> 与 std::ostream 解耦，避免把 iostream 的 locale/异常语义带进媒体层。
+
+- `class IByteSink`
+
+### `media/io/memory_sink.hpp`
+
+> memory_sink.hpp —— 内存输出流：给 C ABI 两段式缓冲与单测用。
+
+- `class MemorySink final : public IByteSink`
+
+### `media/media.hpp`
+
+> media.hpp —— 媒体层门面：按注册名把裸帧编码为完整文件字节流。
+>
+> 底层 encode_* 保持原样，字节基线不变；本层只做注册表驱动的格式路由与容器
+> 能力查询。C ABI 与按字符串选格式的调用方都走这里，不再手写 if-else 分流。
+> 内置编码器由 register_all_builtin_codecs() 显式登记，不依赖静态初始化，
+> 因此静态链接不会被裁掉。
+
+- `void register_all_builtin_codecs()`
+
+### `media/video/muxer/i_video_muxer.hpp`
+
+> i_video_muxer.hpp —— 容器封装器接口与注册表。
+>
+> 与 EncoderRegistry 同样的模式，但这里管的是「容器」：png/jpeg/gif 单图，
+> mp4/ivf 多帧。C ABI 的字符串路由只需查这里，不再手写 if-else。
+
+- `enum class MuxKind : std::uint8_t`
+- `class IVideoMuxer`
+- `class MuxerRegistry`
 
 ## raster（L6）
 
@@ -3841,8 +3982,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 布局（graph/layout）、路由（graph/route）、形状（graph/shape）与图元
 > （graph/diagrams）都在这之上构建，因此同一张 Graph 可以被多种渲染消费。
 >
-> 注意：add_node 返回的是 vector 内元素的引用，后续 add_node 可能使引用失效；
-> 需要长期持有请用 id() 再 find()。
+> 增操作的返回类型**刻意不对称**（2026-11-13 复核后定稿，不做破坏性统一）：
+> add_node 不会失败 ⇒ Node&；add_edge 端点可能不存在 ⇒ Edge*（失败 = nullptr）。
+> 统一成引用会丢掉失败通道，统一成 Id 则要改动 195 处调用点且无功能收益。
+> 真正统一的是使用约定：**返回值仅供即时使用**，两者都可能因后续插入失效；
+> 长期持有一律走身份查询 find(NodeId) / find_edge(from, to)。
 
 - `class Graph`
 
@@ -4517,6 +4661,20 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `class BoxSelect`
 
+### `interaction/spatial_index.hpp`
+
+> spatial_index.hpp —— 命中区域的空间哈希索引（"建一次、查多次"场景）
+>
+> 与 hit_test.hpp 的一次性线性扫描互补：当同一批 HitRegion 要被反复查询
+> （GUI 悬停、鼠标连续移动、大散点图），先把区域装进 HitIndex，查询从 O(N)
+> 降为近似 O(1)。现有 topmost_hit/hit_payloads 完全不改，调用方可按需 opt-in。
+>
+> 语义与 hit_test.hpp **逐位一致**：topmost 取最后登记者，payloads 自下而上。
+> 索引内部持有 regions 的快照（不借用调用方 vector），因此不会因调用方
+> 重建区域而悬垂；需要更新时显式 reset()。
+
+- `class HitIndex`
+
 ### `interaction/tooltip.hpp`
 
 > tooltip.hpp —— 悬停数据标签（带边框的小浮层）
@@ -4764,6 +4922,8 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `struct AstAttribute`
 - `struct AstNode`
 - `struct AstEdge`
+- `struct TransparentStringHash`
+- `struct TransparentStringEqual`
 - `struct AstGraph`
 
 ### `dsl/csv_sniff.hpp`
@@ -4794,6 +4954,7 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 - `enum class ColumnType : std::uint8_t`
 - `struct ColumnProfile`
 - `struct CsvOptions`
+- `class TERMCHART_API CsvRowSink`
 
 ### `dsl/d2.hpp`
 
@@ -4807,7 +4968,12 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > `name.prop: value` 形式（同上，但显式指定节点）
 > 连接：`a -> b`、`a <- b`、`a -- b`（无箭头）、链 `a -> b -> c`、`a -> b: 标签`
 > `direction: right|left|up|down` → AstGraph::direction（LR/RL/BT/TB）
-> ⛔ 认出但忽略：`style: { … }` 块（连同其 `}`）、`#` 注释、未知键值对
+> `style: { … }` 顶层样式块 → **对所有节点生效**（逐条落成节点属性 `style.<名>`）
+> `vars: { … }` 变量块 → 落进图级属性 `var.<名>`（目前只解析，**不做** `${}` 替换）
+> `classes: { 名字: { … } }` 类定义 → 落进图级属性 `class.<名>.<属性>`；
+> 被 `x.classes: 名字` 引用的节点自动套用该类样式
+> `x.style: { … }` 节点级样式块 → 逐条落成节点属性 `style.<名>`
+> ⛔ 认出但忽略：`#` 注释、未知键值对
 > ⛔ 不支持：`...` 常量节点、泛型 `**a**` 强调语法、SQL/class/markdown 等嵌入块、
 > `a -> b: { label: x }` 这种"边上的属性块"（按普通边解析，标签取不到）
 >
@@ -4866,17 +5032,6 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > 可选地把首个诊断写到 out_diagnostic；任何路径都**不抛异常**。
 
 - `struct DotParseOptions`
-
-### `dsl/json.hpp`
-
-> dsl/json.hpp —— JSON 解析入口（compat shim，L17）
->
-> 实现已于 2026-10-21 下沉收编至 io/json.hpp（L2，"数据入口归 io"）。本头保留
-> 原 dsl 命名空间的入口语义：dsl::JsonValue / dsl::JsonOptions / dsl::parse_json
-> 均为 io 命名空间对应符号的别名，既有调用点与测试零改动。
-> 新代码请直接 include "termchart/io/json.hpp"。
-
-- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `dsl/lexer.hpp`
 
@@ -4989,13 +5144,17 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > `A->B` / `A-->B`（无箭头），后接 `+` / `-` 的激活简写
 > `activate A` / `deactivate A`（记到**上一条消息**的 `activate`/`deactivate`）
 > `Note left of A: 文本` / `Note right of A: …` / `Note over A,B: …`
+> `loop`/`alt`/`else`/`opt`/`par`/`critical`/`rect`/`break` 块语句：块标签、嵌套深度、
+> 分支（alt 的 else / par 的 and）以及每条消息的归属都进 AST（见 SequenceBlock）
 > `%%` 注释
-> ⛔ 认出但忽略：`loop`/`alt`/`else`/`opt`/`par`/`end` 等块语句（不展开嵌套），
-> `autonumber`、`title`、`box`、`link`、`links`、`participant` 的样式参数
-> ⛔ 不支持：`create`/`destroy` 参与者、`break`、递归激活栈的精确配对
+> ⛔ 认出但忽略：`autonumber`、`title`、`box`、`link`、`links`、`create`/`destroy`
+> 参与者、`participant` 的样式参数
+> ⛔ 不支持：递归激活栈的精确配对
 
 - `enum class MessageKind : std::uint8_t`
 - `struct SequenceParticipant`
+- `struct SequenceBranch`
+- `struct SequenceBlock`
 - `struct SequenceMessage`
 - `struct SequenceNote`
 - `struct AstSequence`
@@ -5234,39 +5393,40 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `widget/theme.hpp`
 
-> theme.hpp —— 主题聚合 + 按名取用（header-only）
+> theme.hpp —— 主题聚合 + 按名取用（转发到 color/，既有 include 路径继续可用）
 >
-> Theme 把名字与 ThemePalette 绑在一起，theme_by_name() 提供按名取用的薄入口
-> （dark/light/mono），语义色板常量来自 theme_dark/light/mono。无注册表、无全局
-> 状态——要扩展主题就再加一张 constexpr 表并在这个 switch 里加一行。
+> Theme 与 theme_by_name() 已下沉到 **color/（L2）**：图表（chart=L12）也要按名取
+> 主题，住在 widget/（L18）的话图表引用不到。这里只保留别名，既有写法一字不改。
 
-- `struct Theme`
+- （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `widget/theme_dark.hpp`
 
-> theme_dark.hpp —— 深色主题：值语义色板常量表（header-only，不可变）
+> theme_dark.hpp —— 深色主题（转发到 color/，既有 include 路径继续可用）
 >
-> 无全局状态、无注册表：要用就按值取用这张 constexpr 表。色值取向是
-> 深底浅字的终端默认观感（背景接近纯黑、强调色取终端常见的蓝）。
+> 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+> （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+> 这里只保留别名，`termchart::widget::kDarkTheme` 的既有写法一字不改。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `widget/theme_light.hpp`
 
-> theme_light.hpp —— 浅色主题：值语义色板常量表（header-only，不可变）
+> theme_light.hpp —— 浅色主题（转发到 color/，既有 include 路径继续可用）
 >
-> 与 theme_dark 同构，槽位一致；背景亮、文字暗。浅底下的"高亮底色"
-> 用淡蓝而不是加深前景，保证与 background 的对比方向一致。
+> 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+> （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+> 这里只保留别名，`termchart::widget::kLightTheme` 的既有写法一字不改。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
 ### `widget/theme_mono.hpp`
 
-> theme_mono.hpp —— 单色主题：值语义色板常量表（header-only，不可变）
+> theme_mono.hpp —— 单色主题（转发到 color/，既有 include 路径继续可用）
 >
-> 只用灰阶（r==g==b），给无真彩/无 16 色降级路径与黑白终端用。
-> success/danger 与前景同白：亮度编码不了语义，语义差异由组件自己的
-> 字符形态承担（如 checkbox 的 'x'/' '、按钮的按压反白）。
+> 色板定义已下沉到 **color/（L2）**：它要同时驱动图表（chart=L12）与控件
+> （widget=L18），留在 widget/ 里图表引用不到，"全局主题"就分裂成两套。
+> 这里只保留别名，`termchart::widget::kMonoTheme` 的既有写法一字不改。
 
 - （无命名空间级声明，或为纯宏 / 伞形头）
 
@@ -5285,10 +5445,11 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 > + 状态旗标（可见/可用/可聚焦/已聚焦）+ 可覆写的命中测试。
 > 它**不定义事件系统**——事件路由归 interaction/，无状态组件见
 > immediate_widget.hpp（即时模式），响应式值见 reactive.hpp。
-> * ThemePalette 是值语义色板：theme_dark/light/mono 各提供一张
-> inline constexpr 表；不可变、无全局状态，可按值传递、可编译期取用。
+> * ThemePalette 是值语义色板：定义在 **color/（L2）**，因为它要同时驱动
+> 控件（widget=L18）与图表（chart=L12）——留在 widget/ 里 chart 引用不到
+> （层号规则：只能 include 层号 ≤ 自己的文件），"全局主题"就分裂成两套。
+> 这里保留 `termchart::widget::ThemePalette` 别名，既有写法一字不改。
 
-- `struct ThemePalette`
 - `class Widget`
 
 ## plugin（L19）
@@ -5515,15 +5676,13 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ### `api/opts.hpp`
 
-> opts.hpp —— ApiOptions 链式配置（旧名 `Opts`，见文件末尾的兼容别名）
+> opts.hpp —— ApiOptions 链式配置
 >
 > 面向"一行出图"的入口：所有可选参数都在这一处，且**每个都有默认值**，
-> 于是 tc::quick::hello() 之类的调用可以完全零配置。
+> 于是 api::hello() 之类的调用可以完全零配置。
 > 语义：未设置的项（std::optional 为空）表示"由库自行决定"。
 >
-> 命名：全库其余位置一律 `XxxOptions`（MetroOptions / SankeyOptions / …），
-> 这里原名 `Opts` 是唯一的例外；为"同一语义同一命名"收敛成 `ApiOptions`，
-> 旧名以别名保留，因此**不破坏**任何既有调用点。
+> 命名与全库一致：`XxxOptions`（MetroOptions / SankeyOptions / …）。
 
 - `class ApiOptions`
 
@@ -5688,19 +5847,45 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 ## gui（L22）
 
+### `gui/cells.hpp`
+
+> cells.hpp —— 字符网格（CellBuffer）→ 位图：把"终端里看到的画面"直接存成 PNG
+>
+> 为什么补这条通路：库里原本只有两条位图出口——
+> * image::encode_png(Bitmap)：位图编码；
+> * gui::SceneRenderer：Scene IR → 位图（矢量语义 + 5×7 点阵字形）。
+> 但**终端画面本身**（canvas::Canvas::to_buffer() 的字符网格 + 每格样式）没有位图出口：
+> 想把终端里真实看到的样子存成 PNG，只能靠外部工具去解析 ANSI 字节流——那是旁路，
+> 引擎不参与，画质与终端实际渲染脱节（颜色被降级、盲文/半块被当普通字形处理）。
+>
+> 本文件补上正路：CellBuffer → Bitmap，字形语义与终端一致——
+> * 盲文 U+2800–U+28FF：按 Unicode Braille Patterns 的 2×4 点阵**直接画点**
+> （盲文在终端里本就是点阵语义，不是字形）；
+> * 方块元素 U+2580–U+259F：按字符语义画矩形/与背景混色（半块热力图靠它表达数值，
+> 上半=前景色、下半=背景色）；
+> * 其余码点：gui::draw_text（内置 5×7 点阵 + 系统 TTF，CJK 走 TTF）。
+>
+> 用途：README 配图、文档插图、把终端里好看的样子存成图片分享。
+
+- `class CellBuffer`
+- `struct CellBitmapOptions`
+
 ### `gui/font.hpp`
 
 > font.hpp —— GUI 文本的唯一出口（对调用方透明的混合字体后端）
 >
 > 渲染后端分工（接口不变，底层实现见 font.cpp）：
-> * ASCII 0x20..0x7E：内置 5×7 点阵。零成本、零外部依赖，且"ASCII 字形
-> 落像素"的像素契约由测试钉住；
-> * 其余码点（CJK / Latin-1 扩展 / 全角符号…）：惰性加载系统 TTF 字体
-> （Windows 自动尝试 C:/Windows/Fonts/msyh.ttc、simhei.ttf 等；可用
-> 环境变量 TERMCHART_GUI_FONT 显式指定字体文件路径），找不到字体或
-> 解析失败时 fail-safe 退回点阵占位框——不抛异常、不崩溃。
+> * 全部码点（含 ASCII 0x20..0x7E）：优先用系统 TTF 光栅化——按平台候选
+> 清单加载一族字体（拉丁在前、CJK 在后），每个码点取首个含其轮廓的字体，
+> 矢量 4×4 超采样 → 清晰且带字距，不再用内置 5×7 点阵硬撑；
+> * 内置 5×7 点阵 + 虚线占位框：TTF 整体不可用（无系统字体 / 解析失败 /
+> 某码点无轮廓）时的 fail-safe 兜底——不抛异常、不崩溃、不留白。
+> 系统字体发现：优先用运行时 set_font_file() 指定的字体文件；其次环境变量
+> TERMCHART_GUI_FONT；否则按平台候选清单（Windows 的 Segoe UI/Arial/Consolas…
+> 与雅黑/黑体；Linux 的 DejaVu/Liberation 与 Noto CJK/WQY；macOS 的
+> Helvetica/PingFang…）逐个解析。
 > 等宽语义不变：列数由 util 的显示宽度决定（CJK 占 2 列），每格 advance
-> 恒等于 cell_w；TTF 只决定格内像素，不参与排版步进（无 shaping/hinting，
+> 恒等于 cell_w；字体只决定格内像素，不参与排版步进（无 shaping/hinting，
 > 不存在字距把布局挤歪的问题）。
 >
 > 字形是 5×7 列位点阵（数据与位序约定见 font.cpp 的 kFont5x7），渲染时映射进
@@ -5710,6 +5895,8 @@ class / struct / enum class / 命名空间级函数（含头内 inline 定义，
 
 - `struct TextMetrics`
 - `class TERMCHART_API FontBackend`
+- `TERMCHART_API void set_font_file(std::string path)`
+- `TERMCHART_API void clear_font_file() noexcept`
 
 ### `gui/hover_chart.hpp`
 

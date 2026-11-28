@@ -19,10 +19,10 @@
 #include <cstdlib>
 #include <cstdint>
 
-#include "src/image/codec/hevc/quantize.hpp"
-#include "src/image/codec/hevc/transform.hpp"
-#include "src/image/codec/hevc/transform_table.hpp"
-#include "src/image/codec/hevc/transquant.hpp"
+#include "src/media/encoder/hevc/quantize.hpp"
+#include "src/media/encoder/hevc/transform.hpp"
+#include "src/media/encoder/hevc/transform_table.hpp"
+#include "src/media/encoder/hevc/transquant.hpp"
 
 namespace {
 

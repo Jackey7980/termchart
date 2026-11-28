@@ -21,7 +21,7 @@
 #include "termchart/canvas/primitives.hpp"
 #include "termchart/core/cell.hpp"
 #include "termchart/detail/block_chars.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/rasterizer.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
 

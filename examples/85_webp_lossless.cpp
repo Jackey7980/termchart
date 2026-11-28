@@ -22,7 +22,7 @@
 #include "termchart/core/rgb.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/webp_encode.hpp"
+#include "termchart/media/image/webp_encode.hpp"
 #include "termchart/scene/builder.hpp"
 #include "termchart/scene/scene.hpp"
 

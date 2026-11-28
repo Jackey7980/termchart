@@ -1,7 +1,7 @@
 // test_raster_braille.cpp —— 盲文光栅器的子像素几何与查表
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/braille.hpp"
 
 namespace {

@@ -81,7 +81,7 @@
 #include "termchart_gui/layout/flex.hpp"
 #include "termchart_gui/backend_tk/tui_backend.hpp"
 #include "termchart_gui/backend_tk/backend.hpp"   // HeadlessBackend（离屏 PNG 导出用）
-#include "termchart/image/png_encode.hpp"          // image::encode_png
+#include "termchart/media/image/png_encode.hpp"          // image::encode_png
 // 原生 Win32 真窗口后端（可选插件，默认关）：仅在该插件启用时才存在。
 #ifdef TERMCHART_BUILD_GUI_WIN32
 #include "termchart_gui_win32/win32_backend.hpp"

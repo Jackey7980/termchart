@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/ttf_font.hpp"
+#include "termchart/media/image/ttf_font.hpp"
 
 namespace {
 

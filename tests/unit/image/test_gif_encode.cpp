@@ -9,9 +9,9 @@
 
 #include "termchart/api/export_image.hpp"
 #include "termchart/core/expected.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/encode.hpp"
-#include "termchart/image/gif_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/encode.hpp"
+#include "termchart/media/image/gif_encode.hpp"
 
 using namespace termchart;
 using namespace termchart::image;

@@ -4,9 +4,9 @@
 #include <cstdint>
 
 #include "termchart/core/rgb.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/convert.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/convert.hpp"
+#include "termchart/media/image/field.hpp"
 
 namespace {
 

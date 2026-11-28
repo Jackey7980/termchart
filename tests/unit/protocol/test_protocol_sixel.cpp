@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/protocol/sixel.hpp"
 
 namespace {

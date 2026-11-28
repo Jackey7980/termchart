@@ -40,7 +40,7 @@
 #include "termchart/core/style.hpp"
 #include "termchart/graph/diagrams/mindmap.hpp"
 #include "termchart/graph/graph.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/box.hpp"
 #include "termchart/layout/grid.hpp"

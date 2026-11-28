@@ -5,7 +5,7 @@
 #include <string>
 
 #include "internal.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace termchart::protocol {
 

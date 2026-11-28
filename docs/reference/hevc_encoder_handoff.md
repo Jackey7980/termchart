@@ -63,25 +63,25 @@
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/image/codec/hevc/quantize.cpp` | 整表重写为 HEVC 语义：`level_scale={40,45,51,57,64,72}`、`shift = bd+log2-5 = 5`、`scale_m=16`、`add = 1<<(shift-1)` |
-| `src/image/codec/hevc/transform.cpp` | 新增 `fwd_transform_4x4(residual, coeff, use_dst)`（DCT 用 x265 `g_t4`，DST 用规范表 8-3，两段 `>>1`/`>>8`）；逆变换逐常量复刻 ffmpeg `idct_4x4` / `transform_4x4_luma`（先列 `>>7`、后行 `>>12`、`clip_int16`） |
-| `src/image/codec/hevc/transquant.{hpp,cpp}` | `encode_tu_4x4` / `reconstruct_tu_4x4` 增加 `bool use_dst`（亮度 4×4 走 DST-VII，色度走 DCT） |
-| `src/image/codec/hevc/intra_prediction.{hpp,cpp}` | 旧接口（`IntraMode` + `fill_reference` + `predict`）整体删除，换成 `predict_intra(mode, n, top, left, has_top, has_left, dst)`，**mode 0=Planar、1=DC**（与 HEVC 模式编号一致） |
-| `src/image/codec/hevc/residual_coding.cpp` | 修 `next_greater1_ctx` 的上下文演化（见 §4）；escape 分支已实现 |
-| `src/image/hevc_encode.cpp` | `build_intra_idr_slice` 换成真实管线：维护 YUV420 重建帧 `rec`、逐 TU 取 top/left 参考、`predict_intra` + `encode_tu_4x4` 写回 rec、把系数从行主序重排成对角扫描序后交给 `encode_cu_intra_8x8`；另外修了 `code_tree` 的 `split_cu_flag`（见 §9） |
+| `src/media/encoder/hevc/quantize.cpp` | 整表重写为 HEVC 语义：`level_scale={40,45,51,57,64,72}`、`shift = bd+log2-5 = 5`、`scale_m=16`、`add = 1<<(shift-1)` |
+| `src/media/encoder/hevc/transform.cpp` | 新增 `fwd_transform_4x4(residual, coeff, use_dst)`（DCT 用 x265 `g_t4`，DST 用规范表 8-3，两段 `>>1`/`>>8`）；逆变换逐常量复刻 ffmpeg `idct_4x4` / `transform_4x4_luma`（先列 `>>7`、后行 `>>12`、`clip_int16`） |
+| `src/media/encoder/hevc/transquant.{hpp,cpp}` | `encode_tu_4x4` / `reconstruct_tu_4x4` 增加 `bool use_dst`（亮度 4×4 走 DST-VII，色度走 DCT） |
+| `src/media/encoder/hevc/intra_prediction.{hpp,cpp}` | 旧接口（`IntraMode` + `fill_reference` + `predict`）整体删除，换成 `predict_intra(mode, n, top, left, has_top, has_left, dst)`，**mode 0=Planar、1=DC**（与 HEVC 模式编号一致） |
+| `src/media/encoder/hevc/residual_coding.cpp` | 修 `next_greater1_ctx` 的上下文演化（见 §4）；escape 分支已实现 |
+| `src/media/image/hevc_encode.cpp` | `build_intra_idr_slice` 换成真实管线：维护 YUV420 重建帧 `rec`、逐 TU 取 top/left 参考、`predict_intra` + `encode_tu_4x4` 写回 rec、把系数从行主序重排成对角扫描序后交给 `encode_cu_intra_8x8`；另外修了 `code_tree` 的 `split_cu_flag`（见 §9） |
 
 ### 2.1 其后追加的一轮（P0-A，见 §5）
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/image/codec/hevc/parameter_sets.hpp` | `Pps` 增 `bool disable_deblocking = false`（POD，默认 false ⇒ 位序列与 G0 基线一致） |
-| `src/image/codec/hevc/parameter_sets.cpp` | `write_pps` 按该开关写 `present=1 / override=0 / disabled=1`；否则沿用 `present=0` |
-| `src/image/hevc_encode.cpp` | 真压缩档传 `Pps{.disable_deblocking = true}`；PCM 档仍传 `Pps{}` |
-| `src/image/codec/hevc/slice_header.cpp` | 仅注释更新：说明 `override_enabled=0` ⇒ slice header 零新增比特 |
+| `src/media/encoder/hevc/parameter_sets.hpp` | `Pps` 增 `bool disable_deblocking = false`（POD，默认 false ⇒ 位序列与 G0 基线一致） |
+| `src/media/encoder/hevc/parameter_sets.cpp` | `write_pps` 按该开关写 `present=1 / override=0 / disabled=1`；否则沿用 `present=0` |
+| `src/media/image/hevc_encode.cpp` | 真压缩档传 `Pps{.disable_deblocking = true}`；PCM 档仍传 `Pps{}` |
+| `src/media/encoder/hevc/slice_header.cpp` | 仅注释更新：说明 `override_enabled=0` ⇒ slice header 零新增比特 |
 | `docs/reference/hevc_encoder_handoff.md` / `ROADMAP.md` | §5 改写为实测结论；G0 字节数/sha 口径校正为 20433 / `5d4adef5…` |
 
 **后续状态（2026-11-09）**：`hevc_encode.cpp` 现传 `Pps{}`（解码端开滤波），并在
-`build_intra_idr_slice` 出口调 `deblock_frame_luma`（`src/image/codec/hevc/deblocking.cpp`，
+`build_intra_idr_slice` 出口调 `deblock_frame_luma`（`src/media/encoder/hevc/deblocking.cpp`，
 近似实现：只滤亮度、bS 恒 2、单 tc）。实测 recon vs 默认解码 Y 平面 maxdiff≈4
 （QP26 / 128×64 渐变图）；`TERMCHART_HEVC_NO_DBLOCK=1` 编码 + `-skip_loop_filter all`
 解码时 maxdiff=0，该组合才是"预测 / 变换 / 量化 / CABAC / 重建"的干净逐像素门禁。
@@ -95,9 +95,9 @@
 
 ```powershell
 # 编译临时验证驱动（-- 需 -DTERMCHART_STATIC 与 -DTERMCHART_HEVC_RECON_DUMP）
-g++ -std=c++20 -O2 -DTERMCHART_STATIC -DTERMCHART_HEVC_RECON_DUMP -Iinclude -Isrc -Isrc/image `
+g++ -std=c++20 -O2 -DTERMCHART_STATIC -DTERMCHART_HEVC_RECON_DUMP -Iinclude -Isrc -Isrc/media/image `
   -o build_scratch/intra_recon.exe _intra_recon_test.cpp `
-  src/image/hevc_encode.cpp src/image/codec/bitstream/ep_nal.cpp src/image/codec/hevc/*.cpp
+  src/media/image/hevc_encode.cpp src/media/encoder/bitstream/ep_nal.cpp src/media/encoder/hevc/*.cpp
 
 # 六种测试形态（第一个参数）
 ./build_scratch/intra_recon.exe flat     # 全平 118

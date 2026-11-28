@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/hevc_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
 
 using namespace termchart::image;
 
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
                 bmp.set(xx, yy, 0, static_cast<std::uint8_t>(R));
                 bmp.set(xx, yy, 1, static_cast<std::uint8_t>(G));
                 bmp.set(xx, yy, 2, static_cast<std::uint8_t>(B));
-                // 与 src/image/hevc_encode.cpp::to_yuv 同一套 BT.601 系数
+                // 与 src/media/image/hevc_encode.cpp::to_yuv 同一套 BT.601 系数
                 yplane[static_cast<std::size_t>(yy) * W + xx] =
                     static_cast<std::uint8_t>(cl(((66 * R + 129 * G + 25 * B + 128) >> 8) + 16));
                 if ((xx & 1) == 0 && (yy & 1) == 0) {

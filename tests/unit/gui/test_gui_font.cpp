@@ -12,7 +12,7 @@
 #include "termchart/core/point.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/gui/font.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace {
 

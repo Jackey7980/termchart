@@ -4,9 +4,9 @@
 #include <array>
 #include <cstdint>
 
-#include "src/image/codec/av1/postproc/cdef.hpp"
-#include "src/image/codec/av1/postproc/loop_restoration.hpp"
-#include "src/image/codec/av1/rdo/rdo.hpp"
+#include "src/media/encoder/av1/postproc/cdef.hpp"
+#include "src/media/encoder/av1/postproc/loop_restoration.hpp"
+#include "src/media/encoder/av1/rdo/rdo.hpp"
 
 using namespace termchart::image::codec::av1;
 

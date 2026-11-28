@@ -10,7 +10,7 @@
 #include "termchart/core/rect.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 
 namespace termchart_gui {
 

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-#include "termchart/image/bmp.hpp"
+#include "termchart/media/image/bmp.hpp"
 
 namespace {
 

@@ -10,6 +10,7 @@
 //   自动：auto_plot（AutoViz）
 #include "termchart_capi.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -24,10 +25,12 @@
 
 #include "termchart/api/autoviz_plot.hpp"
 #include "termchart/api/chart.hpp"
+#include "termchart/autoviz/engine.hpp"
+#include "termchart/data/dataframe.hpp"
 #include "termchart/api/quick.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/decoder.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/decoder.hpp"
+#include "termchart/media/image/encode.hpp"
 #include "termchart/util/file.hpp"
 #include "termchart/backend/vector/backend.hpp"
 #include "termchart/backend/vector/svg_backend.hpp"
@@ -110,12 +113,14 @@
 #include "termchart/core/error.hpp"
 #include "termchart/core/style.hpp"
 #include "termchart/gui/cells.hpp"
-#include "termchart/image/encode.hpp"
+#include "termchart/media/image/encode.hpp"
 #include "termchart/render/compositor.hpp"
 #include "termchart/render/renderer.hpp"
 #include "termchart/scene/command.hpp"
 #include "termchart/scene/scene.hpp"
 #include "termchart/version.hpp"
+
+#include "termchart/media/media.hpp"
 
 // 关系图 / 文档 / 终端协议：C 面直接消费与 C++ 同一批入口，不另建绘制逻辑。
 #include "termchart/backend/structured/html_backend.hpp"
@@ -143,6 +148,37 @@
 #include "termchart/protocol/iterm2_inline.hpp"
 #include "termchart/protocol/kitty_graphics.hpp"
 #include "termchart/protocol/sixel.hpp"
+
+// 终端 / 输入 / 命中 / 导出物种 / 时序图 / 多帧编码 / 3D·4D。
+#include "termchart/backend/snapshot/backend.hpp"
+#include "termchart/backend/snapshot/html_pre_backend.hpp"
+#include "termchart/backend/snapshot/json_backend.hpp"
+#include "termchart/backend/snapshot/png_screenshot.hpp"
+#include "termchart/backend/snapshot/text_backend.hpp"
+#include "termchart/backend/vector/eps_backend.hpp"
+#include "termchart/backend/vector/latex_backend.hpp"
+#include "termchart/backend/vector/pdf_backend.hpp"
+#include "termchart/canvas/scene_renderer.hpp"
+#include "termchart/chart/hit_region.hpp"
+#include "termchart/chart3d/projector.hpp"
+#include "termchart/chart3d/scatter.hpp"
+#include "termchart/chart3d/surface.hpp"
+#include "termchart/chart4d/projector4d.hpp"
+#include "termchart/chart4d/wire.hpp"
+#include "termchart/document/span.hpp"
+#include "termchart/dsl/mermaid_sequence.hpp"
+#include "termchart/graph/diagrams/uml_sequence.hpp"
+#include "termchart/interaction/hit_test.hpp"
+#include "termchart/interaction/input_parser.hpp"
+#include "termchart/math3d/camera.hpp"
+#include "termchart/math4d/camera4.hpp"
+#include "termchart/math4d/mat5.hpp"
+#include "termchart/term/caps.hpp"
+#include "termchart/term/clipboard.hpp"
+#include "termchart/term/hyperlink.hpp"
+#include "termchart/term/mouse_mode.hpp"
+#include "termchart/term/size.hpp"
+#include "termchart/term/terminal.hpp"
 
 using namespace termchart;
 
@@ -1559,14 +1595,19 @@ static std::string lower_ascii(std::string s) {
     return s;
 }
 
-// 显式映射，未知格式如实报错：不做"猜个格式编出去"。
-static bool image_format_from_name(const std::string& raw, image::ImageFormat* out) {
+// 格式字符串交给媒体注册表解析：注册表是名字的唯一真源，未知名字如实报错。
+static bool image_name_from_registry(const char* raw, std::string* out) {
+    if (raw == nullptr || raw[0] == '\0') return false;
     const std::string f = lower_ascii(raw);
-    if (f == "png") { *out = image::ImageFormat::Png; return true; }
-    if (f == "jpg" || f == "jpeg") { *out = image::ImageFormat::Jpeg; return true; }
-    if (f == "gif") { *out = image::ImageFormat::Gif; return true; }
-    if (f == "webp") { *out = image::ImageFormat::Webp; return true; }
-    return false;
+    if (!media::has_encoder(f)) return false;
+    *out = f;
+    return true;
+}
+
+// 单帧入口的历史契约：静态图 + 静态 AV1；mp4 等动态容器只走多帧入口。
+static bool is_single_frame_format(const std::string& name) {
+    return name == "png" || name == "jpeg" || name == "jpg" ||
+           name == "gif" || name == "webp" || name == "av1" || name == "ivf";
 }
 
 static std::string extension_of(const std::string& path) {
@@ -1596,17 +1637,18 @@ static tc_status encode_to_buffer(tc_image_handle image, const char* format, uin
     if (bmp == nullptr) {
         return fail(err, "image encode: null handle", TC_ERR_INVALID_HANDLE);
     }
-    image::ImageFormat fmt{};
-    if (format == nullptr || !image_format_from_name(format, &fmt)) {
+    std::string name;
+    if (!image_name_from_registry(format, &name) || !is_single_frame_format(name)) {
         return fail(err, "image encode: unsupported format '" + std::string(format ? format : "") +
-                             "' (png / jpeg / gif / webp)",
+        "' (png / jpeg / gif / webp / av1)",
                     TC_ERR_UNSUPPORTED);
     }
     std::string bytes;
     try {
         image::EncodeOptions opts{};
         opts.quality = quality == 0 ? 85 : static_cast<int>(quality);
-        bytes = image::encode(*bmp, fmt, opts);
+        std::array<const image::Bitmap, 1> one{*bmp};
+        bytes = media::encode(one, name, opts);
     } catch (const std::exception& ex) {
         return fail(err, std::string("image encode threw: ") + ex.what(), TC_ERR_RENDER);
     } catch (...) {
@@ -2626,3 +2668,1087 @@ tc_status tc_doc_save(tc_doc_handle doc, const char* path, const char* format, c
 }
 
 }  // extern "C"
+
+// ────────────────────────────────────────────────────────────────────────────
+// 终端控制 / 自绘 / 增量渲染 / 输入与命中 / 导出物种 / 时序图 / 多帧 / 3D·4D
+// ────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+struct TermHandle {
+    explicit TermHandle(term::TerminalOptions o) : t(o) {}
+    term::Terminal t;
+};
+
+struct CanvasHandle {
+    CanvasHandle(std::uint32_t w, std::uint32_t h) : cv(w, h) {}
+    canvas::Canvas cv;
+};
+
+struct RendererHandle {
+    explicit RendererHandle(ColorDepth d) : r(d) {}
+    render::Renderer r;
+    // 两段式缓冲：cap=0 的查询也会推进 Renderer 的 prev，必须缓存该帧，
+    // 否则随后按长度取值时拿到的是"与刚更新的 prev 比较"的空结果。
+    std::string cached;
+    bool has_cache = false;
+};
+
+struct InputHandle {
+    interaction::InputParser parser;
+    std::vector<std::string> pastes;  // tc_event.text 指向这里，下次 feed 前有效
+    // 同理：feed 会消耗字节流，cap=0 的查询必须缓存事件供随后取用。
+    std::vector<interaction::Event> cached_events;
+    std::vector<std::string> cached_pastes;
+    bool has_cache = false;
+};
+
+struct RegionsHandle {
+    std::vector<chart::HitRegion> regions;
+};
+
+struct SeqHandle {
+    graph::SeqModel model;
+};
+
+struct Scene3dHandle {
+    std::string kind;
+    std::vector<double> points;   // scatter3d: xyz / wire4d: xyzw
+    std::vector<double> grid;     // surface3d: z（行主序）
+    std::uint32_t grid_cols = 0;
+    std::uint32_t grid_rows = 0;
+    std::vector<std::uint32_t> edges;
+    double x0 = 0.0, x1 = 1.0, y0 = 0.0, y1 = 1.0;
+    double azimuth = 35.0, elevation = 25.0, fovy = 55.0;
+    double rot_xw = 20.0, rot_yz = 15.0;
+};
+
+inline Style style_or_default(const tc_style* s) noexcept {
+    return s ? to_style(s) : Style{};
+}
+
+inline ColorDepth depth_of(std::uint8_t d) noexcept {
+    return d ? to_depth(static_cast<tc_color_depth>(d)) : ColorDepth::TrueColor;
+}
+
+// CellBuffer → 统一输出。需要 Scene 的格式（SVG/PDF/EPS）在此显式拒绝：
+// 持有 Scene 的对象（chart_export / scene3d_render）自己走矢量路径。
+inline tc_status render_cells_to_output(const CellBuffer& cells, const tc_output_opts* o,
+                                        std::string& out, tc_error_handle* err) {
+    const int fmt = o ? static_cast<int>(o->format) : TC_OUT_ANSI;
+    const ColorDepth depth = depth_of(o ? o->color_depth : 0);
+    switch (fmt) {
+        case TC_OUT_ANSI: {
+            render::Renderer r(depth);
+            out = r.render_full(cells);
+            break;
+        }
+        case TC_OUT_TEXT: {
+            backend::snapshot::TextBackend b;
+            backend::snapshot::SnapshotOptions so;
+            so.depth = depth;
+            b.set_options(so);
+            out = backend::snapshot::render_snapshot(b, cells);
+            break;
+        }
+        case TC_OUT_HTML_PRE: {
+            backend::snapshot::HtmlPreBackend b;
+            backend::snapshot::SnapshotOptions so;
+            so.depth = depth;
+            b.set_options(so);
+            out = backend::snapshot::render_snapshot(b, cells);
+            break;
+        }
+        case TC_OUT_JSON: {
+            backend::snapshot::JsonBackend b;
+            out = backend::snapshot::render_snapshot(b, cells);
+            break;
+        }
+        case TC_OUT_LATEX: {
+            backend::vector::LatexBackend b;
+            out = backend::vector::render_latex(b, cells);
+            break;
+        }
+        case TC_OUT_PNG:
+        case TC_OUT_PROTOCOL: {
+            gui::CellBitmapOptions co{};
+            const image::Bitmap bmp = gui::render_cells_to_bitmap(cells, co);
+            if (fmt == TC_OUT_PNG) {
+                out = image::encode(bmp, image::ImageFormat::Png);
+            } else {
+                tc_protocol_opts po{};
+                po.cell_width = (o && o->cell_width) ? o->cell_width : 10u;
+                po.cell_height = (o && o->cell_height) ? o->cell_height : 20u;
+                const auto kind = static_cast<tc_protocol_kind>(o ? o->protocol
+                                                                   : static_cast<std::uint8_t>(TC_PROTO_AUTO));
+                return encode_protocol(bmp, kind, &po, out, err);
+            }
+            break;
+        }
+        default:
+            return fail(err, "format requires a Scene (not available for this object)",
+                        TC_ERR_UNSUPPORTED);
+    }
+    return TC_OK;
+}
+
+inline tc_output_opts output_defaults(const tc_output_opts* o) noexcept {
+    return o ? *o : tc_output_opts{};
+}
+
+inline tc_status render_scene_vector(const scene::Scene& sc, int fmt, std::string& out,
+                                     tc_error_handle* err) {
+    backend::vector::VectorOptions vo;
+    vo.font_size = 1.0;
+    switch (fmt) {
+        case TC_OUT_SVG: {
+            backend::vector::SvgBackend b;
+            b.set_options(vo);
+            out = backend::vector::render_vector(b, sc);
+            break;
+        }
+        case TC_OUT_PDF: {
+            backend::vector::PdfBackend b;
+            out = backend::vector::render_pdf(b, sc);
+            break;
+        }
+        case TC_OUT_EPS: {
+            backend::vector::EpsBackend b;
+            out = backend::vector::render_eps(b, sc);
+            break;
+        }
+        default:
+            return fail(err, "not a vector format", TC_ERR_INVALID_ARG);
+    }
+    return TC_OK;
+}
+
+inline math3d::Vec3 vec3_at(const std::vector<double>& v, std::size_t i) noexcept {
+    return math3d::Vec3{v[i], v[i + 1], v[i + 2]};
+}
+
+inline math4d::Vec4 vec4_at(const std::vector<double>& v, std::size_t i) noexcept {
+    return math4d::Vec4{v[i], v[i + 1], v[i + 2], v[i + 3]};
+}
+
+inline scene::Scene build_3d(const Scene3dHandle& h, std::uint32_t w, std::uint32_t rows) {
+    if (h.kind == "scatter3d") {
+        chart3d::Scatter3dOpts o;
+        o.cols = static_cast<double>(w);
+        o.rows = static_cast<double>(rows);
+        o.azimuth_deg = h.azimuth;
+        o.elevation_deg = h.elevation;
+        o.fovy_deg = h.fovy;
+        std::vector<math3d::Vec3> pts;
+        pts.reserve(h.points.size() / 3);
+        for (std::size_t i = 0; i + 2 < h.points.size(); i += 3) pts.push_back(vec3_at(h.points, i));
+        return chart3d::scatter3d(pts, o);
+    }
+    if (h.kind == "surface3d") {
+        chart3d::Surface3dOpts o;
+        o.cols = static_cast<double>(w);
+        o.rows = static_cast<double>(rows);
+        o.azimuth_deg = h.azimuth;
+        o.elevation_deg = h.elevation;
+        o.fovy_deg = h.fovy;
+        o.res_x = static_cast<int>(h.grid_cols);
+        o.res_y = static_cast<int>(h.grid_rows);
+        const std::uint32_t nx = h.grid_cols, ny = h.grid_rows;
+        const double dx = (nx > 1) ? (h.x1 - h.x0) / static_cast<double>(nx - 1) : 0.0;
+        const double dy = (ny > 1) ? (h.y1 - h.y0) / static_cast<double>(ny - 1) : 0.0;
+        const auto z_at = [&h, nx, ny](std::uint32_t cx, std::uint32_t cy) {
+            const std::uint32_t c = cx < nx ? cx : nx - 1;
+            const std::uint32_t r = cy < ny ? cy : ny - 1;
+            return h.grid[static_cast<std::size_t>(r) * nx + c];
+        };
+        const auto f = [&](double x, double y) {
+            const double gx = dx > 0.0 ? (x - h.x0) / dx : 0.0;
+            const double gy = dy > 0.0 ? (y - h.y0) / dy : 0.0;
+            const auto ix = static_cast<std::uint32_t>(std::max(0.0, std::min(gx, static_cast<double>(nx - 1))));
+            const auto iy = static_cast<std::uint32_t>(std::max(0.0, std::min(gy, static_cast<double>(ny - 1))));
+            const std::uint32_t jx = std::min(ix + 1u, nx - 1u);
+            const std::uint32_t jy = std::min(iy + 1u, ny - 1u);
+            const double tx = std::max(0.0, std::min(1.0, gx - static_cast<double>(ix)));
+            const double ty = std::max(0.0, std::min(1.0, gy - static_cast<double>(iy)));
+            const double a = z_at(ix, iy) * (1.0 - tx) + z_at(jx, iy) * tx;
+            const double b = z_at(ix, jy) * (1.0 - tx) + z_at(jx, jy) * tx;
+            return a * (1.0 - ty) + b * ty;
+        };
+        return chart3d::surface3d(f, h.x0, h.x1, h.y0, h.y1, o);
+    }
+    chart4d::Wire4dOpts wo;
+    wo.cols = static_cast<double>(w);
+    wo.rows = static_cast<double>(rows);
+    std::vector<math4d::Vec4> verts;
+    verts.reserve(h.points.size() / 4);
+    for (std::size_t i = 0; i + 3 < h.points.size(); i += 4) verts.push_back(vec4_at(h.points, i));
+    std::vector<chart4d::Edge> edges;
+    if (h.edges.empty()) {
+        for (std::uint32_t i = 0; i + 1 < verts.size(); ++i) edges.emplace_back(i, i + 1);
+    } else {
+        for (std::size_t i = 0; i + 1 < h.edges.size(); i += 2)
+            edges.emplace_back(h.edges[i], h.edges[i + 1]);
+    }
+    math3d::Camera cam3;
+    cam3.orbit(h.azimuth, h.elevation, 4.0);
+    cam3.fovy_deg = h.fovy;
+    math4d::Camera4 cam4;
+    cam4.focal = math4d::focal_from_fov_deg(h.fovy);
+    const math4d::Mat5 rot = math4d::rotate_xw(h.rot_xw * math3d::kDeg2Rad) *
+                             math4d::rotate_yz(h.rot_yz * math3d::kDeg2Rad);
+    const chart4d::Projector4D proj(rot, cam4, std::make_shared<chart3d::Projector3D>(cam3));
+    return chart4d::wire4d(verts, edges, wo, proj);
+}
+
+inline tc_key key_to_c(interaction::Key k) noexcept {
+    return static_cast<tc_key>(static_cast<int>(k));  // 枚举顺序与 tc_key 一致
+}
+
+inline std::uint8_t mods_to_c(interaction::ModMask m) noexcept {
+    std::uint8_t out = 0;
+    if (m & interaction::mod::kShift) out |= 1u;
+    if (m & interaction::mod::kAlt) out |= 2u;
+    if (m & interaction::mod::kCtrl) out |= 4u;
+    return out;
+}
+
+inline tc_event event_to_c(const interaction::Event& ev, const std::string* paste) noexcept {
+    tc_event out{};
+    out.kind = static_cast<std::uint8_t>(interaction::kind_of(ev));
+    if (const auto* k = std::get_if<interaction::KeyEvent>(&ev)) {
+        out.key = static_cast<std::uint8_t>(key_to_c(k->key));
+        out.codepoint = static_cast<std::uint32_t>(k->ch);
+        out.mods = mods_to_c(k->mods);
+    } else if (const auto* m = std::get_if<interaction::MouseEvent>(&ev)) {
+        out.button = static_cast<std::uint8_t>(m->button);
+        out.action = static_cast<std::uint8_t>(m->action);
+        out.x = m->x;
+        out.y = m->y;
+        out.mods = mods_to_c(m->mods);
+    } else if (const auto* r = std::get_if<interaction::ResizeEvent>(&ev)) {
+        out.cols = r->cols;
+        out.rows = r->rows;
+    } else if (const auto* f = std::get_if<interaction::FocusEvent>(&ev)) {
+        out.focused = f->focused ? 1u : 0u;
+    } else if (paste) {
+        out.text = paste->c_str();
+        out.text_len = static_cast<std::uint64_t>(paste->size());
+    } else {
+        out.kind = static_cast<std::uint8_t>(TC_EVENT_UNKNOWN);
+    }
+    return out;
+}
+
+struct DataHandle {
+    data::DataFrame frame;
+};
+
+inline DataHandle* as_data(tc_data_handle h) noexcept {
+    return reinterpret_cast<DataHandle*>(h);
+}
+
+}  // namespace
+
+extern "C" {
+
+// ── 终端 ────────────────────────────────────────────────────────────────────
+
+tc_term_opts tc_term_opts_default(void) {
+    tc_term_opts o{};
+    const auto d = term::TerminalOptions{};
+    o.raw_mode = d.raw_mode ? 1u : 0u;
+    o.alt_screen = d.alt_screen ? 1u : 0u;
+    o.hide_cursor = d.hide_cursor ? 1u : 0u;
+    o.mouse = d.enable_mouse ? 1u : 0u;
+    return o;
+}
+
+tc_term_handle tc_term_create(const tc_term_opts* o, tc_error_handle* err) {
+    term::TerminalOptions opt;
+    if (o) {
+        opt.raw_mode = o->raw_mode != 0;
+        opt.alt_screen = o->alt_screen != 0;
+        opt.hide_cursor = o->hide_cursor != 0;
+        opt.enable_mouse = o->mouse != 0;
+    }
+    auto* h = new (std::nothrow) TermHandle(opt);
+    if (!h) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    const Status s = h->t.enter();
+    if (!is_ok(s)) {
+        set_err(err, std::string("terminal enter failed (") + describe(s) + ")");
+        delete h;
+        return nullptr;
+    }
+    return reinterpret_cast<tc_term_handle>(h);
+}
+
+void tc_term_free(tc_term_handle term) {
+    auto* h = reinterpret_cast<TermHandle*>(term);
+    if (h) {
+        h->t.leave();
+        delete h;
+    }
+}
+
+tc_status tc_term_size_query(tc_term_size* out, tc_error_handle* err) {
+    if (!out) return fail(err, "null out", TC_ERR_INVALID_ARG);
+    if (!term::Terminal::stdout_is_tty())
+        return fail(err, "stdout is not a tty", TC_ERR_UNSUPPORTED);
+    const term::TerminalSize s = term::query_size();
+    out->cols = s.cols;
+    out->rows = s.rows;
+    return TC_OK;
+}
+
+tc_term_size tc_term_size_from_env(void) {
+    const term::TerminalSize s = term::size_from_env();
+    // C 面契约：环境变量缺失时给 80×24，不把 0 尺寸漏给调用方。
+    return tc_term_size{static_cast<std::uint16_t>(s.cols ? s.cols : 80u),
+                        static_cast<std::uint16_t>(s.rows ? s.rows : 24u)};
+}
+
+tc_status tc_term_caps_detect(tc_term_caps* out, uint8_t force_tty) {
+    if (!out) return TC_ERR_INVALID_ARG;
+    term::CapEnvironment env;
+    if (const char* p = std::getenv("TERM")) env.term = p;
+    if (const char* p = std::getenv("COLORTERM")) env.colorterm = p;
+    if (const char* p = std::getenv("TERM_PROGRAM")) env.term_program = p;
+    if (const char* p = std::getenv("WT_SESSION")) env.wt_session = p;
+    if (std::getenv("CI") || std::getenv("GITHUB_ACTIONS")) env.ci = true;
+    const bool tty = force_tty ? true : term::Terminal::stdout_is_tty();
+    const term::TerminalCaps c = term::detect(env, tty);
+    out->unicode = c.unicode ? 1u : 0u;
+    out->color_depth = static_cast<std::uint8_t>(c.color_depth);
+    out->mouse = c.mouse ? 1u : 0u;
+    out->alt_screen = c.alt_screen ? 1u : 0u;
+    out->title_setting = c.title_setting ? 1u : 0u;
+    return TC_OK;
+}
+
+uint8_t tc_term_stdout_is_tty(void) { return term::Terminal::stdout_is_tty() ? 1u : 0u; }
+uint8_t tc_term_stdin_is_tty(void) { return term::Terminal::stdin_is_tty() ? 1u : 0u; }
+
+tc_status tc_term_clipboard_set(const char* text, tc_error_handle* err) {
+    if (!text) return fail(err, "null text", TC_ERR_INVALID_ARG);
+    const std::string s = term::clipboard_set(text);
+    return tc_write_stdout(s.data(), static_cast<std::uint64_t>(s.size()), err);
+}
+
+tc_status tc_term_clipboard_set_primary(const char* text, tc_error_handle* err) {
+    if (!text) return fail(err, "null text", TC_ERR_INVALID_ARG);
+    const std::string s = term::clipboard_set(text, term::ClipboardTarget::Primary);
+    return tc_write_stdout(s.data(), static_cast<std::uint64_t>(s.size()), err);
+}
+
+tc_status tc_term_hyperlink(const char* uri, const char* id,
+                            const char* text, tc_error_handle* err) {
+    if (!uri || !text) return fail(err, "null uri or text", TC_ERR_INVALID_ARG);
+    const std::string s = term::hyperlink(text, uri, id ? id : "");
+    return tc_write_stdout(s.data(), static_cast<std::uint64_t>(s.size()), err);
+}
+
+tc_status tc_term_hyperlink_close(tc_error_handle* err) {
+    const std::string s = term::hyperlink_close();
+    return tc_write_stdout(s.data(), static_cast<std::uint64_t>(s.size()), err);
+}
+
+tc_status tc_term_mouse(uint8_t enable, uint16_t mode, uint16_t encoding, tc_error_handle* err) {
+    const std::string s = enable ? term::enable_mouse(static_cast<term::MouseMode>(mode),
+                                                     static_cast<term::MouseEncoding>(encoding))
+                                 : term::disable_all_mouse();
+    return tc_write_stdout(s.data(), static_cast<std::uint64_t>(s.size()), err);
+}
+
+// ── 自绘画布 / 增量渲染 ─────────────────────────────────────────────────────
+
+tc_canvas_handle tc_canvas_create(uint32_t width, uint32_t height, tc_error_handle* err) {
+    if (!width || !height) {
+        set_err(err, "canvas width/height must be non-zero");
+        return nullptr;
+    }
+    auto* h = new (std::nothrow) CanvasHandle(width, height);
+    if (!h) set_err(err, "out of memory");
+    return reinterpret_cast<tc_canvas_handle>(h);
+}
+
+void tc_canvas_free(tc_canvas_handle canvas) { delete reinterpret_cast<CanvasHandle*>(canvas); }
+
+int32_t tc_canvas_resize(tc_canvas_handle canvas, uint32_t width, uint32_t height) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h || !width || !height) return -1;
+    h->cv.resize(width, height);
+    return 0;
+}
+
+uint32_t tc_canvas_width(tc_canvas_handle canvas) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    return h ? h->cv.to_buffer().width() : 0u;
+}
+
+uint32_t tc_canvas_height(tc_canvas_handle canvas) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    return h ? h->cv.to_buffer().height() : 0u;
+}
+
+void tc_canvas_clear(tc_canvas_handle canvas) {
+    if (auto* h = reinterpret_cast<CanvasHandle*>(canvas)) h->cv.clear();
+}
+
+uint8_t tc_canvas_put(tc_canvas_handle canvas, int32_t x, int32_t y,
+                      uint32_t codepoint, const tc_style* style) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h || x < 0 || y < 0 || codepoint > 0x10FFFF) return 0u;
+    const bool ok = h->cv.put(Point{static_cast<double>(x), static_cast<double>(y)},
+                              static_cast<char32_t>(codepoint), style_or_default(style));
+    return ok ? 1u : 0u;
+}
+
+uint8_t tc_canvas_text(tc_canvas_handle canvas, int32_t x, int32_t y,
+                       const char* utf8, const tc_style* style) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h || !utf8 || x < 0 || y < 0) return 0u;
+    h->cv.draw_text(Point{static_cast<double>(x), static_cast<double>(y)},
+                    utf8, style_or_default(style));
+    return 1u;
+}
+
+uint8_t tc_canvas_line(tc_canvas_handle canvas,
+                       int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                       uint32_t codepoint, const tc_style* style) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h || codepoint > 0x10FFFF) return 0u;
+    h->cv.draw_line(Point{static_cast<double>(x0), static_cast<double>(y0)},
+                    Point{static_cast<double>(x1), static_cast<double>(y1)},
+                    static_cast<char32_t>(codepoint), style_or_default(style));
+    return 1u;
+}
+
+void tc_canvas_fill_rect(tc_canvas_handle canvas,
+                         int32_t x, int32_t y, uint32_t w, uint32_t hgt,
+                         uint32_t codepoint, const tc_style* style) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h || codepoint > 0x10FFFF) return;
+    h->cv.fill_rect(Rect{static_cast<double>(x), static_cast<double>(y),
+                         static_cast<double>(w), static_cast<double>(hgt)},
+                    static_cast<char32_t>(codepoint), style_or_default(style));
+}
+
+tc_output_opts tc_output_opts_default(void) {
+    tc_output_opts o{};
+    o.format = TC_OUT_ANSI;
+    o.color_depth = TC_DEPTH_TRUECOLOR;
+    o.protocol = TC_PROTO_AUTO;
+    return o;
+}
+
+tc_status tc_canvas_render(tc_canvas_handle canvas, const tc_output_opts* out_opts,
+                           char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    auto* h = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!h) return fail(err, "null canvas", TC_ERR_INVALID_HANDLE);
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    std::string out;
+    const tc_status st = render_cells_to_output(h->cv.to_buffer(), out_opts, out, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+tc_renderer_handle tc_renderer_create(uint8_t color_depth, tc_error_handle* err) {
+    auto* h = new (std::nothrow) RendererHandle(depth_of(color_depth));
+    if (!h) set_err(err, "out of memory");
+    return reinterpret_cast<tc_renderer_handle>(h);
+}
+
+void tc_renderer_free(tc_renderer_handle renderer) {
+    delete reinterpret_cast<RendererHandle*>(renderer);
+}
+
+void tc_renderer_reset(tc_renderer_handle renderer) {
+    if (auto* h = reinterpret_cast<RendererHandle*>(renderer)) {
+        h->r.reset();
+        h->cached.clear();
+        h->has_cache = false;
+    }
+}
+
+tc_status tc_renderer_frame(tc_renderer_handle renderer, tc_canvas_handle canvas,
+                            char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    auto* rh = reinterpret_cast<RendererHandle*>(renderer);
+    auto* ch = reinterpret_cast<CanvasHandle*>(canvas);
+    if (!rh || !ch) return fail(err, "null renderer or canvas", TC_ERR_INVALID_HANDLE);
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (!buf || cap == 0) {
+        rh->cached = rh->r.render(ch->cv.to_buffer());
+        rh->has_cache = true;
+        *out_len = static_cast<std::uint64_t>(rh->cached.size());
+        return TC_OK;
+    }
+    std::string out;
+    if (rh->has_cache) {
+        out = std::move(rh->cached);
+        rh->has_cache = false;
+    } else {
+        out = rh->r.render(ch->cv.to_buffer());
+    }
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+// ── 输入解析 ────────────────────────────────────────────────────────────────
+
+tc_input_handle tc_input_create(tc_error_handle* err) {
+    auto* h = new (std::nothrow) InputHandle();
+    if (!h) set_err(err, "out of memory");
+    return reinterpret_cast<tc_input_handle>(h);
+}
+
+void tc_input_free(tc_input_handle input) { delete reinterpret_cast<InputHandle*>(input); }
+
+void tc_input_reset(tc_input_handle input) {
+    if (auto* h = reinterpret_cast<InputHandle*>(input)) {
+        h->parser.reset();
+        h->pastes.clear();
+        h->cached_events.clear();
+        h->cached_pastes.clear();
+        h->has_cache = false;
+    }
+}
+
+tc_status tc_input_feed(tc_input_handle input, const uint8_t* bytes, uint64_t n,
+                        tc_event* out, uint64_t cap, uint64_t* out_count, tc_error_handle* err) {
+    auto* h = reinterpret_cast<InputHandle*>(input);
+    if (!h || !out_count) return fail(err, "null input or out_count", TC_ERR_INVALID_HANDLE);
+    if (n && !bytes) return fail(err, "null bytes", TC_ERR_INVALID_ARG);
+    if (!h->has_cache) {
+        h->cached_events = h->parser.feed(
+            std::string_view(reinterpret_cast<const char*>(bytes), static_cast<std::size_t>(n)));
+        h->cached_pastes.clear();
+        h->cached_pastes.reserve(h->cached_events.size());
+        for (const auto& ev : h->cached_events) {
+            if (const auto* p = std::get_if<interaction::PasteEvent>(&ev))
+                h->cached_pastes.push_back(p->text);
+        }
+        h->pastes = h->cached_pastes;
+        h->has_cache = true;
+    }
+    const std::vector<interaction::Event>& events = h->cached_events;
+    const std::vector<std::string>& pastes = h->pastes;
+    const std::uint64_t total = static_cast<std::uint64_t>(events.size());
+    *out_count = total;
+    if (!out || cap == 0) return TC_OK;
+    const std::uint64_t k = std::min<std::uint64_t>(total, cap);
+    std::size_t paste_i = 0;
+    for (std::uint64_t i = 0; i < k; ++i) {
+        const std::string* paste = nullptr;
+        if (interaction::kind_of(events[static_cast<std::size_t>(i)]) ==
+            interaction::EventKind::Paste) {
+            paste = &pastes[paste_i++];
+        }
+        out[i] = event_to_c(events[static_cast<std::size_t>(i)], paste);
+    }
+    h->has_cache = false;
+    h->cached_events.clear();
+    h->cached_pastes.clear();
+    return TC_OK;
+}
+
+// ── 命中区域 ────────────────────────────────────────────────────────────────
+
+tc_regions_handle tc_regions_create(tc_error_handle* err) {
+    auto* h = new (std::nothrow) RegionsHandle();
+    if (!h) set_err(err, "out of memory");
+    return reinterpret_cast<tc_regions_handle>(h);
+}
+
+void tc_regions_free(tc_regions_handle regions) { delete reinterpret_cast<RegionsHandle*>(regions); }
+
+void tc_regions_clear(tc_regions_handle regions) {
+    if (auto* h = reinterpret_cast<RegionsHandle*>(regions)) h->regions.clear();
+}
+
+uint64_t tc_regions_count(tc_regions_handle regions) {
+    auto* h = reinterpret_cast<RegionsHandle*>(regions);
+    return h ? static_cast<std::uint64_t>(h->regions.size()) : 0u;
+}
+
+uint64_t tc_regions_add_rect(tc_regions_handle regions,
+                             int32_t x, int32_t y, uint32_t w, uint32_t hgt, uint32_t payload) {
+    auto* r = reinterpret_cast<RegionsHandle*>(regions);
+    if (!r) return 0u;
+    r->regions.push_back(chart::HitRegion::rect(
+        Rect{static_cast<double>(x), static_cast<double>(y), static_cast<double>(w),
+             static_cast<double>(hgt)}, payload));
+    return static_cast<std::uint64_t>(r->regions.size());
+}
+
+uint64_t tc_regions_add_circle(tc_regions_handle regions,
+                               int32_t cx, int32_t cy, double radius, uint32_t payload) {
+    auto* r = reinterpret_cast<RegionsHandle*>(regions);
+    if (!r) return 0u;
+    r->regions.push_back(chart::HitRegion::circle(
+        Point{static_cast<double>(cx), static_cast<double>(cy)}, radius, payload));
+    return static_cast<std::uint64_t>(r->regions.size());
+}
+
+uint64_t tc_regions_add_polygon(tc_regions_handle regions, const int32_t* xy,
+                                uint64_t point_count, uint32_t payload, tc_error_handle* err) {
+    auto* r = reinterpret_cast<RegionsHandle*>(regions);
+    if (!r) {
+        set_err(err, "null regions");
+        return 0u;
+    }
+    if (!xy || point_count < 3 || point_count > 0xFFFF) {
+        set_err(err, "polygon needs 3..65535 points");
+        return 0u;
+    }
+    std::vector<Point> pts;
+    pts.reserve(static_cast<std::size_t>(point_count));
+    for (std::uint64_t i = 0; i < point_count; ++i) {
+        pts.push_back(Point{static_cast<double>(xy[i * 2]), static_cast<double>(xy[i * 2 + 1])});
+    }
+    r->regions.push_back(chart::HitRegion::polygon(std::move(pts), payload));
+    return static_cast<std::uint64_t>(r->regions.size());
+}
+
+tc_status tc_regions_hit(tc_regions_handle regions, double x, double y,
+                         uint32_t* payloads, uint64_t cap, uint64_t* out_count) {
+    auto* r = reinterpret_cast<RegionsHandle*>(regions);
+    if (!r || !out_count) return TC_ERR_INVALID_HANDLE;
+    const std::vector<std::uint32_t> hits = interaction::hit_payloads(r->regions, x, y);
+    const std::uint64_t total = static_cast<std::uint64_t>(hits.size());
+    *out_count = total;
+    if (!payloads || cap == 0) return TC_OK;
+    const std::uint64_t k = std::min<std::uint64_t>(total, cap);
+    for (std::uint64_t i = 0; i < k; ++i) payloads[i] = hits[static_cast<std::size_t>(i)];
+    return TC_OK;
+}
+
+// ── 导出物种 ────────────────────────────────────────────────────────────────
+
+tc_status tc_chart_export(tc_chart_handle chart, const tc_output_opts* out_opts,
+                          const tc_plot_opts* plot_opts, char* buf, uint64_t cap,
+                          uint64_t* out_len, tc_error_handle* err) {
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (!c) return fail(err, "null chart", TC_ERR_INVALID_HANDLE);
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (!has_data(*c)) return fail(err, "empty chart data", TC_ERR_INVALID_ARG);
+    const tc_output_opts o = output_defaults(out_opts);
+    std::string out;
+
+    if (o.format == TC_OUT_SVG || o.format == TC_OUT_PDF || o.format == TC_OUT_EPS) {
+        const std::uint32_t w = (plot_opts && plot_opts->width) ? plot_opts->width : 80u;
+        const std::uint32_t rows = (plot_opts && plot_opts->height) ? plot_opts->height : 24u;
+        chart::Chart& ch = apply_display(*c, plot_opts);
+        auto sc = api::chart_to_scene(ch, w, rows);
+        if (!sc.has_value())
+            return fail(err, std::string("chart_to_scene failed (") + describe(sc.error()) + ")",
+                        TC_ERR_RENDER);
+        scene::Scene scene = std::move(sc.value());
+        decorate_scene_labels(scene, *c);
+        const tc_status st = render_scene_vector(scene, static_cast<int>(o.format), out, err);
+        if (st != TC_OK) return st;
+    } else if (o.format == TC_OUT_ANSI) {
+        const tc_status st = render_chart_bytes(*c, plot_opts, out, err);
+        if (st != TC_OK) return st;
+    } else {
+        CellBuffer cells;
+        if (!build_plot_with_labels(*c, plot_opts, cells))
+            return fail(err, "invalid width/height", TC_ERR_INVALID_ARG);
+        tc_output_opts effective = o;
+        if (effective.color_depth == 0) effective.color_depth = TC_DEPTH_TRUECOLOR;
+        const tc_status st = render_cells_to_output(cells, &effective, out, err);
+        if (st != TC_OK) return st;
+    }
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+tc_image_handle tc_chart_to_image(tc_chart_handle chart, const tc_plot_opts* opts,
+                                  tc_error_handle* err) {
+    auto* c = reinterpret_cast<ChartData*>(chart);
+    if (!c) {
+        set_err(err, "null chart");
+        return nullptr;
+    }
+    if (!has_data(*c)) {
+        set_err(err, "empty chart data");
+        return nullptr;
+    }
+    CellBuffer cells;
+    if (!build_plot_with_labels(*c, opts, cells)) {
+        set_err(err, "invalid width/height");
+        return nullptr;
+    }
+    gui::CellBitmapOptions co{};
+    auto* bmp = new (std::nothrow) image::Bitmap(gui::render_cells_to_bitmap(cells, co));
+    if (!bmp) set_err(err, "out of memory");
+    return reinterpret_cast<tc_image_handle>(bmp);
+}
+
+// ── 时序图 ──────────────────────────────────────────────────────────────────
+
+tc_seq_handle tc_seq_from_text(const char* text, tc_error_handle* err) {
+    if (!text) {
+        set_err(err, "null text");
+        return nullptr;
+    }
+    dsl::ParseDiagnostic diag;
+    auto parsed = dsl::parse_sequence(text, {}, &diag);
+    if (!parsed.has_value()) {
+        set_err(err, std::string("parse sequence failed (") + describe(parsed.error()) + ")");
+        return nullptr;
+    }
+    const auto& ast = parsed.value();
+    auto* h = new (std::nothrow) SeqHandle();
+    if (!h) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    h->model.participants.reserve(ast.participants.size());
+    for (const auto& p : ast.participants) {
+        h->model.participants.push_back(graph::SeqParticipant{p.key, p.label, false});
+    }
+    h->model.messages.reserve(ast.messages.size());
+    for (const auto& m : ast.messages) {
+        graph::SeqArrowKind kind = graph::SeqArrowKind::Solid;
+        switch (m.kind) {
+            case dsl::MessageKind::Solid: kind = graph::SeqArrowKind::Solid; break;
+            case dsl::MessageKind::Dotted: kind = graph::SeqArrowKind::Dotted; break;
+            case dsl::MessageKind::Async:
+            case dsl::MessageKind::Open: kind = graph::SeqArrowKind::Open; break;
+            case dsl::MessageKind::AsyncDotted:
+            case dsl::MessageKind::OpenDotted: kind = graph::SeqArrowKind::OpenDotted; break;
+            case dsl::MessageKind::Cross: kind = graph::SeqArrowKind::Cross; break;
+            case dsl::MessageKind::CrossDotted: kind = graph::SeqArrowKind::CrossDotted; break;
+        }
+        h->model.messages.push_back(
+            graph::SeqMessage{m.from, m.to, m.text, kind, m.activate_target, m.deactivate_source});
+    }
+    h->model.notes.reserve(ast.notes.size());
+    for (const auto& n : ast.notes) {
+        graph::SeqNote sn;
+        sn.text = n.text;
+        sn.placement = n.placement == dsl::SequenceNote::Placement::Left
+                           ? graph::SeqNote::Placement::Left
+                           : (n.placement == dsl::SequenceNote::Placement::Right
+                                  ? graph::SeqNote::Placement::Right
+                                  : graph::SeqNote::Placement::Over);
+        if (!n.participants.empty()) sn.anchor = n.participants[0];
+        if (n.participants.size() > 1) sn.anchor_b = n.participants[1];
+        sn.after = static_cast<std::size_t>(-1);
+        h->model.notes.push_back(std::move(sn));
+    }
+    return reinterpret_cast<tc_seq_handle>(h);
+}
+
+void tc_seq_free(tc_seq_handle seq) { delete reinterpret_cast<SeqHandle*>(seq); }
+
+uint64_t tc_seq_participant_count(tc_seq_handle seq) {
+    auto* h = reinterpret_cast<SeqHandle*>(seq);
+    return h ? static_cast<std::uint64_t>(h->model.participants.size()) : 0u;
+}
+
+uint64_t tc_seq_message_count(tc_seq_handle seq) {
+    auto* h = reinterpret_cast<SeqHandle*>(seq);
+    return h ? static_cast<std::uint64_t>(h->model.messages.size()) : 0u;
+}
+
+tc_status tc_seq_render(tc_seq_handle seq, const tc_output_opts* out_opts,
+                        char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    auto* h = reinterpret_cast<SeqHandle*>(seq);
+    if (!h) return fail(err, "null seq", TC_ERR_INVALID_HANDLE);
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    const tc_output_opts o = output_defaults(out_opts);
+    const std::uint32_t w = o.width ? o.width : 80u;
+    const std::uint32_t rows = o.height ? o.height : 24u;
+    canvas::Canvas cv(w, rows);
+    (void)graph::render_uml_sequence(h->model, cv);
+    std::string out;
+    const tc_status st = render_cells_to_output(cv.to_buffer(), out_opts, out, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+// ── 多帧编码 / 富文本 ───────────────────────────────────────────────────────
+
+tc_status tc_image_encode_frames(const tc_image_handle* frames, uint64_t count,
+                                 const char* format, uint8_t quality, uint32_t fps,
+                                 char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (!frames || !count) return fail(err, "no frames", TC_ERR_INVALID_ARG);
+    if (!format) return fail(err, "null format", TC_ERR_INVALID_ARG);
+    const std::string fmt = lower_ascii(format);
+    if (!media::has_encoder(fmt) || !media::is_multiframe(fmt)) {
+        return fail(err, "unsupported frame format: " + fmt, TC_ERR_UNSUPPORTED);
+    }
+    if (count > 0xFFFF) return fail(err, "too many frames", TC_ERR_INVALID_ARG);
+    std::vector<image::Bitmap> bmps;
+    bmps.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t i = 0; i < count; ++i) {
+        auto* b = as_bitmap(frames[i]);
+        if (!b || b->empty()) return fail(err, "null/empty frame", TC_ERR_INVALID_ARG);
+        bmps.push_back(*b);
+    }
+    image::EncodeOptions eo;
+    eo.quality = quality ? static_cast<int>(quality) : 85;
+    eo.fps = fps ? static_cast<int>(fps) : 25;
+    const std::string out = media::encode(bmps, fmt, eo);
+    if (out.empty()) return fail(err, "frame encode failed", TC_ERR_RENDER);
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+tc_status tc_doc_add_rich_paragraph(tc_doc_handle doc, const tc_span* spans, uint64_t count,
+                                    tc_error_handle* err) {
+    auto* d = as_doc(doc);
+    if (!d) return fail(err, "null doc", TC_ERR_INVALID_HANDLE);
+    if (!spans || !count || count > 0xFFFF) return fail(err, "invalid spans", TC_ERR_INVALID_ARG);
+    std::vector<document::Span> ss;
+    ss.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t i = 0; i < count; ++i) {
+        if (!spans[i].text) return fail(err, "null span text", TC_ERR_INVALID_ARG);
+        ss.emplace_back(std::string(spans[i].text), to_style(&spans[i].style));
+    }
+    d->doc.add_block(document::Block::paragraph(std::move(ss)));
+    return TC_OK;
+}
+
+// ── 3D / 4D ─────────────────────────────────────────────────────────────────
+
+tc_scene3d_handle tc_scene3d_create(const char* kind, tc_error_handle* err) {
+    if (!kind) {
+        set_err(err, "null kind");
+        return nullptr;
+    }
+    const std::string k = kind;
+    if (k != "scatter3d" && k != "surface3d" && k != "wire4d") {
+        set_err(err, "unknown 3d kind: " + k);
+        return nullptr;
+    }
+    auto* h = new (std::nothrow) Scene3dHandle();
+    if (!h) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    h->kind = k;
+    return reinterpret_cast<tc_scene3d_handle>(h);
+}
+
+void tc_scene3d_free(tc_scene3d_handle scene) { delete reinterpret_cast<Scene3dHandle*>(scene); }
+
+tc_status tc_scene3d_set_points(tc_scene3d_handle scene, const double* coords,
+                                uint64_t count, tc_error_handle* err) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return fail(err, "null scene", TC_ERR_INVALID_HANDLE);
+    const std::uint64_t stride = (h->kind == "wire4d") ? 4u : 3u;
+    if (!coords || !count || count % stride != 0)
+        return fail(err, "point count must be a multiple of the coordinate stride",
+                    TC_ERR_INVALID_ARG);
+    h->points.assign(coords, coords + static_cast<std::size_t>(count));
+    return TC_OK;
+}
+
+tc_status tc_scene3d_set_grid(tc_scene3d_handle scene, const double* z,
+                              uint32_t cols, uint32_t rows, tc_error_handle* err) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return fail(err, "null scene", TC_ERR_INVALID_HANDLE);
+    if (h->kind != "surface3d")
+        return fail(err, "set_grid only applies to surface3d", TC_ERR_UNSUPPORTED);
+    if (!z || !cols || !rows || static_cast<std::uint64_t>(cols) * rows > 0x1000000)
+        return fail(err, "invalid grid", TC_ERR_INVALID_ARG);
+    h->grid.assign(z, z + static_cast<std::size_t>(cols) * rows);
+    h->grid_cols = cols;
+    h->grid_rows = rows;
+    return TC_OK;
+}
+
+tc_status tc_scene3d_set_edges(tc_scene3d_handle scene, const uint32_t* pairs,
+                               uint64_t count, tc_error_handle* err) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return fail(err, "null scene", TC_ERR_INVALID_HANDLE);
+    if (h->kind != "wire4d")
+        return fail(err, "set_edges only applies to wire4d", TC_ERR_UNSUPPORTED);
+    if (!pairs || !count || count % 2 != 0)
+        return fail(err, "edges must be index pairs", TC_ERR_INVALID_ARG);
+    h->edges.assign(pairs, pairs + static_cast<std::size_t>(count));
+    return TC_OK;
+}
+
+tc_status tc_scene3d_set_view(tc_scene3d_handle scene,
+                              double azimuth_deg, double elevation_deg, double fovy_deg) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return TC_ERR_INVALID_HANDLE;
+    if (!std::isfinite(azimuth_deg) || !std::isfinite(elevation_deg) ||
+        !std::isfinite(fovy_deg) || fovy_deg <= 0.0 || fovy_deg >= 180.0)
+        return TC_ERR_INVALID_ARG;
+    h->azimuth = azimuth_deg;
+    h->elevation = elevation_deg;
+    h->fovy = fovy_deg;
+    return TC_OK;
+}
+
+tc_status tc_scene3d_set_range(tc_scene3d_handle scene, uint8_t axis,
+                               double lo, double hi, tc_error_handle* err) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return fail(err, "null scene", TC_ERR_INVALID_HANDLE);
+    if (h->kind != "surface3d")
+        return fail(err, "only surface3d has x/y ranges", TC_ERR_UNSUPPORTED);
+    if (axis > 1 || !std::isfinite(lo) || !std::isfinite(hi) || lo >= hi)
+        return fail(err, "invalid range", TC_ERR_INVALID_ARG);
+    if (axis == 0) {
+        h->x0 = lo;
+        h->x1 = hi;
+    } else {
+        h->y0 = lo;
+        h->y1 = hi;
+    }
+    return TC_OK;
+}
+
+tc_status tc_scene3d_set_rotation4d(tc_scene3d_handle scene, double xw_deg, double yz_deg) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return TC_ERR_INVALID_HANDLE;
+    if (h->kind != "wire4d" || !std::isfinite(xw_deg) || !std::isfinite(yz_deg))
+        return TC_ERR_INVALID_ARG;
+    h->rot_xw = xw_deg;
+    h->rot_yz = yz_deg;
+    return TC_OK;
+}
+
+tc_status tc_scene3d_render(tc_scene3d_handle scene, const tc_output_opts* out_opts,
+                            char* buf, uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    auto* h = reinterpret_cast<Scene3dHandle*>(scene);
+    if (!h) return fail(err, "null scene", TC_ERR_INVALID_HANDLE);
+    if (!out_len) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (h->kind == "surface3d" && h->grid.empty())
+        return fail(err, "surface3d needs set_grid", TC_ERR_INVALID_ARG);
+    if (h->kind != "surface3d" && h->points.empty())
+        return fail(err, "need set_points", TC_ERR_INVALID_ARG);
+    const tc_output_opts o = output_defaults(out_opts);
+    const std::uint32_t w = o.width ? o.width : 72u;
+    const std::uint32_t rows = o.height ? o.height : 28u;
+    const scene::Scene sc = build_3d(*h, w, rows);
+
+    if (o.format == TC_OUT_SVG || o.format == TC_OUT_PDF || o.format == TC_OUT_EPS) {
+        std::string out;
+        const tc_status st = render_scene_vector(sc, static_cast<int>(o.format), out, err);
+        if (st != TC_OK) return st;
+        return emit_bytes(out, buf, cap, out_len, err);
+    }
+    canvas::Canvas cv(w, rows);
+    canvas::render_scene(sc, cv);
+    std::string out;
+    const tc_status st = render_cells_to_output(cv.to_buffer(), out_opts, out, err);
+    if (st != TC_OK) return st;
+    return emit_bytes(out, buf, cap, out_len, err);
+}
+
+// ── data 门面（内存文本 → 容错 DataFrame / 一行出图）───────────────────────
+
+tc_data_handle tc_data_parse_csv(const char* text, const tc_data_csv_opts* opts,
+                                 tc_error_handle* err) {
+    if (text == nullptr) {
+        set_err(err, "null csv text");
+        return nullptr;
+    }
+    data::DataFrameOptions po;
+    if (opts != nullptr) {
+        po.delimiter = opts->delimiter == 0 ? 0 : static_cast<char>(opts->delimiter);
+        po.has_header = opts->has_header != 0;
+        po.comment = opts->comment == 0 ? 0 : static_cast<char>(opts->comment);
+    }
+    auto* h = new (std::nothrow) DataHandle();
+    if (h == nullptr) {
+        set_err(err, "out of memory");
+        return nullptr;
+    }
+    h->frame = data::parse_dataframe(std::string_view(text), po);
+    return reinterpret_cast<tc_data_handle>(h);
+}
+
+void tc_data_free(tc_data_handle data) { delete as_data(data); }
+
+uint64_t tc_data_row_count(tc_data_handle data) {
+    const DataHandle* h = as_data(data);
+    return h == nullptr ? 0 : static_cast<uint64_t>(h->frame.row_count);
+}
+
+uint64_t tc_data_col_count(tc_data_handle data) {
+    const DataHandle* h = as_data(data);
+    return h == nullptr ? 0 : static_cast<uint64_t>(h->frame.columns.size());
+}
+
+tc_status tc_data_header(tc_data_handle data, uint64_t col, char* buf, uint64_t cap,
+                         uint64_t* out_len, tc_error_handle* err) {
+    const DataHandle* h = as_data(data);
+    if (h == nullptr) return fail(err, "null data", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (col >= h->frame.headers.size()) return fail(err, "column out of range", TC_ERR_INVALID_ARG);
+    return emit_bytes(h->frame.headers[static_cast<std::size_t>(col)], buf, cap, out_len, err);
+}
+
+tc_status tc_data_cell_raw(tc_data_handle data, uint64_t row, uint64_t col, char* buf,
+                           uint64_t cap, uint64_t* out_len, tc_error_handle* err) {
+    const DataHandle* h = as_data(data);
+    if (h == nullptr) return fail(err, "null data", TC_ERR_INVALID_HANDLE);
+    if (out_len == nullptr) return fail(err, "null out_len", TC_ERR_INVALID_ARG);
+    if (col >= h->frame.columns.size() || row >= h->frame.row_count) {
+        return fail(err, "cell out of range", TC_ERR_INVALID_ARG);
+    }
+    const auto& cell = h->frame.columns[static_cast<std::size_t>(col)][static_cast<std::size_t>(row)];
+    return emit_bytes(cell.raw, buf, cap, out_len, err);
+}
+
+tc_status tc_data_cell_number(tc_data_handle data, uint64_t row, uint64_t col, double* out,
+                              tc_error_handle* err) {
+    const DataHandle* h = as_data(data);
+    if (h == nullptr) return fail(err, "null data", TC_ERR_INVALID_HANDLE);
+    if (out == nullptr) return fail(err, "null out", TC_ERR_INVALID_ARG);
+    if (col >= h->frame.columns.size() || row >= h->frame.row_count) {
+        return fail(err, "cell out of range", TC_ERR_INVALID_ARG);
+    }
+    const auto& cell = h->frame.columns[static_cast<std::size_t>(col)][static_cast<std::size_t>(row)];
+    if (!cell.is_numeric()) return fail(err, "cell is not numeric", TC_ERR_UNSUPPORTED);
+    *out = cell.num;
+    return TC_OK;
+}
+
+tc_status tc_data_cell_info(tc_data_handle data, uint64_t row, uint64_t col,
+                            tc_cell_kind* kind, uint8_t* flags, tc_error_handle* err) {
+    const DataHandle* h = as_data(data);
+    if (h == nullptr) return fail(err, "null data", TC_ERR_INVALID_HANDLE);
+    if (col >= h->frame.columns.size() || row >= h->frame.row_count) {
+        return fail(err, "cell out of range", TC_ERR_INVALID_ARG);
+    }
+    const auto& cell = h->frame.columns[static_cast<std::size_t>(col)][static_cast<std::size_t>(row)];
+    if (kind != nullptr) *kind = static_cast<tc_cell_kind>(cell.type);
+    if (flags != nullptr) *flags = static_cast<std::uint8_t>(cell.flags);
+    return TC_OK;
+}
+
+tc_status tc_auto_plot_text(const char* text, tc_error_handle* err) {
+    if (text == nullptr || text[0] == '\0') return fail(err, "null/empty text", TC_ERR_INVALID_ARG);
+    const std::string_view src(text);
+    std::size_t first = 0;
+    while (first < src.size() && (src[first] == ' ' || src[first] == '\t' ||
+                                  src[first] == '\r' || src[first] == '\n')) {
+        ++first;
+    }
+    const bool jsonl = first < src.size() && src[first] == '{';
+    const auto picked = jsonl ? autoviz::auto_visualize_jsonl(src)
+                              : autoviz::auto_visualize(data::parse_dataframe(src));
+    if (!picked.has_value()) {
+        return fail(err, std::string("auto_plot_text failed (") + describe(picked.error()) + ")",
+                    status_to_tc(picked.error()));
+    }
+    const std::unique_ptr<chart::Chart> chart = picked->build_chosen();
+    if (!chart) return fail(err, "cannot build chart", TC_ERR_UNSUPPORTED);
+    const Status s = api::print_chart(*chart);
+    if (!is_ok(s)) {
+        return fail(err, std::string("auto_plot_text print failed (") + describe(s) + ")",
+                    status_to_tc(s));
+    }
+    return TC_OK;
+}
+
+}  // extern "C"
+

@@ -31,7 +31,7 @@
 #include "termchart/scene/command.hpp"
 #include "termchart/interaction/zoom.hpp"       // interaction::Viewport
 #include "termchart/gui/scene_renderer.hpp"     // gui::SceneRenderer（真线宽）
-#include "termchart/image/bitmap.hpp"           // image::Bitmap
+#include "termchart/media/image/bitmap.hpp"           // image::Bitmap
 
 #include "termchart_gui/gui.hpp"
 #include "termchart_gui/widget_tree/button.hpp"

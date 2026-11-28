@@ -43,12 +43,12 @@ def build_probe() -> tuple[Path, Path, Path, Path, Path, Path, Path] | None:
     partition_probe = TMP / "probe_partition.exe"
     deblock_probe = TMP / "probe_deblock.exe"
     frame_probe = TMP / "probe_frame.exe"
-    srcs = [str(ROOT / "src/image/av1_encode.cpp")]
-    srcs += sorted(glob.glob(str(ROOT / "src/image/codec/av1/*/*.cpp")))
-    srcs.append(str(ROOT / "src/image/codec/bitstream/ep_nal.cpp"))
+    srcs = [str(ROOT / "src/media/image/av1_encode.cpp")]
+    srcs += sorted(glob.glob(str(ROOT / "src/media/encoder/av1/*/*.cpp")))
+    srcs.append(str(ROOT / "src/media/encoder/bitstream/ep_nal.cpp"))
     base = ["g++", "-std=c++20", "-O0", "-DTERMCHART_STATIC",
             "-I" + str(ROOT / "include"), "-I" + str(ROOT / "src"),
-            "-I" + str(ROOT / "src/image")]
+            "-I" + str(ROOT / "src/media/image")]
     lib = str(ROOT / "build/ninja/libtermchart.a")
     for source, output in ((PROBE_SRC, probe), (INTRA_PROBE_SRC, intra_probe),
                            (INTER_PROBE_SRC, inter_probe),

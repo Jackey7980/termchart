@@ -1,6 +1,6 @@
 // single_include/termchart.hpp —— 由 tools/gen_single_header.py 生成，禁手改。
 //
-// 由 416 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
+// 由 424 个头文件按依赖拓扑序拼接：层号取 cmake/TermchartModules.cmake，
 // 组别为 顶层头 → detail 生成表 → 普通模块头（伞形头殿后），同组按路径字母序决胜；
 // 内部 #include 已剥除，系统头按名去重（保序取首次出现）。
 // 重跑生成器：python tools/gen_single_header.py（--check 校验一致）。
@@ -8277,7 +8277,108 @@ private:
 
 }  // namespace termchart::scene
 
-// ===== include/termchart/image/bitmap.hpp =====
+// ===== include/termchart/media/encoder/gpa/bit_ops.hpp =====
+// bit_ops.hpp —— 无状态、零格式依赖的基础整数原语。
+//
+// 只接受基础整数类型，返回基础整数类型；不持有 Context / State / CDF，
+// 不接收 AV1Block / HEVCBlock 之类的编码器专属结构。AV1 与 HEVC 的像素限幅
+// 语义在此统一为同一份实现，语法层仍各自保留调用点，避免改动码流基线。
+
+
+namespace termchart::media::encoder::gpa {
+
+constexpr int clip3(int lo, int hi, int v) noexcept {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+constexpr int clip_pixel(int v) noexcept { return clip3(0, 255, v); }
+
+// 把低 ln 位按位反转（VP8L 码字在流中以反转序发射）。
+constexpr std::uint32_t reverse_bits(std::uint32_t c, int ln) noexcept {
+    std::uint32_t r = 0;
+    for (int i = 0; i < ln; ++i) r = (r << 1) | ((c >> i) & 1u);
+    return r;
+}
+
+}  // namespace termchart::media::encoder::gpa
+
+// ===== include/termchart/media/encoder/gpa/metrics.hpp =====
+// metrics.hpp —— 无状态失真度量原语（累加器类型由调用方决定）。
+//
+// AV1 与 HEVC 的内核循环在此统一，精度/溢出口径仍由调用方选 AccumType：
+// AV1 走 uint64_t，HEVC 的 4K 块走 long long。侧 stride 必须可分别指定——
+// 源图与重建缓冲的行距本来就不同，单 stride 模板套不进真实调用点。
+// 语义只含 diff 与累加，不夹带任何 band / RD 统计。
+
+
+namespace termchart::media::encoder::gpa {
+
+// 扁平平面 SSD：8-bit 输入，平方误差和，不做归一化。
+template <typename AccumType>
+[[nodiscard]] inline AccumType calc_ssd(const std::uint8_t* a, const std::uint8_t* b,
+                                        std::size_t n) noexcept {
+    AccumType sum = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const int d = static_cast<int>(a[i]) - static_cast<int>(b[i]);
+        sum += static_cast<AccumType>(d * d);
+    }
+    return sum;
+}
+
+// 二维平面 SSD：a / b 可有不同的行距；语义与逐像素 d*d 累加完全一致。
+template <typename AccumType>
+[[nodiscard]] inline AccumType calc_ssd(const std::uint8_t* a, int a_stride,
+                                        const std::uint8_t* b, int b_stride,
+                                        int width, int height) noexcept {
+    AccumType sum = 0;
+    for (int y = 0; y < height; ++y) {
+        const std::uint8_t* ra = a + static_cast<std::size_t>(y) * static_cast<std::size_t>(a_stride);
+        const std::uint8_t* rb = b + static_cast<std::size_t>(y) * static_cast<std::size_t>(b_stride);
+        for (int x = 0; x < width; ++x) {
+            const int d = static_cast<int>(ra[x]) - static_cast<int>(rb[x]);
+            sum += static_cast<AccumType>(d * d);
+        }
+    }
+    return sum;
+}
+
+// 扁平平面 SAD：作为基础原语提供；当前编码器里没有纯 SAD 累加调用点。
+template <typename AccumType>
+[[nodiscard]] inline AccumType calc_sad(const std::uint8_t* a, const std::uint8_t* b,
+                                        std::size_t n) noexcept {
+    AccumType sum = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const int d = static_cast<int>(a[i]) - static_cast<int>(b[i]);
+        sum += static_cast<AccumType>(d < 0 ? -d : d);
+    }
+    return sum;
+}
+
+template <typename AccumType>
+[[nodiscard]] inline AccumType calc_sad(const std::uint8_t* a, int a_stride,
+                                        const std::uint8_t* b, int b_stride,
+                                        int width, int height) noexcept {
+    AccumType sum = 0;
+    for (int y = 0; y < height; ++y) {
+        const std::uint8_t* ra = a + static_cast<std::size_t>(y) * static_cast<std::size_t>(a_stride);
+        const std::uint8_t* rb = b + static_cast<std::size_t>(y) * static_cast<std::size_t>(b_stride);
+        for (int x = 0; x < width; ++x) {
+            const int d = static_cast<int>(ra[x]) - static_cast<int>(rb[x]);
+            sum += static_cast<AccumType>(d < 0 ? -d : d);
+        }
+    }
+    return sum;
+}
+
+// 兼容既有 AV1 入口的扁平别名，返回 uint64_t。
+[[nodiscard]] inline std::uint64_t ssd(const std::uint8_t* a, const std::uint8_t* b,
+                                       std::size_t n) noexcept {
+    return calc_ssd<std::uint64_t>(a, b, n);
+}
+
+}  // namespace termchart::media::encoder::gpa
+
+// ===== include/termchart/media/image/bitmap.hpp =====
 // bitmap.hpp —— 彩色像素缓冲（宽 / 高 / 通道 / 像素数组 / 行对齐）
 //
 // 这是"图片"在库里的通用表示：protocol/（sixel/kitty/iterm2）与 image/png 都
@@ -8484,7 +8585,7 @@ private:
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/bmp.hpp =====
+// ===== include/termchart/media/image/bmp.hpp =====
 // bmp.hpp —— BMP 解码（自主实现，零依赖；输出 RGBA）
 //
 // 支持范围（**明确列出，避免"以为支持"**）：
@@ -8519,7 +8620,7 @@ namespace termchart::image {
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/decoder.hpp =====
+// ===== include/termchart/media/image/decoder.hpp =====
 // decoder.hpp —— 图像解码入口（按魔数识别格式后分发）
 //
 // 为什么先"识别再分发"：调用方拿到的常常是一段来路不明的字节（剪贴板、文件、
@@ -8561,7 +8662,7 @@ enum class DetectedFormat : std::uint8_t {
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/encode.hpp =====
+// ===== include/termchart/media/image/encode.hpp =====
 // encode.hpp —— 统一位图编码分发器（自包含编码器入口）
 //
 // 与现有 encode_png / encode_jpeg 同哲学：零外部依赖，每个编码器把 Bitmap 编码成
@@ -8584,14 +8685,14 @@ enum class ImageFormat {
     Mp4,  // 视频容器 ISO-BMFF；内部码流由 EncodeOptions::video_codec 选 H264/H265/AV1
     Gif,  // 自写 GIF89a（median-cut 调色板 + LZW），支持多帧动画
     Webp, // 自写 VP8L lossless（零依赖），单帧无损；动画/有损后续增强
-    // Avif 在各自编码器落地后追加
-};
+    Av1,  // 自写 AV1 帧内编码，IVF 容器 + OBU；单帧，宽高取 64 的倍数
+    };
 
 // 视频/动画内部码流选择（自写编码器，零依赖）。
 enum class VideoCodec {
     H264,  // 自写 baseline AVC（当前已实现 I_PCM 无损档，压缩档后续叠加）
     H265,  // 自写 HEVC —— 后续阶段
-    AV1,   // 自写 AV1（AVIF 容器用）—— 后续阶段
+    AV1,   // 自写 AV1（IVF 容器用；帧内路径已落地）
 };
 
 // 视频编码档位。Pcm 是一条完整独立的无损 I_PCM 路径，不参与真压缩档的分层
@@ -8603,7 +8704,7 @@ enum class VideoEncodeMode {
     Inter,  // 阶段二占位：帧间预测 + 参考帧管理尚未实现（fail-loud）
 };
 
-// 该视频码流是否已实现（encode_mp4 等能否真正产出该码流）。AV1 编码器尚未落地 → false。
+// 该视频码流是否已实现（encode_mp4 / encode_av1_ivf 能否真正产出该码流）。
 // 供调用方在编码前预检：宁可显式失败，也不要"请求 AV1 却拿到 H.264 文件"这类静默降级。
 [[nodiscard]] TERMCHART_API bool is_video_codec_supported(VideoCodec codec) noexcept;
 
@@ -8696,7 +8797,76 @@ TERMCHART_API std::string encode(std::span<const Bitmap> frames, ImageFormat for
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/field.hpp =====
+// ===== include/termchart/media/encoder/i_encoder.hpp =====
+// i_encoder.hpp —— 编码器统一接口：只负责「裸帧 → 码流」，不碰容器封装。
+//
+// 与 docs/design/registry.md 的统一模式一致：Creator + function-local static
+// instance()。gpa/ 下的纯数学核保持静态调用，不进注册表。
+
+#include <mutex>
+
+
+namespace termchart::media {
+
+class IEncoder {
+public:
+    virtual ~IEncoder() = default;
+
+    // 返回空串表示不支持 / 编码失败（与既有 encode_* 的契约一致）。
+    virtual std::string encode(std::span<const image::Bitmap> frames,
+                               const image::EncodeOptions& options) = 0;
+
+    // 稳定注册名，与 C ABI 的字符串入参一一对应。
+    [[nodiscard]] virtual std::string_view name() const noexcept = 0;
+};
+
+class EncoderRegistry {
+public:
+    using Creator = std::function<std::unique_ptr<IEncoder>()>;
+
+    static EncoderRegistry& instance() {
+        static EncoderRegistry registry;
+        return registry;
+    }
+
+    // 重复注册同一名字以最后一次为准（fail-loud 的替代：显式覆盖比静默忽略安全）。
+    void register_encoder(std::string name, Creator creator) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        creators_[std::move(name)] = std::move(creator);
+    }
+
+    [[nodiscard]] std::unique_ptr<IEncoder> create(std::string_view name) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = creators_.find(std::string(name));
+        if (it == creators_.end()) return nullptr;
+        return it->second ? it->second() : nullptr;
+    }
+
+    [[nodiscard]] bool has(std::string_view name) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return creators_.find(std::string(name)) != creators_.end();
+    }
+
+    [[nodiscard]] std::vector<std::string> names() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::string> out;
+        out.reserve(creators_.size());
+        for (const auto& kv : creators_) out.push_back(kv.first);
+        return out;
+    }
+
+    EncoderRegistry(const EncoderRegistry&) = delete;
+    EncoderRegistry& operator=(const EncoderRegistry&) = delete;
+
+private:
+    EncoderRegistry() = default;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, Creator> creators_;
+};
+
+}  // namespace termchart::media
+
+// ===== include/termchart/media/image/field.hpp =====
 // field.hpp —— 光栅器消费的标量强度场（FloatField）
 //
 // raster/ 的所有光栅器都把"连续标量场"当成输入：场里每格是一个 0..1 的强度
@@ -8757,7 +8927,7 @@ private:
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/convert.hpp =====
+// ===== include/termchart/media/image/convert.hpp =====
 // convert.hpp —— 位图与标量场的互转（GUI 与终端共用）
 //
 // 本文件是**规格清单之外的补充**，理由：GUI 侧的图片控件要把 RGBA 位图转成标量场
@@ -8835,7 +9005,7 @@ inline constexpr float kLumaB = 0.114f;
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/gif_encode.hpp =====
+// ===== include/termchart/media/image/gif_encode.hpp =====
 // gif_encode.hpp —— 最小 GIF89a 编码器（自包含 LZW，支持多帧动画）
 //
 // 零外部依赖：自带调色板量化（median-cut，≤256 色）+ GIF LZW 压缩，输出合规的
@@ -8853,7 +9023,7 @@ TERMCHART_API std::string encode_gif(std::span<const Bitmap> frames,
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/h264_encode.hpp =====
+// ===== include/termchart/media/image/h264_encode.hpp =====
 // h264_encode.hpp —— 自写 H.264（baseline AVC）编码器
 //
 // 零依赖：自己写 NAL/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx264/ffmpeg。
@@ -8870,7 +9040,7 @@ TERMCHART_API std::string encode_h264_annexb(std::span<const Bitmap> frames, con
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/hevc_encode.hpp =====
+// ===== include/termchart/media/image/hevc_encode.hpp =====
 // hevc_encode.hpp —— 自写 HEVC（H.265, Main profile）编码器
 //
 // 零依赖：自己写 NAL/VPS/SPS/PPS/slice 语法、YUV 转换与码流封装，不调用 libx265/ffmpeg。
@@ -8893,7 +9063,7 @@ TERMCHART_API std::string encode_hevc_annexb(std::span<const Bitmap> frames, con
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/jpeg_encode.hpp =====
+// ===== include/termchart/media/image/jpeg_encode.hpp =====
 // jpeg_encode.hpp —— 最小 baseline JPEG 编码器（8 位，3 通道 YCbCr 4:4:4，无隔行/无算术编码）
 //
 // 与 png_encode 同哲学：零外部依赖，自带 FDCT / 量化 / 霍夫曼，输出合规 JFIF 流，
@@ -8914,7 +9084,7 @@ TERMCHART_API std::string encode_jpeg(const Bitmap& bitmap, int quality = 85);
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/mp4.hpp =====
+// ===== include/termchart/media/image/mp4.hpp =====
 // mp4.hpp —— MP4（ISO-BMFF）视频封装封装入口
 //
 // 零依赖：自己写 box 组装，不调用 libavformat/ffmpeg。把一串视频帧（Bitmap）按
@@ -8931,7 +9101,7 @@ TERMCHART_API std::string encode_mp4(std::span<const Bitmap> frames, const Encod
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/png.hpp =====
+// ===== include/termchart/media/image/png.hpp =====
 // png.hpp —— PNG 解码（8/16 位、非隔行；输出 RGBA）
 //
 // 与 png_encode.hpp 对称：编码器自带（零依赖），解码器也自带——同样是为了不把
@@ -8963,7 +9133,7 @@ inline constexpr std::uint64_t kPngMaxRawBytes = 512ull * 1024ull * 1024ull;
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/png_encode.hpp =====
+// ===== include/termchart/media/image/png_encode.hpp =====
 // png_encode.hpp —— 最小 PNG 编码器（8 位 RGB / RGBA，非隔行）
 //
 // 为什么自带而不是用 libpng/zlib：本仓库的硬约束是"每个外部依赖都必须可缺失"
@@ -8995,7 +9165,7 @@ TERMCHART_API std::string encode_png(const Bitmap& bitmap);
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/ttf_font.hpp =====
+// ===== include/termchart/media/image/ttf_font.hpp =====
 // ttf_font.hpp —— 自主 TTF 解析（sfnt 目录 + cmap + glyf/loca + hmtx + 二次
 // 贝塞尔轮廓光栅化 + glyph cache），输出 8-bit 灰度位图
 //
@@ -9096,7 +9266,7 @@ private:
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/webp_decode.hpp =====
+// ===== include/termchart/media/image/webp_decode.hpp =====
 
 
 
@@ -9116,7 +9286,7 @@ namespace termchart::image {
 
 }  // namespace termchart::image
 
-// ===== include/termchart/image/webp_encode.hpp =====
+// ===== include/termchart/media/image/webp_encode.hpp =====
 // webp_encode.hpp —— 自包含 VP8L lossless WebP 编码器（零依赖）
 //
 // 与 png_encode / jpeg_encode / gif_encode 同哲学：把 Bitmap 编码成完整文件字节流，
@@ -9135,6 +9305,196 @@ namespace termchart::image {
 TERMCHART_API std::string encode_webp(std::span<const Bitmap> frames, const EncodeOptions& opts = {});
 
 }  // namespace termchart::image
+
+// ===== include/termchart/media/io/i_byte_sink.hpp =====
+// i_byte_sink.hpp —— 抽象输出流：编码器只认这个接口，不认具体文件系统。
+//
+// C ABI 的两段式缓冲用 memory_sink；落盘用 file_sink。接口刻意保持极小，
+// 与 std::ostream 解耦，避免把 iostream 的 locale/异常语义带进媒体层。
+
+
+namespace termchart::media {
+
+class IByteSink {
+public:
+    virtual ~IByteSink() = default;
+
+    virtual bool write(std::string_view bytes) = 0;
+    [[nodiscard]] virtual std::uint64_t tell() const noexcept = 0;
+    virtual bool seek(std::uint64_t offset) = 0;
+
+    [[nodiscard]] bool empty() const noexcept { return tell() == 0; }
+};
+
+}  // namespace termchart::media
+
+// ===== include/termchart/media/io/file_sink.hpp =====
+// file_sink.hpp —— 本地文件输出流。仅此文件包含具体文件系统逻辑。
+
+
+
+namespace termchart::media {
+
+class FileSink final : public IByteSink {
+public:
+    explicit FileSink(std::string_view path) noexcept;
+    ~FileSink() override;
+
+    bool write(std::string_view bytes) override;
+    [[nodiscard]] std::uint64_t tell() const noexcept override;
+    bool seek(std::uint64_t offset) override;
+
+    [[nodiscard]] bool opened() const noexcept { return fp_ != nullptr; }
+    [[nodiscard]] const std::string& error() const noexcept { return error_; }
+
+    FileSink(const FileSink&) = delete;
+    FileSink& operator=(const FileSink&) = delete;
+
+private:
+    std::string path_;
+    std::string error_;
+    void* fp_ = nullptr;
+};
+
+}  // namespace termchart::media
+
+// ===== include/termchart/media/io/memory_sink.hpp =====
+// memory_sink.hpp —— 内存输出流：给 C ABI 两段式缓冲与单测用。
+
+
+
+namespace termchart::media {
+
+class MemorySink final : public IByteSink {
+public:
+    bool write(std::string_view bytes) override {
+        data_.append(bytes.data(), bytes.size());
+        return true;
+    }
+
+    [[nodiscard]] std::uint64_t tell() const noexcept override {
+        return static_cast<std::uint64_t>(data_.size());
+    }
+
+    bool seek(std::uint64_t offset) override {
+        if (offset > data_.size()) return false;
+        data_.resize(static_cast<std::size_t>(offset));
+        return true;
+    }
+
+    [[nodiscard]] const std::string& data() const noexcept { return data_; }
+    void clear() noexcept { data_.clear(); }
+
+private:
+    std::string data_;
+};
+
+}  // namespace termchart::media
+
+// ===== include/termchart/media/video/muxer/i_video_muxer.hpp =====
+// i_video_muxer.hpp —— 容器封装器接口与注册表。
+//
+// 与 EncoderRegistry 同样的模式，但这里管的是「容器」：png/jpeg/gif 单图，
+// mp4/ivf 多帧。C ABI 的字符串路由只需查这里，不再手写 if-else。
+
+
+
+namespace termchart::media {
+
+enum class MuxKind : std::uint8_t {
+    SingleFrame,  // png / jpeg / webp
+    MultiFrame,   // gif / mp4 / ivf
+};
+
+class IVideoMuxer {
+public:
+    virtual ~IVideoMuxer() = default;
+
+    [[nodiscard]] virtual MuxKind kind() const noexcept = 0;
+    [[nodiscard]] virtual std::string_view name() const noexcept = 0;
+    [[nodiscard]] virtual std::string_view extension() const noexcept = 0;
+
+    // 把已编码的码流封装成最终字节流；空串表示失败。
+    virtual std::string mux(std::span<const std::string> streams,
+                            const image::EncodeOptions& options) = 0;
+};
+
+class MuxerRegistry {
+public:
+    using Creator = std::function<std::unique_ptr<IVideoMuxer>()>;
+
+    static MuxerRegistry& instance() {
+        static MuxerRegistry registry;
+        return registry;
+    }
+
+    void register_muxer(std::string name, Creator creator) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        creators_[std::move(name)] = std::move(creator);
+    }
+
+    [[nodiscard]] std::unique_ptr<IVideoMuxer> create(std::string_view name) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = creators_.find(std::string(name));
+        if (it == creators_.end()) return nullptr;
+        return it->second ? it->second() : nullptr;
+    }
+
+    [[nodiscard]] bool has(std::string_view name) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return creators_.find(std::string(name)) != creators_.end();
+    }
+
+    [[nodiscard]] std::vector<std::string> names() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::string> out;
+        out.reserve(creators_.size());
+        for (const auto& kv : creators_) out.push_back(kv.first);
+        return out;
+    }
+
+    MuxerRegistry(const MuxerRegistry&) = delete;
+    MuxerRegistry& operator=(const MuxerRegistry&) = delete;
+
+private:
+    MuxerRegistry() = default;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, Creator> creators_;
+};
+
+}  // namespace termchart::media
+
+// ===== include/termchart/media/media.hpp =====
+// media.hpp —— 媒体层门面：按注册名把裸帧编码为完整文件字节流。
+//
+// 底层 encode_* 保持原样，字节基线不变；本层只做注册表驱动的格式路由与容器
+// 能力查询。C ABI 与按字符串选格式的调用方都走这里，不再手写 if-else 分流。
+// 内置编码器由 register_all_builtin_codecs() 显式登记，不依赖静态初始化，
+// 因此静态链接不会被裁掉。
+
+
+
+
+namespace termchart::media {
+
+// 登记全部内置编码器与容器封装器。重复调用无副作用，线程安全。
+void register_all_builtin_codecs();
+
+// 按注册名编码。支持 png / jpg / jpeg / gif / webp / mp4 / av1 / ivf / avif；
+// 未知名字或编码失败返回空串，调用方据此显式报错，不静默换格式。
+[[nodiscard]] std::string encode(std::span<const image::Bitmap> frames,
+                                 std::string_view format,
+                                 const image::EncodeOptions& opts = {});
+
+// 注册表查询：名字是否可编码、全部可编码名字。
+[[nodiscard]] bool has_encoder(std::string_view format);
+[[nodiscard]] std::vector<std::string> encoder_names();
+
+// 容器元数据：该格式是单帧图还是多帧容器、默认扩展名。
+[[nodiscard]] bool is_multiframe(std::string_view format);
+[[nodiscard]] std::string extension_for(std::string_view format);
+
+}  // namespace termchart::media
 
 // ===== include/termchart/raster/rasterizer.hpp =====
 // rasterizer.hpp —— 子像素光栅化基类与公共契约
@@ -21437,7 +21797,6 @@ private:
 // 不做隐式转换（字符串 "1" 不会当 bool 用）。配置错误应当显式暴露，
 // 而不是被静默宽容掉。
 
-#include <mutex>
 
 
 namespace termchart::app {

@@ -1,7 +1,7 @@
 // test_field.cpp —— FloatField（标量强度场，raster 的输入）存储不变量
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 
 namespace {
 

@@ -22,7 +22,7 @@
 #include "termchart/color/colormap.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/rasterizer.hpp"
 #include "termchart/render/renderer.hpp"
 #include "termchart/term/size.hpp"

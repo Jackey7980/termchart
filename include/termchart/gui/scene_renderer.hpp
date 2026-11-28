@@ -24,7 +24,7 @@
 #include "termchart/color/resolve.hpp"
 #include "termchart/core/rgb.hpp"
 #include "termchart/export.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/scene/scene.hpp"
 #include "termchart/scene/stateful_visitor.hpp"
 

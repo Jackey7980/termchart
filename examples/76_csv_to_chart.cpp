@@ -20,7 +20,7 @@
 #include "termchart/core/style.hpp"
 #include "termchart/data/fill_missing.hpp"
 #include "termchart/data/rolling.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/io/csv.hpp"
 #include "termchart/layout/axis.hpp"
 #include "termchart/layout/grid.hpp"

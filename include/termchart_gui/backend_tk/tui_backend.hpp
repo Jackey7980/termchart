@@ -20,7 +20,7 @@
 #include "termchart/core/color_depth.hpp"
 #include "termchart/core/style.hpp"  // Color 定义于此（Color::rgb / ansi16）
 #include "termchart/color/resolve.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart_gui/backend_tk/backend.hpp"
 
 namespace termchart_gui {

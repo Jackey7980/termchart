@@ -5,7 +5,7 @@
 #include <array>
 #include <cstdint>
 
-#include "src/image/codec/av1/transform/transform_2d.hpp"
+#include "src/media/encoder/av1/transform/transform_2d.hpp"
 
 using namespace termchart::image::codec::av1;
 

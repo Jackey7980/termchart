@@ -30,7 +30,7 @@
 #include <cstdlib>
 #include <fstream>
 #include "termchart/gui/cells.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace {
 

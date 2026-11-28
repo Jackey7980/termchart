@@ -10,7 +10,7 @@
 
 #include "synthetic_font.hpp"
 #include "termchart/core/expected.hpp"
-#include "termchart/image/ttf_font.hpp"
+#include "termchart/media/image/ttf_font.hpp"
 
 namespace {
 

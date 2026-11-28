@@ -11,8 +11,8 @@
 #include <utility>
 #include <vector>
 
-#include "src/image/codec/hevc/cabac_syntax.hpp"
-#include "src/image/codec/hevc/intra_prediction.hpp"
+#include "src/media/encoder/hevc/cabac_syntax.hpp"
+#include "src/media/encoder/hevc/intra_prediction.hpp"
 
 namespace {
 

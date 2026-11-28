@@ -74,11 +74,11 @@ def run(args: list[str], cwd: Path = ROOT):
 
 
 def build_probe(cxx: str, out: Path) -> bool:
-    srcs = [str(PROBE_SRC), "src/image/hevc_encode.cpp",
-            "src/image/codec/bitstream/ep_nal.cpp"]
-    srcs += [str(p) for p in sorted((ROOT / "src/image/codec/hevc").glob("*.cpp"))]
+    srcs = [str(PROBE_SRC), "src/media/image/hevc_encode.cpp",
+            "src/media/encoder/bitstream/ep_nal.cpp"]
+    srcs += [str(p) for p in sorted((ROOT / "src/media/encoder/hevc").glob("*.cpp"))]
     cmd = [cxx, "-std=c++20", "-O2", "-DTERMCHART_STATIC",
-           "-Iinclude", "-Isrc", "-Isrc/image", "-o", str(out), *srcs]
+           "-Iinclude", "-Isrc", "-Isrc/media/image", "-o", str(out), *srcs]
     r = run(cmd)
     if r.returncode != 0:
         sys.stderr.write(r.stderr.decode(errors="replace")[-2000:])

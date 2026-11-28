@@ -1,5 +1,5 @@
 // test_jpeg_encode.cpp —— 自包含 baseline JPEG 编码器最小测试
-#include "termchart/image/jpeg_encode.hpp"
+#include "termchart/media/image/jpeg_encode.hpp"
 
 #include <cstdint>
 #include <string>

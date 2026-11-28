@@ -14,7 +14,7 @@
 #include <array>
 #include <cstdint>
 
-#include "src/image/codec/av1/predict/intra_edge.hpp"
+#include "src/media/encoder/av1/predict/intra_edge.hpp"
 
 namespace {
 

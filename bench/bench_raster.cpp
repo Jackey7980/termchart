@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "bench.hpp"
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/rasterizer.hpp"
 
 namespace {

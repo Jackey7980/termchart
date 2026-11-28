@@ -15,13 +15,13 @@
 #include <span>
 #include <vector>
 
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/hevc_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/hevc_encode.hpp"
 
-#include "src/image/codec/hevc/cabac_context.hpp"
-#include "src/image/codec/hevc/cu_coding.hpp"
-#include "src/image/codec/hevc/cabac_syntax.hpp"
-#include "src/image/codec/hevc/inter_coding.hpp"
+#include "src/media/encoder/hevc/cabac_context.hpp"
+#include "src/media/encoder/hevc/cu_coding.hpp"
+#include "src/media/encoder/hevc/cabac_syntax.hpp"
+#include "src/media/encoder/hevc/inter_coding.hpp"
 
 using namespace termchart::image::codec::hevc;
 

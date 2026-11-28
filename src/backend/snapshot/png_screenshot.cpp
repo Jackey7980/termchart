@@ -6,8 +6,8 @@
 #include "termchart/color/resolve.hpp"
 #include "termchart/core/cell.hpp"
 #include "termchart/core/style.hpp"
-#include "termchart/image/bitmap.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/bitmap.hpp"
+#include "termchart/media/image/png_encode.hpp"
 
 namespace termchart::backend::snapshot {
 

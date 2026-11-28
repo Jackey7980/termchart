@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "src/image/codec/av1/postproc/deblock.hpp"
+#include "src/media/encoder/av1/postproc/deblock.hpp"
 
 using namespace termchart::image::codec::av1;
 

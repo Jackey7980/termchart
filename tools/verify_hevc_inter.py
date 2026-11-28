@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """verify_hevc_inter.py —— H.265 帧间（P 片）编码器的外部解码门禁。
 
-自包含：直接编译 tools/hevc_inter_probe.cpp 与 src/image/codec/hevc/*.cpp，
+自包含：直接编译 tools/hevc_inter_probe.cpp 与 src/media/encoder/hevc/*.cpp，
 不依赖已构建的库；再用真实 ffmpeg 软解逐像素对拍（不是自家编码器自往返）。
 
 这是帧间档（阶段二）最强的正确性门禁 —— 逐像素一致性：
@@ -87,12 +87,12 @@ def run(args: list[str], env=None):
 
 
 def build_probe(cxx: str, out: Path) -> bool:
-    srcs = [str(PROBE_SRC), "src/image/hevc_encode.cpp",
-            "src/image/codec/bitstream/ep_nal.cpp"]
-    srcs += [str(p) for p in sorted((ROOT / "src/image/codec/hevc").glob("*.cpp"))]
+    srcs = [str(PROBE_SRC), "src/media/image/hevc_encode.cpp",
+            "src/media/encoder/bitstream/ep_nal.cpp"]
+    srcs += [str(p) for p in sorted((ROOT / "src/media/encoder/hevc").glob("*.cpp"))]
     r = run([cxx, "-std=c++20", "-O2", "-DTERMCHART_STATIC",
              "-DTERMCHART_HEVC_RECON_DUMP",
-             "-Iinclude", "-Isrc", "-Isrc/image", "-o", str(out), *srcs])
+             "-Iinclude", "-Isrc", "-Isrc/media/image", "-o", str(out), *srcs])
     if r.returncode != 0:
         sys.stderr.write(r.stderr.decode(errors="replace")[-2000:])
     return r.returncode == 0

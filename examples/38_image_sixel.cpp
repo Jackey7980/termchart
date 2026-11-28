@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "termchart/api/print.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/protocol/detect.hpp"
 #include "termchart/protocol/fallback.hpp"
 #include "termchart/protocol/halfblock_image.hpp"

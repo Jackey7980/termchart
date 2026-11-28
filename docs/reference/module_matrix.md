@@ -15,7 +15,7 @@
 | 3 | math4d | ≤2 |
 | 4 | scene | ≤3 |
 | 4 | data | ≤3 |
-| 5 | image | ≤4 |
+| 5 | media | ≤4 |
 | 6 | raster | ≤5 |
 | 7 | term | ≤6 |
 | 7 | network | ≤6 |

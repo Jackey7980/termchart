@@ -8,8 +8,8 @@
 #include <cstddef>
 
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/png.hpp"
-#include "termchart/image/png_encode.hpp"
+#include "termchart/media/image/png.hpp"
+#include "termchart/media/image/png_encode.hpp"
 #include "termchart/scene/builder.hpp"
 
 namespace {

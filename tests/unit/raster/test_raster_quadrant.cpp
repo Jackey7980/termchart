@@ -1,7 +1,7 @@
 // test_raster_quadrant.cpp —— 象限块光栅器（2×2）
 #include <doctest.h>
 
-#include "termchart/image/field.hpp"
+#include "termchart/media/image/field.hpp"
 #include "termchart/raster/quadrant.hpp"
 
 namespace {

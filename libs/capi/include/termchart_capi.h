@@ -279,6 +279,63 @@ tc_status tc_flush_stdout(tc_error_handle* err);
  * 仅表头无数据 → 非 0；Unix 时间戳数字串不自动识别为时间列（同引擎口径）。 */
 tc_status tc_auto_plot(const char* filepath, tc_error_handle* err);
 
+/* ── data 门面（对齐 data::DataFrame 容错 CSV 读取）───────────────────────────
+ * C 面补上「内存文本 → 容错 DataFrame」入口：与 tc_auto_plot 的文件路径版对称，
+ * 让绑定层不必先落盘再读。DataFrame 是 fail-safe 读取器——脏值保留原文并打标，
+ * 整表绝不报错（与 io/csv 的 fail-fast 刻意不同）。
+ *
+ * 句柄模式与 chart/graph 一致：create → query → free；列/行索引从 0 起。 */
+typedef struct tc_data* tc_data_handle;
+
+/* 分隔符 0 = 自动嗅探；has_header=0 时表头合成 col0..；comment=0 关闭注释行。 */
+typedef struct tc_data_csv_opts {
+    uint8_t delimiter;
+    uint8_t has_header;
+    uint8_t comment;
+} tc_data_csv_opts;
+
+typedef enum tc_cell_kind {
+    TC_CELL_EMPTY = 0,
+    TC_CELL_NUMERIC = 1,
+    TC_CELL_TEXT = 2,
+    TC_CELL_INVALID = 3
+} tc_cell_kind;
+
+/* 单元格质量标记位（与 data::CellFlag 一一对应，只增不改）。 */
+typedef enum tc_cell_flag {
+    TC_CELL_FLAG_NONE = 0,
+    TC_CELL_FLAG_HAS_COMMA = 1,
+    TC_CELL_FLAG_ACCOUNTING_NEGATIVE = 2,
+    TC_CELL_FLAG_PERCENT = 4,
+    TC_CELL_FLAG_FULL_WIDTH = 8,
+    TC_CELL_FLAG_CURRENCY = 16,
+    TC_CELL_FLAG_MISSING = 32,
+    TC_CELL_FLAG_RAGGED = 64,
+    TC_CELL_FLAG_UNPARSED = 128
+} tc_cell_flag;
+
+/* 容错解析内存 CSV 文本；text 非空即可，空文本返回 0 行 0 列的空表。 */
+tc_data_handle tc_data_parse_csv(const char* text, const tc_data_csv_opts* opts,
+                                 tc_error_handle* err);
+void tc_data_free(tc_data_handle data);
+
+uint64_t tc_data_row_count(tc_data_handle data);
+uint64_t tc_data_col_count(tc_data_handle data);
+
+/* 表头/单元格原文写两段式缓冲：cap=0 只问长度；不跨 ABI 传 std::string。 */
+tc_status tc_data_header(tc_data_handle data, uint64_t col, char* buf, uint64_t cap,
+                         uint64_t* out_len, tc_error_handle* err);
+tc_status tc_data_cell_raw(tc_data_handle data, uint64_t row, uint64_t col, char* buf,
+                           uint64_t cap, uint64_t* out_len, tc_error_handle* err);
+/* 数值型单元格的数值；非数值或越界返回 TC_ERR_UNSUPPORTED（不静默给 NaN）。 */
+tc_status tc_data_cell_number(tc_data_handle data, uint64_t row, uint64_t col, double* out,
+                              tc_error_handle* err);
+tc_status tc_data_cell_info(tc_data_handle data, uint64_t row, uint64_t col,
+                            tc_cell_kind* kind, uint8_t* flags, tc_error_handle* err);
+
+/* 内存文本一行出图：与 tc_auto_plot(filepath) 同引擎，text 首个非空白为 '{' 走 JSONL。 */
+tc_status tc_auto_plot_text(const char* text, tc_error_handle* err);
+
 /* ── 一行出图（对齐 api::render_plot / render_scatter / render_bar）──────────
  *
  * 这是 C++ 新手向 API 在 C 上的**投影**，而不是另写一套：绑定层若自己拼
@@ -543,6 +600,289 @@ tc_status tc_doc_export(tc_doc_handle doc, const char* format, const char* title
 /* 导出并写文件（扩展名不参与推断，format 语义同 tc_doc_export）。 */
 tc_status tc_doc_save(tc_doc_handle doc, const char* path, const char* format,
                       const char* title, const char* css_class, tc_error_handle* err);
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 终端控制 / 自绘画布 / 增量渲染 / 输入与命中 / 导出物种 / 时序图 /
+ * 多帧编码 / 富文本 / 3D·4D。
+ * 骨架规则不变：下面全部是新增入口，已有签名与状态码不动。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 终端控制（term/：C 面把 Terminal 的 RAII 变成显式 handle）────────
+ * tc_term_create 构造并 enter（失败返回 NULL）；tc_term_free 负责 leave。
+ * 进程崩溃/abort 不走 free，需要可靠恢复请用 C++ 侧 Terminal 或注册 atexit。
+ */
+typedef struct tc_term* tc_term_handle;
+
+typedef struct tc_term_opts {
+    uint8_t raw_mode;      /* 1 = 关行缓冲/回显，按键即刻到达 */
+    uint8_t alt_screen;    /* 1 = 备用屏幕 */
+    uint8_t hide_cursor;   /* 1 = 隐藏光标 */
+    uint8_t mouse;         /* 1 = 启用鼠标（SGR 编码 + ButtonMotion） */
+    uint8_t reserved[4];
+} tc_term_opts;
+
+tc_term_opts tc_term_opts_default(void);
+tc_term_handle tc_term_create(const tc_term_opts* opts, tc_error_handle* err);
+void tc_term_free(tc_term_handle term);
+
+typedef struct tc_term_size { uint16_t cols; uint16_t rows; } tc_term_size;
+
+/* query_size 从 stdout 查询；失败时 err 给出原因，out 不变。 */
+tc_status tc_term_size_query(tc_term_size* out, tc_error_handle* err);
+/* size_from_env 只读环境变量（COLUMNS/LINES），永不失败，缺省 80×24。 */
+tc_term_size tc_term_size_from_env(void);
+
+typedef struct tc_term_caps {
+    uint8_t unicode;       /* 1 = 支持 Unicode */
+    uint8_t color_depth;   /* tc_color_depth */
+    uint8_t mouse;
+    uint8_t alt_screen;
+    uint8_t title_setting;
+    uint8_t reserved[3];
+} tc_term_caps;
+
+/* force_tty=1 时按 tty 探测；0 时按 stdout_is_tty 的实际结果。 */
+tc_status tc_term_caps_detect(tc_term_caps* out, uint8_t force_tty);
+uint8_t tc_term_stdout_is_tty(void);
+uint8_t tc_term_stdin_is_tty(void);
+
+/* 以下四条直接写 stdout（与 C++ 同名函数行为一致），返回首条错误。
+ * clipboard_set 用 OSC 52 的 'c'（系统剪贴板），_primary 变体用 'p'（X11 主选择区）。
+ * mode: 0=Off, 9=X10, 1000=Normal, 1002=ButtonMotion, 1003=AnyMotion。
+ * encoding: 0=Default, 1005=UTF8, 1006=SGR, 1015=Urxvt。enable=0 时忽略 mode/encoding。
+ */
+tc_status tc_term_clipboard_set(const char* text, tc_error_handle* err);
+tc_status tc_term_clipboard_set_primary(const char* text, tc_error_handle* err);
+tc_status tc_term_hyperlink(const char* uri, const char* id,
+                            const char* text, tc_error_handle* err);
+tc_status tc_term_hyperlink_close(tc_error_handle* err);
+tc_status tc_term_mouse(uint8_t enable, uint16_t mode,
+                        uint16_t encoding, tc_error_handle* err);
+
+/* ── 自绘画布（canvas/）+ 增量渲染（render/）────────────────────────────
+ * Canvas 负责落格，Renderer 负责与上一帧比较后输出差量字节。
+ * 两者分开：一个 Renderer 可服务多个画布（如多标签页）。
+ */
+typedef struct tc_canvas* tc_canvas_handle;
+
+tc_canvas_handle tc_canvas_create(uint32_t width, uint32_t height, tc_error_handle* err);
+void tc_canvas_free(tc_canvas_handle canvas);
+/* resize 保留左上角内容；0 = 成功，-1 = 尺寸非法（宽高为 0）。不写 err。 */
+int32_t tc_canvas_resize(tc_canvas_handle canvas, uint32_t width, uint32_t height);
+uint32_t tc_canvas_width(tc_canvas_handle canvas);
+uint32_t tc_canvas_height(tc_canvas_handle canvas);
+void tc_canvas_clear(tc_canvas_handle canvas);
+/* 下面三个返回 1 = 已落格，0 = 被裁剪；style=NULL 用默认样式。 */
+uint8_t tc_canvas_put(tc_canvas_handle canvas, int32_t x, int32_t y,
+                      uint32_t codepoint, const tc_style* style);
+uint8_t tc_canvas_text(tc_canvas_handle canvas, int32_t x, int32_t y,
+                       const char* utf8, const tc_style* style);
+uint8_t tc_canvas_line(tc_canvas_handle canvas,
+                       int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                       uint32_t codepoint, const tc_style* style);
+void tc_canvas_fill_rect(tc_canvas_handle canvas,
+                         int32_t x, int32_t y, uint32_t w, uint32_t h,
+                         uint32_t codepoint, const tc_style* style);
+
+/* 统一输出描述：一个格式枚举 + 一个 opts，避免每种格式各写一对函数。
+ * format 取 tc_output_format；color_depth 用于 ANSI/TEXT/HTML_PRE；
+ * protocol 用于 TC_OUT_PROTOCOL；width/height=0 表示沿用对象自身尺寸。
+ */
+typedef enum tc_output_format {
+    TC_OUT_ANSI = 0,
+    TC_OUT_TEXT = 1,
+    TC_OUT_HTML_PRE = 2,
+    TC_OUT_JSON = 3,
+    TC_OUT_PNG = 4,
+    TC_OUT_SVG = 5,
+    TC_OUT_PROTOCOL = 6,
+    TC_OUT_PDF = 7,
+    TC_OUT_EPS = 8,
+    TC_OUT_LATEX = 9
+} tc_output_format;
+
+typedef struct tc_output_opts {
+    uint8_t format;        /* tc_output_format */
+    uint8_t color_depth;   /* tc_color_depth */
+    uint8_t protocol;      /* tc_protocol_kind */
+    uint8_t reserved;
+    uint32_t width;        /* 0 = 沿用对象自身尺寸 */
+    uint32_t height;
+    uint32_t cell_width;   /* TC_OUT_PROTOCOL：0 = 10 */
+    uint32_t cell_height;  /* TC_OUT_PROTOCOL：0 = 20 */
+} tc_output_opts;
+
+tc_output_opts tc_output_opts_default(void);
+
+/* 画布/时序图/3D 的统一两段式导出（cap=0 只查询长度）。 */
+tc_status tc_canvas_render(tc_canvas_handle canvas,
+                           const tc_output_opts* out_opts,
+                           char* buf, uint64_t cap, uint64_t* out_len,
+                           tc_error_handle* err);
+
+typedef struct tc_renderer* tc_renderer_handle;
+
+tc_renderer_handle tc_renderer_create(uint8_t color_depth, tc_error_handle* err);
+void tc_renderer_free(tc_renderer_handle renderer);
+void tc_renderer_reset(tc_renderer_handle renderer);
+/* 与内部 prev 比较，首帧/尺寸变化自动全量；cap=0 只查询长度。 */
+tc_status tc_renderer_frame(tc_renderer_handle renderer, tc_canvas_handle canvas,
+                            char* buf, uint64_t cap, uint64_t* out_len,
+                            tc_error_handle* err);
+
+/* ── 输入解析与命中测试 ────────────────────────────────────────────────
+ * InputParser 有跨 feed 的状态（UTF-8 半包、转义序列半包），所以是句柄。
+ * Event 里的 text 指向 parser 句柄内部，下次 feed/free 前有效。
+ */
+typedef enum tc_event_kind {
+    TC_EVENT_KEY = 0, TC_EVENT_MOUSE = 1, TC_EVENT_RESIZE = 2,
+    TC_EVENT_FOCUS = 3, TC_EVENT_PASTE = 4, TC_EVENT_UNKNOWN = 5
+} tc_event_kind;
+
+typedef enum tc_key {
+    TC_KEY_UNKNOWN = 0, TC_KEY_CHAR = 1, TC_KEY_ENTER = 2, TC_KEY_TAB = 3,
+    TC_KEY_BACKSPACE = 4, TC_KEY_ESCAPE = 5, TC_KEY_UP = 6, TC_KEY_DOWN = 7,
+    TC_KEY_LEFT = 8, TC_KEY_RIGHT = 9, TC_KEY_HOME = 10, TC_KEY_END = 11,
+    TC_KEY_PAGE_UP = 12, TC_KEY_PAGE_DOWN = 13, TC_KEY_INSERT = 14,
+    TC_KEY_DELETE = 15, TC_KEY_F1 = 16, TC_KEY_F2 = 17, TC_KEY_F3 = 18,
+    TC_KEY_F4 = 19, TC_KEY_F5 = 20, TC_KEY_F6 = 21, TC_KEY_F7 = 22,
+    TC_KEY_F8 = 23, TC_KEY_F9 = 24, TC_KEY_F10 = 25, TC_KEY_F11 = 26,
+    TC_KEY_F12 = 27
+} tc_key;
+
+typedef enum tc_mouse_button {
+    TC_MOUSE_NONE = 0, TC_MOUSE_LEFT = 1, TC_MOUSE_MIDDLE = 2, TC_MOUSE_RIGHT = 3
+} tc_mouse_button;
+
+typedef enum tc_mouse_action {
+    TC_MOUSE_MOVE = 0, TC_MOUSE_PRESS = 1, TC_MOUSE_RELEASE = 2,
+    TC_MOUSE_SCROLL_UP = 3, TC_MOUSE_SCROLL_DOWN = 4
+} tc_mouse_action;
+
+typedef struct tc_event {
+    uint8_t kind;          /* tc_event_kind */
+    uint8_t key;           /* tc_key（kind=KEY） */
+    uint8_t button;        /* tc_mouse_button（kind=MOUSE） */
+    uint8_t action;        /* tc_mouse_action（kind=MOUSE） */
+    uint8_t mods;          /* shift=1 / alt=2 / ctrl=4 */
+    uint8_t focused;       /* kind=FOCUS */
+    uint8_t reserved[2];
+    uint32_t codepoint;    /* kind=KEY 且 key=CHAR */
+    int32_t x, y;          /* kind=MOUSE，1-based 终端坐标 */
+    int32_t cols, rows;    /* kind=RESIZE */
+    const char* text;      /* kind=PASTE，parser 句柄持有 */
+    uint64_t text_len;
+} tc_event;
+
+typedef struct tc_input* tc_input_handle;
+
+tc_input_handle tc_input_create(tc_error_handle* err);
+void tc_input_free(tc_input_handle input);
+void tc_input_reset(tc_input_handle input);
+/* cap=0 只查询事件数；out_count 填实际写入数。 */
+tc_status tc_input_feed(tc_input_handle input, const uint8_t* bytes, uint64_t n,
+                        tc_event* out, uint64_t cap, uint64_t* out_count,
+                        tc_error_handle* err);
+
+/* 命中区域：C++ 的 chart 不自动发布 HitRegion，调用方按坐标系自己登记。
+ * 返回 payload（即调用方想绑定的索引），hit 结果按登记顺序自下而上返回。
+ */
+typedef struct tc_regions* tc_regions_handle;
+
+tc_regions_handle tc_regions_create(tc_error_handle* err);
+void tc_regions_free(tc_regions_handle regions);
+void tc_regions_clear(tc_regions_handle regions);
+uint64_t tc_regions_count(tc_regions_handle regions);
+uint64_t tc_regions_add_rect(tc_regions_handle regions,
+                             int32_t x, int32_t y, uint32_t w, uint32_t h,
+                             uint32_t payload);
+uint64_t tc_regions_add_circle(tc_regions_handle regions,
+                               int32_t cx, int32_t cy, double radius,
+                               uint32_t payload);
+uint64_t tc_regions_add_polygon(tc_regions_handle regions,
+                                const int32_t* xy, uint64_t point_count,
+                                uint32_t payload, tc_error_handle* err);
+/* cap=0 只查询命中数量。 */
+tc_status tc_regions_hit(tc_regions_handle regions, double x, double y,
+                         uint32_t* payloads, uint64_t cap, uint64_t* out_count);
+
+/* ── 更多导出物种 ──────────────────────────────────────────────────────
+ * tc_chart_export 覆盖 to_svg/to_png 之外的物种；SVG/PNG 仍可继续用老入口。
+ * tc_chart_to_image 把图渲染成 image 句柄，之后任意 image 编码格式都可用。
+ */
+tc_status tc_chart_export(tc_chart_handle chart,
+                          const tc_output_opts* out_opts,
+                          const tc_plot_opts* plot_opts,
+                          char* buf, uint64_t cap, uint64_t* out_len,
+                          tc_error_handle* err);
+tc_image_handle tc_chart_to_image(tc_chart_handle chart,
+                                  const tc_plot_opts* opts,
+                                  tc_error_handle* err);
+
+/* ── 时序图（dsl::parse_sequence → graph::render_uml_sequence）─────────
+ * 与 tc_graph_* 平行：输入是 mermaid sequenceDiagram 文本，不是节点/边模型。
+ */
+typedef struct tc_seq* tc_seq_handle;
+
+tc_seq_handle tc_seq_from_text(const char* mermaid_text, tc_error_handle* err);
+void tc_seq_free(tc_seq_handle seq);
+uint64_t tc_seq_participant_count(tc_seq_handle seq);
+uint64_t tc_seq_message_count(tc_seq_handle seq);
+tc_status tc_seq_render(tc_seq_handle seq, const tc_output_opts* out_opts,
+                        char* buf, uint64_t cap, uint64_t* out_len,
+                        tc_error_handle* err);
+
+/* ── 多帧编码（GIF 动画 / MP4 视频 / AV1 IVF）───────────────────────────
+ * frames 为 count 个 image 句柄；format 取 "gif" / "mp4" / "av1"（别名 ivf/avif）。
+ * AV1 各帧须尺寸一致、宽高取 64 的倍数且至少一维为 64，编码为 KEY 帧序列。
+ * quality 与 fps 对齐 image::EncodeOptions；AV1 使用其已验证的帧内基线参数。
+ */
+tc_status tc_image_encode_frames(const tc_image_handle* frames, uint64_t count,
+                                 const char* format, uint8_t quality, uint32_t fps,
+                                 char* buf, uint64_t cap, uint64_t* out_len,
+                                 tc_error_handle* err);
+
+/* ── 富文本段落（document::Span）───────────────────────────────────────
+ * 与 tc_doc_add_paragraph 并列：传 spans 数组，每个 span 自带样式。
+ */
+typedef struct tc_span {
+    const char* text;
+    tc_style style;
+} tc_span;
+
+tc_status tc_doc_add_rich_paragraph(tc_doc_handle doc,
+                                    const tc_span* spans, uint64_t count,
+                                    tc_error_handle* err);
+
+/* ── 3D / 4D 图（chart3d / chart4d）─────────────────────────────────────
+ * kind: "scatter3d" / "surface3d" / "wire4d"。
+ * scatter3d 的点是 3 元组 (x,y,z)；wire4d 是 4 元组 (x,y,z,w)。
+ * surface3d 用 set_grid 传 z 网格 + set_range 传 x/y 范围，内部双线性采样。
+ * wire4d 不传 edges 时按顶点输入顺序 i→i+1 自动连线。
+ */
+typedef struct tc_scene3d* tc_scene3d_handle;
+
+tc_scene3d_handle tc_scene3d_create(const char* kind, tc_error_handle* err);
+void tc_scene3d_free(tc_scene3d_handle scene);
+tc_status tc_scene3d_set_points(tc_scene3d_handle scene, const double* coords,
+                                uint64_t count, tc_error_handle* err);
+tc_status tc_scene3d_set_grid(tc_scene3d_handle scene, const double* z,
+                              uint32_t cols, uint32_t rows, tc_error_handle* err);
+tc_status tc_scene3d_set_edges(tc_scene3d_handle scene, const uint32_t* pairs,
+                               uint64_t count, tc_error_handle* err);
+tc_status tc_scene3d_set_view(tc_scene3d_handle scene,
+                              double azimuth_deg, double elevation_deg,
+                              double fovy_deg);
+/* axis: 0 = x, 1 = y；仅 surface3d 使用。lo >= hi 报 TC_ERR_INVALID_ARG。 */
+tc_status tc_scene3d_set_range(tc_scene3d_handle scene, uint8_t axis,
+                               double lo, double hi, tc_error_handle* err);
+/* wire4d 的 4D 旋转平面角度（度）；缺省 20/15。 */
+tc_status tc_scene3d_set_rotation4d(tc_scene3d_handle scene,
+                                    double xw_deg, double yz_deg);
+tc_status tc_scene3d_render(tc_scene3d_handle scene,
+                            const tc_output_opts* out_opts,
+                            char* buf, uint64_t cap, uint64_t* out_len,
+                            tc_error_handle* err);
 
 /* 释放 render 返回的 C 侧字符串。 */
 void tc_free_string(char* s);

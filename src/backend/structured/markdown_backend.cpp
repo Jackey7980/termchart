@@ -3,6 +3,7 @@
 
 #include <string>
 
+#include "chart_svg.hpp"
 #include "termchart/document/block.hpp"
 #include "termchart/document/span.hpp"
 #include "termchart/document/table_model.hpp"
@@ -76,9 +77,18 @@ void MarkdownBackend::render(const document::Document& doc) {
                 out_ += '\n';
                 break;
             }
-            case document::BlockKind::Chart:
-                out_ += "[chart]\n\n";
+            case document::BlockKind::Chart: {
+                // 内联 SVG 是原始 HTML 块：pandoc / 静态站点生成器会渲染，而
+                // GFM 一类会剥掉它（那属于渲染器的白名单，不是文档的错）。
+                if (b.scene().empty()) {
+                    out_ += "[chart]\n\n";
+                    break;
+                }
+                out_ += '\n';
+                out_ += detail::chart_svg_or_placeholder(b.scene());
+                out_ += "\n\n";
                 break;
+            }
         }
     }
 }

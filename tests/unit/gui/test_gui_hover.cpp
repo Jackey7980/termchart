@@ -14,7 +14,7 @@
 #include "termchart/core/style.hpp"
 #include "termchart/gui/hover_chart.hpp"
 #include "termchart/gui/scene_renderer.hpp"
-#include "termchart/image/bitmap.hpp"
+#include "termchart/media/image/bitmap.hpp"
 #include "termchart/scene/builder.hpp"
 #include "termchart/scene/scene.hpp"
 
